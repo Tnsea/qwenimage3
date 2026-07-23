@@ -1007,7 +1007,7 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?")
       .bind(paymentIntent)
       .first<BillingPaymentOwnerRow>();
-    if (!payment) return;
+    if (!payment) throw new Error("Stripe early fraud warning has no local payment yet.");
     const timestamp = now();
     const actionable = object.actionable;
     const fraudType = typeof object.fraud_type === "string" && object.fraud_type
@@ -1078,6 +1078,8 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const status = event.type === "customer.subscription.deleted" ? "canceled"
       : event.type === "invoice.payment_failed" ? "past_due"
         : ["active", "trialing", "past_due", "canceled"].includes(String(object.status)) ? String(object.status) : "inactive";
+    const scheduledCancellation = object.cancel_at_period_end === true
+      || (["active", "trialing"].includes(status) && typeof object.cancel_at === "number" && object.cancel_at > 0);
     await env.DB.prepare("UPDATE billing_accounts SET stripe_subscription_id = COALESCE(?, stripe_subscription_id), plan = ?, plan_tier = CASE WHEN ? IN ('active', 'trialing') THEN plan_tier ELSE 'free' END, billing_interval = CASE WHEN ? IN ('active', 'trialing') THEN billing_interval ELSE NULL END, active_offer_id = CASE WHEN ? IN ('active', 'trialing') THEN active_offer_id ELSE NULL END, status = ?, cancel_at_period_end = ?, updated_at = ? WHERE stripe_customer_id = ?")
       .bind(
         subscriptionId || null,
@@ -1086,7 +1088,7 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
         status,
         status,
         status,
-        object.cancel_at_period_end ? 1 : 0,
+        scheduledCancellation ? 1 : 0,
         now(),
         customerId,
       ).run();

@@ -124,7 +124,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Stripe
 
-Stripe is fail-closed behind `BILLING_ENABLED=false`. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. A historical USD 7 credit-pack Checkout passed Sandbox fulfillment before the old price catalog was retired. The replacement catalog now has dedicated immutable Live Price IDs, matching active D1 versions, a restricted runtime key, and a signed Live webhook deployed to the acceptance environment. It still requires full Sandbox/Live lifecycle acceptance before Checkout can be enabled. Public billing remains blocked on subscription/invoice, refund/dispute/fraud-warning, Portal/cancellation/deletion, policy, reconciliation, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
+Stripe is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance environment. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted a USD 12/400-credit Checkout, Starter monthly and yearly subscriptions, first invoices, Customer Portal scheduled cancellation, a full refund, dispute, and actionable Radar warning. Public billing remains blocked on the remaining asynchronous/renewal/deletion and Creator/Professional cases, approved risk/credit policy, reconciliation, monitoring, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
 
 The configured offer contract is:
 
@@ -176,7 +176,7 @@ npm run audit:production
 
 The automated suite covers rendering, the browser/Worker catalog contract, the signed-out generation gate, Cloudflare password/offer contracts, yearly-default pricing, 4/8/16 charging, Starter-versus-Creator entitlements, registration/verification, workspace overview, private support conversations, recovery, sessions, export/deletion, projects, favorites, concurrent D1 credit accounting, scoped keys, API logs/idempotency, OAuth mapping, recoverable Stripe fulfillment and invoice validation, refund and Radar fraud-warning quarantine, external deletion safety, origin rejection, maintenance, persisted rate limits, configuration gates, and Qwen host/MIME safeguards. Historical promotion tests remain isolated in the inactive comparison adapter.
 
-Passing these commands means the repository is locally consistent. A previous acceptance revision live-smoke-tested the former guest flow; the current account-required revision is not externally verified until it is deliberately redeployed and smoked. This does not replace real OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
+Passing these commands means the repository is locally consistent. The current account-required revision has been deployed to the isolated Stripe Sandbox for the billing evidence described above; the canonical public-billing switch remains off. This does not replace the remaining OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
 
 ## Project Documentation
 

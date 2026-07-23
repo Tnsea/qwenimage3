@@ -11,7 +11,7 @@ The application is locally functional and verified. This file is the authoritati
 | Evidence | Result |
 |---|---|
 | TypeScript client/server checks | Pass |
-| Automated tests | 68 passed, 0 failed, including account-required generation, exactly-once welcome credits, 4/8/16 credit charging, Starter-versus-Creator entitlements, yearly-default pricing, unsupported-model rejection, stable non-JSON edge errors, concurrent D1 credits/idempotency, Worker Stripe replay and Radar fraud-warning quarantine, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
+| Automated tests | 69 passed, 0 failed, including account-required generation, exactly-once welcome credits, 4/8/16 credit charging, Starter-versus-Creator entitlements, yearly-default pricing, unsupported-model rejection, stable non-JSON edge errors, concurrent D1 credits/idempotency, Worker Stripe replay, out-of-order Radar fraud-warning retry/quarantine, current Stripe Portal cancellation payloads, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
 | Production bundle | Pass; JavaScript gzip about 94.5 KB; artifact scan rejects loopback addresses, SQLite customer copy, and development-token copy |
 | npm dependency audit | Production dependency audit passes with zero findings; full development-tool audit remains blocked by three high-severity Wrangler/Miniflare/Sharp findings |
 | Static UI quality | Strict unused checks, React Hooks rules, and baseline JSX accessibility rules pass |
@@ -24,7 +24,7 @@ The application is locally functional and verified. This file is the authoritati
 | Google OAuth acceptance | Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` completed a real Google authorization-code and PKCE callback, created one identity mapping and browser session, granted starter credits once, entered the private Workspace, consumed the OAuth state, and was subsequently published for external Google accounts |
 | Secret-pattern check | No real credential detected in the working-tree scan; placeholders only |
 | Cloudflare acceptance environment | Worker custom domains `qwen-image-3.net` and `www.qwen-image-3.net`, D1 database, private R2 bucket, and the 15-minute maintenance trigger are deployed. Forward migrations `0001`–`0009` are applied. Worker version `04d02c4e-4843-4e6c-b2a4-6607079c872e` passed live health/session/catalog/redirect checks and a signed-webhook replay check; the pricing browser smoke confirmed the signed-in 20-credit account, monthly toggle, yearly default, and disabled Checkout gate. |
-| Stripe integration | Historical Sandbox evidence: the retired USD 7/100-credit catalog completed one application-created Checkout and exactly-once webhook grant. The replacement Starter/Creator/Professional monthly/yearly and 400/1,200/3,000-credit pack Prices now exist in Live mode, active D1 versions match all nine Prices, and a dedicated restricted key plus 10-event Live webhook destination are deployed. A signed acceptance event completed once and returned `duplicate` on replay. The replacement catalog is not yet accepted through Checkout/payment/Portal/reversal end to end; billing remains disabled |
+| Stripe integration | The replacement Starter/Creator/Professional monthly/yearly and 400/1,200/3,000-credit pack Prices exist in both Live and the isolated Stripe Sandbox; all nine Sandbox Price amounts, currencies, and intervals match D1. Sandbox Worker `10c7e6d8-c8d0-4060-9cb8-d6286a799d4b` at `sandbox.qwen-image-3.net` completed a USD 12/400-credit Checkout, USD 9.90 Starter monthly subscription, USD 99 Starter annual subscription with 6,000 annual credits, Stripe Portal display and scheduled cancellation, full refund, dispute, and actionable Radar early-fraud-warning lifecycle. The exercise caught and fixed both out-of-order Radar delivery and Stripe's current `cancel_at` Portal payload. Live mode still has a dedicated restricted key and 10-event webhook destination, but public billing remains disabled. |
 
 Source-control evidence:
 
@@ -34,7 +34,7 @@ Source-control evidence:
 
 Limitations of this evidence:
 
-- real Resend, GitHub, and Qwen credentials were not exercised; Google completed one successful acceptance sign-in but its denial/failure paths remain open; Stripe Sandbox credit-pack Checkout and Stripe-origin webhook fulfillment passed once, but no subscription, recurring invoice, asynchronous payment, refund, dispute, Portal, cancellation, or account-deletion lifecycle has passed end to end;
+- real Resend, GitHub, and Qwen credentials were not exercised; Google completed one successful acceptance sign-in but its denial/failure paths remain open; Stripe Sandbox credit-pack, subscription first-invoice, Portal, scheduled cancellation, refund, dispute, and Radar paths passed, while asynchronous payment, renewal/payment-failure, terminal subscription deletion, account deletion, and every Creator/Professional offer remain unverified end to end;
 - Docker/Compose execution was unavailable;
 - the deployed Worker is an acceptance revision, not a production approval or a reviewed release marker;
 - no formal accessibility, browser-matrix, load, recovery, or external security review exists.
@@ -52,19 +52,25 @@ Limitations of this evidence:
 
 **Evidence:** events use `processing`, `failed`, and `completed` states with attempt counts and stale-lock recovery. Missing local records return a retryable status; a regression test delivers the event before the order and succeeds on replay after the order appears. With new Checkout disabled, Stripe delivered the real Sandbox `checkout.session.completed` event for the paid credit-pack session; D1 completed it in one attempt, created one PaymentIntent mapping and one purchase ledger row, and granted exactly 100 credits. A separate signed acceptance event also returned the duplicate response on replay. Webhook settlement and Stripe cleanup remain available while new sales are paused.
 
-**Remaining:** exercise real out-of-order Checkout, invoice, subscription, asynchronous payment, and replay sequences and add operator alerts for failed/stale events.
+**Additional Sandbox evidence:** the current catalog completed Stripe-origin Checkout and invoice delivery. Radar and dispute events arrived before their corresponding Checkout event, received a retryable 503, and completed on the second Stripe delivery after the local payment existed. The Radar record preserved paid/normal financial state while separately blocking spending; the dispute changed financial state and blocked spending.
+
+**Remaining:** exercise asynchronous payment, renewal/payment-failure, terminal subscription deletion, missing-order Checkout replay, and account-deletion races, then add operator alerts for failed/stale events.
 
 ### BIL-003: Creator invoice validation — locally closed, Stripe acceptance pending
 
 **Evidence:** a Creator grant requires the known Customer/subscription, a known immutable Price-version row, paid status, matching USD amount, allowed billing reason, invoice ID, and PaymentIntent. Checkout uses only the active version, while old subscriptions continue to grant the historical credits carried by their retired Price ID. Orders and payments retain the Price ID; invalid Price/amount/currency receives 422 and grants nothing. Regression coverage switches the active standard plan from USD 10/300 credits to USD 12/450 credits and proves both old and new invoice contracts remain idempotent.
 
-**Remaining:** confirm real Stripe API-version payload shapes and approve how discounts, taxes, credits, and prorations map to the versioned entitlement contract.
+**Additional Sandbox evidence:** Starter monthly charged USD 9.90 and granted 500 credits from its paid invoice. Starter yearly charged USD 99, recorded a one-year period, and granted 6,000 credits exactly once. Portal scheduled cancellation used Stripe's current `cancel_at` field; the Worker now recognizes both it and `cancel_at_period_end`.
+
+**Remaining:** accept Creator and Professional monthly/yearly payloads and approve how discounts, taxes, credits, and prorations map to the versioned entitlement contract.
 
 ### BIL-004: Refund/dispute/fraud-warning lifecycle — partially implemented, policy and reconciliation blocked
 
 **Evidence:** PaymentIntents map to product payments; refund/dispute events update payment and order financial status and pause further credit spending with a visible Billing warning. Actionable Radar early fraud warnings resolve Charge-to-PaymentIntent using least-privilege read access, store separate risk evidence, and pause spending without changing the paid/refunded/disputed status. Fulfillment is idempotent.
 
-**Remaining:** approve clawback/negative-balance/support and proactive-refund policy, implement reviewed risk-resolution/unblock operations, handle every asynchronous failure variant, build reconciliation and alerts, and pass Stripe test-mode end to end.
+**Additional Sandbox evidence:** the official early-fraud-warning test card produced an actionable `made_with_stolen_card` warning. The first out-of-order delivery failed safely, the retry recorded the warning, kept the payment and order paid/normal, and blocked credit spending with HTTP 423. A full refund marked payment/order refunded and blocked spending. The dispute test marked payment/order disputed after its own safe out-of-order retry and blocked spending.
+
+**Remaining:** approve clawback/negative-balance/support and proactive-refund policy, implement reviewed risk-resolution/unblock operations, handle every asynchronous failure variant, and build reconciliation and alerts.
 
 Public billing stays fail-closed behind `BILLING_ENABLED=false` until every remaining item above passes. This switch blocks new Checkout offers; configured webhook verification and Stripe-side cleanup continue so already-created financial state can drain safely.
 

@@ -291,26 +291,12 @@ test("Worker Stripe webhook replay grants a paid credit pack exactly once", asyn
   }
 });
 
-test("Worker quarantines a local payment on an actionable Stripe early fraud warning", async () => {
+test("Worker retries an early fraud warning that arrives before payment settlement, then quarantines it", async () => {
   const { miniflare, database } = await createDatabase();
   const originalFetch = globalThis.fetch;
   let chargeLookupCount = 0;
   try {
     const timestamp = new Date().toISOString();
-    await database.batch([
-      database.prepare(`INSERT INTO billing_orders
-        (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents,
-          currency, status, payment_intent_id, financial_status, stripe_price_id, created_at, completed_at)
-        VALUES ('order-risk', 'user-1', 'cs_risk', 'credits_400', 'credits', 400, 1200,
-          'usd', 'paid', 'pi_risk', 'normal', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
-        .bind(timestamp, timestamp),
-      database.prepare(`INSERT INTO billing_payments
-        (payment_intent_id, user_id, billing_order_id, kind, credits_granted, amount_cents,
-          currency, status, stripe_price_id, created_at, updated_at)
-        VALUES ('pi_risk', 'user-1', 'order-risk', 'credits', 400, 1200,
-          'usd', 'paid', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
-        .bind(timestamp, timestamp),
-    ]);
     globalThis.fetch = async (input, init) => {
       assert.equal(String(input), "https://api.stripe.com/v1/charges/ch_risk");
       assert.equal(init?.method, "GET");
@@ -356,11 +342,27 @@ test("Worker quarantines a local payment on an actionable Stripe early fraud war
       ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
     };
     const executionContext = { passThroughOnException() {}, waitUntil() {} };
+    const beforePayment = await worker.fetch(signedRequest(), environment as never, executionContext as never);
+    assert.equal(beforePayment.status, 503);
+    await database.batch([
+      database.prepare(`INSERT INTO billing_orders
+        (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents,
+          currency, status, payment_intent_id, financial_status, stripe_price_id, created_at, completed_at)
+        VALUES ('order-risk', 'user-1', 'cs_risk', 'credits_400', 'credits', 400, 1200,
+          'usd', 'paid', 'pi_risk', 'normal', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+      database.prepare(`INSERT INTO billing_payments
+        (payment_intent_id, user_id, billing_order_id, kind, credits_granted, amount_cents,
+          currency, status, stripe_price_id, created_at, updated_at)
+        VALUES ('pi_risk', 'user-1', 'order-risk', 'credits', 400, 1200,
+          'usd', 'paid', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+    ]);
     const first = await worker.fetch(signedRequest(), environment as never, executionContext as never);
     const replay = await worker.fetch(signedRequest(), environment as never, executionContext as never);
     assert.equal(first.status, 200);
     assert.equal(replay.status, 200);
-    assert.equal(chargeLookupCount, 1);
+    assert.equal(chargeLookupCount, 2);
 
     const account = await database.prepare(`SELECT spending_blocked, block_reason
       FROM billing_accounts WHERE user_id = 'user-1'`)
@@ -393,8 +395,64 @@ test("Worker quarantines a local payment on an actionable Stripe early fraud war
       FROM billing_orders WHERE id = 'order-risk'`)
       .first<{ financial_status: string; financial_event_id: string | null }>();
     assert.deepEqual(order, { financial_status: "normal", financial_event_id: "evt_risk" });
+    const recordedEvent = await database.prepare(`SELECT status, attempts, last_error
+      FROM billing_events WHERE stripe_event_id = 'evt_risk'`)
+      .first<{ status: string; attempts: number; last_error: string | null }>();
+    assert.deepEqual(recordedEvent, { status: "completed", attempts: 2, last_error: null });
   } finally {
     globalThis.fetch = originalFetch;
+    await miniflare.dispose();
+  }
+});
+
+test("Worker recognizes Stripe Portal scheduled cancellation from the current cancel_at field", async () => {
+  const { miniflare, database } = await createDatabase();
+  try {
+    await database.prepare(`UPDATE billing_accounts
+      SET stripe_customer_id = 'cus_portal', stripe_subscription_id = 'sub_portal',
+        plan = 'creator', plan_tier = 'starter', billing_interval = 'month',
+        active_offer_id = 'starter_monthly', status = 'active'
+      WHERE user_id = 'user-1'`).run();
+    const event = {
+      id: "evt_portal_cancel",
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_portal",
+          customer: "cus_portal",
+          status: "active",
+          cancel_at_period_end: false,
+          cancel_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        },
+      },
+    };
+    const body = JSON.stringify(event);
+    const secret = "whsec_portal_cancel";
+    const signedAt = Math.floor(Date.now() / 1000);
+    const signature = createHmac("sha256", secret).update(`${signedAt}.${body}`).digest("hex");
+    const response = await worker.fetch(new Request("https://qwen-image-3.net/api/billing/webhook", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Stripe-Signature": `t=${signedAt},v1=${signature}`,
+      },
+      body,
+    }), {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      STRIPE_WEBHOOK_SECRET: secret,
+      DB: database,
+      ASSETS_BUCKET: { delete: async () => undefined },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    } as never, { passThroughOnException() {}, waitUntil() {} } as never);
+    assert.equal(response.status, 200);
+    const account = await database.prepare(`SELECT plan_tier, status, cancel_at_period_end
+      FROM billing_accounts WHERE user_id = 'user-1'`)
+      .first<{ plan_tier: string; status: string; cancel_at_period_end: number }>();
+    assert.deepEqual(account, { plan_tier: "starter", status: "active", cancel_at_period_end: 1 });
+  } finally {
     await miniflare.dispose();
   }
 });

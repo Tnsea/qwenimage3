@@ -53,7 +53,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 | Welcome credits | **Implemented locally** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | External redeploy and reconciliation monitoring |
 | Credits | **Verified locally** for generation reserve/settle/refund | Reconciliation monitoring and commercial policy |
 | Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
-| Stripe adapter | **Implemented and locally verified; blocked for public use** | Stripe test-mode lifecycle acceptance, reconciliation monitoring, and approved refund/dispute policy |
+| Stripe adapter | **Implemented, locally verified, and partially accepted in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Remaining test-mode lifecycle cases, reconciliation monitoring, and approved refund/dispute policy |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
 | Content library | **Prototype**: twelve prompt records, eight unique example cards, and eleven homepage FAQs | 60/80-item editorial inventory and content review workflow |
@@ -191,7 +191,7 @@ Implemented adapter flow:
 10. Actionable Radar early fraud warnings resolve to a known local PaymentIntent, create a separate risk record, and pause credit spending without being treated as a refund or dispute.
 11. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on current-catalog Sandbox acceptance, subscription/invoice, reversal, Portal/deletion, policy, monitoring, and commercial/legal evidence.
+Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted a current-catalog credit pack, Starter monthly/yearly subscriptions, first invoices, Portal scheduled cancellation, refund, dispute, and Radar warning; [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the remaining asynchronous/renewal/deletion and Creator/Professional cases, policy, monitoring, and commercial/legal evidence.
 
 ### 5.6 Developer API
 

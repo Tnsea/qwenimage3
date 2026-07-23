@@ -250,6 +250,22 @@ Restore must target a separate D1 database first, run consistency and applicatio
 - The Worker validates the subscription Customer, stored subscription, immutable Price version, exact amount/currency, paid state, allowed billing reason, and PaymentIntent; test-mode must prove every current offer contract against real Stripe payloads.
 - Confirm external subscription state before deleting local identity data.
 
+### Isolated Stripe Sandbox acceptance
+
+The checked-in `wrangler.sandbox.jsonc` deploys a separate `qwen-image-3-sandbox` Worker at `sandbox.qwen-image-3.net`, with its own D1 database and R2 bucket. It intentionally enables Checkout only against Stripe Sandbox Price IDs. It has no canonical production-domain route and must not receive Live Stripe credentials.
+
+Provision and update it with:
+
+```bash
+npm run cf:sandbox:migrate
+npm run cf:sandbox:catalog
+npx wrangler secret put STRIPE_SECRET_KEY --config wrangler.sandbox.jsonc
+npx wrangler secret put STRIPE_WEBHOOK_SECRET --config wrangler.sandbox.jsonc
+npm run cf:sandbox:deploy
+```
+
+`worker/sandbox/stripe_catalog.sql` is an idempotent acceptance seed, not a canonical production migration. Do not apply it to `qwen-image-3-production`. Keep Sandbox test users and financial events in the sandbox D1 database, and record Stripe-origin Checkout, grant, subscription, Portal, refund, dispute, and Radar evidence before changing the production billing switch.
+
 ## Data Retention
 
 Current behavior:
