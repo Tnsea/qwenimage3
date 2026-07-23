@@ -124,7 +124,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Stripe
 
-Stripe is fail-closed behind `BILLING_ENABLED=false`. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. A historical USD 7 credit-pack Checkout passed Sandbox fulfillment before the old price catalog was retired. The replacement catalog now has dedicated immutable Live Price IDs and matching forward D1 migrations, but it still requires deployment and full Sandbox/Live acceptance before Checkout can be enabled. Public billing remains blocked on subscription/invoice, refund/dispute/fraud-warning, Portal/cancellation/deletion, policy, reconciliation, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
+Stripe is fail-closed behind `BILLING_ENABLED=false`. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. A historical USD 7 credit-pack Checkout passed Sandbox fulfillment before the old price catalog was retired. The replacement catalog now has dedicated immutable Live Price IDs, matching active D1 versions, a restricted runtime key, and a signed Live webhook deployed to the acceptance environment. It still requires full Sandbox/Live lifecycle acceptance before Checkout can be enabled. Public billing remains blocked on subscription/invoice, refund/dispute/fraud-warning, Portal/cancellation/deletion, policy, reconciliation, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
 
 The configured offer contract is:
 

@@ -23,8 +23,8 @@ The application is locally functional and verified. This file is the authoritati
 | Browser smoke | Desktop, 390 px mobile navigation, authentication dialog, unauthenticated Studio gate, generation failure handling, and 404 were visually verified on the previous acceptance revision; the new account-required generator gate needs a fresh browser pass |
 | Google OAuth acceptance | Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` completed a real Google authorization-code and PKCE callback, created one identity mapping and browser session, granted starter credits once, entered the private Workspace, consumed the OAuth state, and was subsequently published for external Google accounts |
 | Secret-pattern check | No real credential detected in the working-tree scan; placeholders only |
-| Cloudflare acceptance environment | Worker custom domains `qwen-image-3.net` and `www.qwen-image-3.net`, D1 database, private R2 bucket, and the 15-minute maintenance trigger are deployed. Forward migrations `0004`–`0006` are applied. TLS, canonical redirect/metadata, health/session/promotion/generation/asset/watermark smoke passed on Worker version `4dcd71ed-466d-4fa1-afb8-03d5bc575f6e`. A live browser regression confirmed the React root, rendered homepage, strict CSP, no Cloudflare analytics beacon, no local network request, zero application resource failures, and zero runtime exceptions. |
-| Stripe integration | Historical Sandbox evidence: the retired USD 7/100-credit catalog completed one application-created Checkout and exactly-once webhook grant. The replacement Starter/Creator/Professional monthly/yearly and 400/1,200/3,000-credit pack Prices now exist in Live mode, a dedicated restricted key and 10-event Live webhook destination are configured, and matching D1 migrations are staged. The replacement catalog is not yet deployed or accepted end to end; billing remains disabled |
+| Cloudflare acceptance environment | Worker custom domains `qwen-image-3.net` and `www.qwen-image-3.net`, D1 database, private R2 bucket, and the 15-minute maintenance trigger are deployed. Forward migrations `0001`–`0009` are applied. Worker version `04d02c4e-4843-4e6c-b2a4-6607079c872e` passed live health/session/catalog/redirect checks and a signed-webhook replay check; the pricing browser smoke confirmed the signed-in 20-credit account, monthly toggle, yearly default, and disabled Checkout gate. |
+| Stripe integration | Historical Sandbox evidence: the retired USD 7/100-credit catalog completed one application-created Checkout and exactly-once webhook grant. The replacement Starter/Creator/Professional monthly/yearly and 400/1,200/3,000-credit pack Prices now exist in Live mode, active D1 versions match all nine Prices, and a dedicated restricted key plus 10-event Live webhook destination are deployed. A signed acceptance event completed once and returned `duplicate` on replay. The replacement catalog is not yet accepted through Checkout/payment/Portal/reversal end to end; billing remains disabled |
 
 Source-control evidence:
 
@@ -125,9 +125,9 @@ Public billing stays fail-closed behind `BILLING_ENABLED=false` until every rema
 | `SEC-002` | Rate limits persist in D1 in Wrangler development and acceptance but remain IP-only | Load acceptance and per-account/API-key budgets |
 | `API-001` | Keys have `generations:write` scope; every API attempt records status, duration, and request ID, with valid user/key association | Per-key budgets, alerts, log retention, and documented limits |
 | `OPS-001` | No metrics, tracing, durable logs, alerts, or reconciliation job | Production observability and on-call actions |
-| `OPS-002` | Cloudflare custom-domain acceptance runtime currently serves OAuth hotfix Worker `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`; pre-change D1 export and prior Worker identifiers are recorded, but reviewed release provenance and restore/rollback execution remain unverified | Reviewed deployment, health supervision, backup/restore, and rollback drill |
+| `OPS-002` | Cloudflare custom-domain acceptance runtime serves committed source revision `d21ccf9` as Worker `04d02c4e-4843-4e6c-b2a4-6607079c872e`; a pre-migration D1 export and prior Worker identifiers are recorded. Local release verification passed, while GitHub CI for this revision and restore/rollback execution remain unverified | CI evidence, health supervision, backup/restore, and rollback drill |
 | `UI-001` | Explicit failed generation states and retry/remove actions are implemented | Accessibility acceptance for failure announcements and focus |
-| `WEB-001` | Client/API routing and the previous guest-enabled revision passed live smoke; the canonical domain rendered with zero runtime exceptions, no local endpoint request, and no analytics beacon injection | Deploy and smoke the account-required flow, then complete the browser matrix, signed-in Studio, error routes, and rollback acceptance |
+| `WEB-001` | Client/API routing and the previous guest-enabled revision passed broad live smoke. The current account-gated revision passed canonical health/session/catalog, signed-in pricing, yearly-default/monthly-toggle, Checkout-disabled, and redirect checks | Complete the browser matrix, signed-in Studio generation, error routes, and rollback acceptance |
 
 ## Launch Decision Rules
 
@@ -151,14 +151,14 @@ Before changing this file to Ready, record:
 
 ## Current Acceptance Deployment Record
 
-- Source revision and CI: base revision `7f65571` plus the acceptance-only OAuth redirect/state patch; GitHub Actions run `29995895346` passed for the preceding hardening revision, while the hotfix still needs committed review provenance
-- Worker version: `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`
+- Source revision and CI: committed revision `d21ccf95b1736e5b2dc6aed27ab0376636b45bcb`; local `verify:release` passed with 68 tests, while GitHub CI for this revision remains pending
+- Worker version: `04d02c4e-4843-4e6c-b2a4-6607079c872e`
 - Environment and URL: Cloudflare acceptance, `https://qwen-image-3.net`
-- Enabled providers: deterministic local preview and Google OAuth published for external Google accounts; billing, Qwen, GitHub, and external email remain disabled
-- Applied migrations: `0001`–`0006`; pre-change D1 export retained under ignored `backups/`
-- Rollback identifiers: pre-remediation Worker `69a1034f-31ac-45fa-b8e5-e2a9f13e3577`; D1 restore has not been exercised
-- Live smoke: July 23, 2026, Asia/Shanghai; historical evidence for the previous guest-enabled revision covers health, root mount, catalog, guest session/generation, private R2 asset, watermark, 404, strict headers, no local request, no analytics beacon, and scheduled maintenance. The current OAuth hotfix additionally passed a real Google sign-in, identity mapping, browser session, one-time starter grant, private Workspace load, and single-use state consumption; Google Auth Platform was then published for external accounts.
+- Enabled providers: deterministic local preview and Google OAuth published for external Google accounts; Live Stripe credentials/webhook/catalog are configured but new Checkout remains disabled; Qwen, GitHub, and external email remain disabled
+- Applied migrations: `0001`–`0009`; pre-change D1 export retained at ignored path `backups/qwen-image-3-20260723-pre-live-catalog.sql`
+- Rollback identifiers: prior Worker `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`; D1 restore has not been exercised
+- Live smoke: July 23, 2026, Asia/Shanghai; health reported D1/R2, fresh maintenance, Google configured, Stripe credentials/webhook/catalog configured, and sales disabled. Session, catalog, canonical redirect, unsigned-webhook rejection, signed event completion, and duplicate replay passed. A signed-in browser confirmed 20 welcome credits, yearly-default and monthly pricing, and disabled Checkout controls. Historical Google acceptance additionally covers real authorization, identity mapping, browser session, one-time starter grant, private Workspace load, and single-use state consumption.
 - Operator: repository owner with Codex implementation assistance
 - Deferred blockers: all P0/P1 and applicable P2 items above remain blocking
 
-The Worker and client runtime content are represented by the recorded hardening commit, but the acceptance deployment preceded review and was not produced by CI. This record documents acceptance evidence only and is not a Ready decision.
+The Worker and client runtime content are represented by committed revision `d21ccf9` and were deployed only after local release verification. The deployment was not produced by GitHub CI, and this record documents acceptance evidence only—not a Ready decision.
