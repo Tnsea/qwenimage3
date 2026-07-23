@@ -1,0 +1,58 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "qwen-image-3",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-23",
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "qwen-image-3.net",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.qwen-image-3.net",
+      "custom_domain": true
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "qwen-image-3-production",
+      "database_id": "d72b92a0-7fe3-4977-a055-c98136099df7",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "qwen-image-3-assets"
+    }
+  ],
+  "vars": {
+    "APP_BASE_URL": "https://qwen-image-3.net",
+    "BILLING_ENABLED": "false",
+    "GENERATION_PROVIDER": "local",
+    "QWEN_MODEL_ID": "local-qwen-preview",
+    "STRIPE_PRICE_CREATOR_INTRO": "price_1TwEbTQnZzuLeKGY8QOg8XtQ",
+    "STRIPE_PRICE_CREATOR_MONTHLY": "price_1TwEYzQnZzuLeKGYJiEnuAxo",
+    "STRIPE_PRICE_CREDITS_100": "price_1TwEd3QnZzuLeKGYOXCJommu",
+    "STRIPE_PRICE_CREDITS_300": "price_1TwEeoQnZzuLeKGYpqgbXL5p"
+  }
+}

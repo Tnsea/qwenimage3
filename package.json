@@ -1,0 +1,49 @@
+{
+  "name": "qwen-image-generator-hub",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "dev:worker": "npm run build:web && wrangler dev",
+    "build:web": "vite build",
+    "build": "vite build && tsc -p tsconfig.server.build.json",
+    "check:worker": "tsc -p tsconfig.worker.json --noEmit",
+    "cf:migrate:local": "wrangler d1 migrations apply qwen-image-3-production --local --config wrangler.worker.jsonc",
+    "cf:migrate:remote": "wrangler d1 migrations apply qwen-image-3-production --remote --config wrangler.worker.jsonc",
+    "cf:deploy": "npm run build:web && npm run check:worker && wrangler deploy --config wrangler.worker.jsonc",
+    "cf:pages:bundle": "npm run build:web && esbuild worker/index.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/_worker.js",
+    "cf:pages:deploy": "npm run check:worker && npm run cf:pages:bundle && wrangler pages deploy",
+    "start": "NODE_ENV=production node dist-server/server/index.js",
+    "start:local": "NODE_ENV=development node dist-server/server/index.js",
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && npm run check:worker"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "hono": "^4.12.31",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260723.1",
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "daisyui": "^5.0.50",
+    "tailwindcss": "^4.1.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "wrangler": "^4.113.0"
+  }
+}

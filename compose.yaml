@@ -1,0 +1,23 @@
+services:
+  qwen-image-hub:
+    build: .
+    command: ["npm", "run", "start:local"]
+    restart: unless-stopped
+    environment:
+      PORT: "8787"
+      HOST: 0.0.0.0
+      DATABASE_PATH: /app/data/qwenimage.db
+      COOKIE_SECURE: "false"
+      APP_BASE_URL: http://127.0.0.1:8787
+      EMAIL_PROVIDER: console
+      ALLOW_DEV_AUTH_TOKENS: "true"
+      GENERATION_PROVIDER: local
+      GENERATION_CONCURRENCY: "1"
+      FREE_QUEUE_DELAY_MS: "1500"
+    ports:
+      - "8787:8787"
+    volumes:
+      - qwen-image-data:/app/data
+
+volumes:
+  qwen-image-data:
