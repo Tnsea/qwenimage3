@@ -148,7 +148,7 @@ The 15-minute maintenance pass marks stale processing generations failed, settle
 - Default build/deploy/CI paths exclude Express and SQLite.
 - The retained container runs the legacy Node/SQLite comparison adapter and is local-only.
 - Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production` and private R2 bucket `qwen-image-3-assets` are bound. `https://qwen-image-3.pages.dev` remains a fallback.
-- Committed account-required revision `8007fa98d64cf5ff4f888fdc435431af29e49ffb` is deployed as Worker `d141caeb-4703-45a6-bb1d-53981c829fe8`. Its Kie.ai Qwen Image 2 Worker path completed one paid external task, but the signed-in product-credit/private-R2/browser lifecycle still needs acceptance.
+- Committed account-required revision `2b50e1411f23285587374200c0881ef2a96376aa` is deployed as Worker `d36d2ba1-c241-4a14-9ec1-dfa0da9e8fa3`. The earlier Kie.ai Qwen Image 2 Worker acceptance task remains valid for the unchanged provider path, but the signed-in product-credit/private-R2/browser lifecycle still needs acceptance.
 - Google OAuth completed one acceptance sign-in and its external Google Auth Platform application is published with status `Production`. Public billing, production email, GitHub OAuth, and Alibaba Qwen execution remain disabled/unverified; the Kie.ai Worker-side result does not approve production use, and neither the OAuth publishing label nor the custom domain approves a production launch.
 
 ## Target Evolution
