@@ -14,12 +14,19 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `RESEND_API_KEY`, `EMAIL_FROM` | Empty | Resend delivery | Keep in managed secrets |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Empty | Google sign-in | Callback origin must match `APP_BASE_URL` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Empty | GitHub sign-in | Callback origin must match `APP_BASE_URL` |
-| `GENERATION_PROVIDER` | `local` | Select `local` or `qwen` | `local` is a deterministic preview, not a real model |
+| `GENERATION_PROVIDER` | `local` | Select `local`, `qwen`, or `kie` | `local` is a deterministic preview, not a real model |
 | `DASHSCOPE_API_KEY` | Empty | Qwen provider | Server-side secret |
 | `QWEN_API_BASE_URL` | Empty | Qwen provider | HTTPS URL for the intended Model Studio workspace/region |
 | `QWEN_API_ALLOWED_HOST` | Empty | Qwen provider | Exact hostname of `QWEN_API_BASE_URL`; wildcards and suffix matching are not accepted |
 | `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Implemented model contract | Other values are rejected until a separate adapter and release gate are reviewed |
 | `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
+| `KIE_API_KEY` | Empty | Kie.ai provider | Dedicated server-side secret; use provider-side model and spend restrictions |
+| `KIE_API_BASE_URL` | `https://api.kie.ai` | Kie.ai provider | HTTPS API origin |
+| `KIE_API_ALLOWED_HOST` | `api.kie.ai` | Kie.ai provider | Exact hostname of `KIE_API_BASE_URL`; wildcards and suffix matching are rejected |
+| `KIE_MODEL_ID` | `qwen2/text-to-image` | Kie.ai provider | Exact reviewed adapter model; other values are rejected |
+| `KIE_IMAGE_ALLOWED_HOSTS` | Kie.ai result hosts | Kie.ai asset download | Comma-separated exact HTTPS hostnames; every redirect is revalidated |
+| `KIE_POLL_INTERVAL_MS` | `2000` | Kie.ai task polling | Effective range is 250 ms–10 seconds |
+| `KIE_MAX_POLL_MS` | `120000` | Kie.ai task polling | Bounded synchronous acceptance window; durable callback/queue processing remains pending |
 | `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
 | `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases; send an alert-delivery acceptance test | Managed secret of at least 32 characters; grants access only to `/api/operator/*` |
 | `OPS_ALERT_EMAIL` | Empty | Cloudflare Email Routing Worker binding for operational alerts | Checked-in binding name only; requires Email Routing and a verified destination before deployment |
@@ -38,7 +45,7 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `STRIPE_PRICE_CREDITS_1200` | Live Price ID configured | USD 30 one time, 1,200 credits | Match the D1 version exactly |
 | `STRIPE_PRICE_CREDITS_3000` | Live Price ID configured | USD 60 one time, 3,000 credits | Match the D1 version exactly |
 
-`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, the billing operator token, `OPS_ALERT_TO`, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables and the `OPS_ALERT_EMAIL` binding name.
+`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, `KIE_API_KEY`, Stripe keys, the billing operator token, `OPS_ALERT_TO`, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables and the `OPS_ALERT_EMAIL` binding name.
 
 The dedicated Live webhook destination is `https://qwen-image-3.net/api/billing/webhook`. It subscribes only to the Checkout, invoice, subscription, reversal, dispute, and `radar.early_fraud_warning.created` events handled by the Worker. The restricted runtime key needs read-only `Charges and Refunds` access so a Radar warning's Charge can be resolved to its PaymentIntent; it must not receive product/Price administration access after catalog setup.
 
@@ -327,6 +334,16 @@ Restore must target a separate D1 database first, run consistency and applicatio
 - Run Golden Prompt, moderation, timeout, invalid response, oversized asset, and rollback acceptance.
 - Record the exact model ID and verification date in `PRODUCT.md` and release evidence.
 - Do not label Qwen Image 3 available until a real, sourced integration exists.
+
+### Kie.ai Qwen Image 2
+
+- Create a dedicated Kie.ai API key for this Worker, restricted to `qwen2/text-to-image` with conservative hourly, daily, and total spend limits. Do not use an IP allowlist unless the Worker has a verified fixed egress address.
+- Store `KIE_API_KEY` only as a managed Worker secret. Keep `GENERATION_PROVIDER=local` until the real acceptance request is ready.
+- Confirm the API origin is exactly `https://api.kie.ai` and review every hostname reached by the generated-image URL and any redirect before adding it to `KIE_IMAGE_ALLOWED_HOSTS`.
+- Run one low-risk Golden Prompt through the signed-in Studio. Confirm task creation, polling, one credit settlement, immediate private R2 persistence, owned download, and no provider URL or credential in the browser, logs, D1, or API response.
+- Exercise invalid key, insufficient balance, provider rejection, unknown status, timeout, unapproved result host, redirect, invalid MIME/signature, and oversized asset behavior. Every failure must mark the task failed and refund the reserved product credits.
+- Kie.ai task creation is asynchronous, while the current product request waits synchronously for completion. Treat callback or durable-queue processing, cancellation, late-provider completion reconciliation, and cost monitoring as production gates.
+- Record the provider model, Kie task ID, returned-host evidence, product credit delta, provider charge, test time, Worker version, and rollback version in `RELEASE_READINESS.md` without recording the API key or expiring asset URL.
 
 ### Stripe
 

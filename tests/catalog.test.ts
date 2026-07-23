@@ -50,7 +50,16 @@ test("shared catalog core matches the browser contract", () => {
   assert.deepEqual(catalog.plans.map((plan) => plan.monthlyCredits), [500, 2000, 5000]);
   assert.deepEqual(catalog.plans.map((plan) => plan.yearlyCredits), [6000, 24000, 60000]);
   assert.ok(catalog.prompts.every((prompt) => prompt.id && prompt.category && prompt.title && prompt.prompt));
-  assert.ok(catalog.models.every((model) => model.id && model.provider && typeof model.available === "boolean" && model.status && model.speed && model.cost && model.bestFor));
+  assert.ok(catalog.models.every((model) => model.id
+    && model.provider
+    && typeof model.available === "boolean"
+    && model.status
+    && model.speed
+    && model.cost
+    && model.bestFor
+    && Array.isArray(model.supportedAspectRatios)
+    && Array.isArray(model.supportedQualities)
+    && Number.isSafeInteger(model.maxPromptLength)));
   assert.deepEqual(catalog.models.filter((model) => model.available).map((model) => model.id), ["local-qwen-preview"]);
   assert.equal(catalog.models.find((model) => model.id === "qwen-image-3")?.available, false);
   assert.equal(catalog.models.find((model) => model.id === "qwen-image-3")?.provider, "unassigned");
@@ -68,6 +77,25 @@ test("catalog exposes only the configured provider model as selectable", () => {
 
   assert.deepEqual(core.models.filter((model) => model.available).map((model) => model.id), ["qwen-image-2.0-pro"]);
   assert.equal(core.models.find((model) => model.id === "local-qwen-preview")?.available, false);
+});
+
+test("catalog exposes the configured Kie.ai Qwen2 model as selectable", () => {
+  const core = createCatalogCore({
+    providerId: "kie-ai",
+    providerModel: "qwen2/text-to-image",
+    providerConfigured: true,
+    creatorPriceLabel: "$10 / month",
+    creatorCredits: 300,
+    creatorPlanned: true,
+  });
+
+  assert.deepEqual(core.models.filter((model) => model.available).map((model) => model.id), ["qwen2/text-to-image"]);
+  const kie = core.models.find((model) => model.id === "qwen2/text-to-image");
+  assert.equal(kie?.provider, "kie-ai");
+  assert.deepEqual(kie?.supportedAspectRatios, ["1:1", "16:9", "4:3", "9:16"]);
+  assert.deepEqual(kie?.supportedQualities, ["Standard"]);
+  assert.equal(kie?.maxPromptLength, 800);
+  assert.equal(core.models.find((model) => model.id === "qwen-image-2.0-pro")?.available, false);
 });
 
 test("catalog never promotes an unsupported Qwen model override", () => {

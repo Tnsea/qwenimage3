@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { renderGeneration } from "../server/generator.js";
 import { BILLING_TERMS_VERSION } from "../src/billing-policy.js";
-import { createCatalogCore, createModelCatalog, SUPPORTED_QWEN_MODEL_ID } from "../src/catalog.js";
+import { createCatalogCore, createModelCatalog, KIE_QWEN_MODEL_ID, SUPPORTED_QWEN_MODEL_ID } from "../src/catalog.js";
 import { publicCanonicalUrl, rewritePublicCanonicalMetadata } from "../src/seo.js";
 import type {
   AccountSession,
@@ -73,6 +73,7 @@ import {
   type OAuthProvider,
 } from "./oauth.js";
 import { runMaintenance, type MaintenanceStripeEvent } from "./maintenance.js";
+import { KieQwenImageProvider } from "./kie.js";
 import { createToken, hashPassword, hashToken, hexToBytes, hmacSha256, timingSafeEqual, verifyPassword } from "./security.js";
 
 type Variables = {
@@ -221,18 +222,33 @@ const validSupportPriorities: SupportTicketPriority[] = ["normal", "high"];
 const qualityCosts: Record<ImageQuality, number> = { Standard: 4, High: 8, Ultra: 16 };
 
 function modelRuntime(env: Env) {
-  const providerId = env.GENERATION_PROVIDER?.trim().toLowerCase() === "qwen" ? "alibaba-model-studio" as const : "local-preview" as const;
-  const providerModel = env.QWEN_MODEL_ID?.trim() || (providerId === "alibaba-model-studio" ? SUPPORTED_QWEN_MODEL_ID : "local-qwen-preview");
+  const requestedProvider = env.GENERATION_PROVIDER?.trim().toLowerCase();
+  const providerId = requestedProvider === "kie"
+    ? "kie-ai" as const
+    : requestedProvider === "qwen"
+      ? "alibaba-model-studio" as const
+      : "local-preview" as const;
+  const providerModel = providerId === "kie-ai"
+    ? env.KIE_MODEL_ID?.trim() || KIE_QWEN_MODEL_ID
+    : env.QWEN_MODEL_ID?.trim() || (providerId === "alibaba-model-studio" ? SUPPORTED_QWEN_MODEL_ID : "local-qwen-preview");
   return {
     providerId,
     providerModel,
-    providerConfigured: providerId === "local-preview" || Boolean(
-      providerModel === SUPPORTED_QWEN_MODEL_ID
-        && env.DASHSCOPE_API_KEY?.trim()
-        && env.QWEN_API_BASE_URL?.trim()
-        && env.QWEN_API_ALLOWED_HOST?.trim()
-        && env.QWEN_IMAGE_ALLOWED_HOSTS?.trim(),
-    ),
+    providerConfigured: providerId === "local-preview"
+      || (providerId === "alibaba-model-studio" && Boolean(
+        providerModel === SUPPORTED_QWEN_MODEL_ID
+          && env.DASHSCOPE_API_KEY?.trim()
+          && env.QWEN_API_BASE_URL?.trim()
+          && env.QWEN_API_ALLOWED_HOST?.trim()
+          && env.QWEN_IMAGE_ALLOWED_HOSTS?.trim(),
+      ))
+      || (providerId === "kie-ai" && Boolean(
+        providerModel === KIE_QWEN_MODEL_ID
+          && env.KIE_API_KEY?.trim()
+          && env.KIE_API_BASE_URL?.trim()
+          && env.KIE_API_ALLOWED_HOST?.trim()
+          && env.KIE_IMAGE_ALLOWED_HOSTS?.trim(),
+      )),
   };
 }
 
@@ -758,6 +774,30 @@ async function generateAsset(env: Env, input: GenerationRequest) {
   if (selectedModel.provider === "local-preview") {
     const result = renderGeneration(input);
     return { bytes: encoder.encode(result.svg), mimeType: "image/svg+xml", width: result.width, height: result.height, provider: selectedModel.provider, model: selectedModel.id };
+  }
+  if (selectedModel.provider === "kie-ai") {
+    if (!env.KIE_API_KEY || !env.KIE_API_BASE_URL || !env.KIE_API_ALLOWED_HOST || !env.KIE_IMAGE_ALLOWED_HOSTS) {
+      throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The image provider is not configured.");
+    }
+    const provider = new KieQwenImageProvider({
+      apiKey: env.KIE_API_KEY,
+      baseUrl: env.KIE_API_BASE_URL,
+      allowedApiHost: env.KIE_API_ALLOWED_HOST,
+      allowedImageHosts: env.KIE_IMAGE_ALLOWED_HOSTS.split(","),
+      model: selectedModel.id,
+      requestTimeoutMs: timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS),
+      maxPollMs: timeoutMs(env.KIE_MAX_POLL_MS, 120_000),
+      pollIntervalMs: Number.parseInt(env.KIE_POLL_INTERVAL_MS || "2000", 10) || 2_000,
+    });
+    const result = await provider.generate(input);
+    return {
+      bytes: result.bytes,
+      mimeType: result.mimeType,
+      width: result.width,
+      height: result.height,
+      provider: result.provider,
+      model: result.model,
+    };
   }
   if (selectedModel.provider !== "alibaba-model-studio") {
     throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The selected image model has no assigned provider.");
@@ -2761,6 +2801,13 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
   if (!selectedModel) return errorResponse(c, 400, "MODEL_UNAVAILABLE", "Choose an available image model.");
   const input = validateGeneration({ ...normalized, modelId: selectedModel.id });
   if (!input) return errorResponse(c, 400, "INVALID_REQUEST", "Prompt or generation settings are invalid.");
+  if (
+    input.prompt.length > selectedModel.maxPromptLength
+    || !selectedModel.supportedAspectRatios.includes(input.aspectRatio)
+    || !selectedModel.supportedQualities.includes(input.quality)
+  ) {
+    return errorResponse(c, 400, "MODEL_SETTINGS_UNSUPPORTED", "Choose settings supported by the selected image model.");
+  }
   if (input.projectId) {
     const owns = actor.userId && await c.env.DB.prepare("SELECT 1 FROM projects WHERE id = ? AND user_id = ?").bind(input.projectId, actor.userId).first();
     if (!owns) return errorResponse(c, 400, "INVALID_PROJECT", "Choose a project that belongs to your account.");

@@ -19,7 +19,7 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 | Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
 | Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
 | Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, versioned policy acceptance, scheduled external-alert delivery, and external cleanup before account deletion |
-| Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio adapter for `qwen-image-2.0-pro` |
+| Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image` adapters |
 | Storage | D1 records and private R2 generation assets in both Wrangler development and the Cloudflare acceptance runtime |
 
 The application does **not** currently provide a durable asynchronous generation queue, approved retention/backup lifecycle, complete production monitoring, verified Qwen Image 3 integration, or externally accepted public billing. Billing-health email delivery and product-owner billing-copy acceptance passed in the Cloudflare acceptance environment; broader reconciliation monitoring and launch-region legal/commercial review remain open.
@@ -121,6 +121,23 @@ QWEN_IMAGE_ALLOWED_HOSTS=EXACT_PROVIDER_ASSET_HOST
 ```
 
 The Worker downloads provider output immediately and persists it in private R2. Both the API base and returned asset must use HTTPS and exact configured hosts; redirects are rejected. Assets must also use an allowed MIME type, match their image signature, and remain under 25 MB. Provider failures release the reservation.
+
+### Kie.ai Qwen Image 2
+
+The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, polls its status within a bounded request, then immediately downloads the expiring result into private R2. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. It is locally verified with mocked provider responses but must not be treated as externally accepted until one paid generation, returned-host review, timeout behavior, and rollback have passed in the acceptance environment.
+
+```bash
+GENERATION_PROVIDER=kie
+KIE_API_KEY=your_dedicated_kie_key
+KIE_API_BASE_URL=https://api.kie.ai
+KIE_API_ALLOWED_HOST=api.kie.ai
+KIE_MODEL_ID=qwen2/text-to-image
+KIE_IMAGE_ALLOWED_HOSTS=tempfile.aiquickdraw.com,file.aiquickdraw.com
+KIE_POLL_INTERVAL_MS=2000
+KIE_MAX_POLL_MS=120000
+```
+
+The API and every result or redirect target must use HTTPS and match an exact configured hostname. The Worker accepts PNG, JPEG, or WebP files whose signatures match their MIME type and whose total size does not exceed 25 MB. The current product request remains synchronous even though Kie.ai runs an asynchronous task; durable callback/queue handling remains a production gate.
 
 ### Stripe
 

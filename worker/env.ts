@@ -19,6 +19,13 @@ export interface Env extends BillingEnvironment {
   QWEN_API_ALLOWED_HOST?: string;
   DASHSCOPE_API_KEY?: string;
   QWEN_IMAGE_ALLOWED_HOSTS?: string;
+  KIE_API_KEY?: string;
+  KIE_API_BASE_URL?: string;
+  KIE_API_ALLOWED_HOST?: string;
+  KIE_MODEL_ID?: string;
+  KIE_IMAGE_ALLOWED_HOSTS?: string;
+  KIE_POLL_INTERVAL_MS?: string;
+  KIE_MAX_POLL_MS?: string;
   FREE_QUEUE_DELAY_MS?: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;

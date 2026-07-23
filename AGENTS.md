@@ -38,7 +38,7 @@ Run `npm run check`, `npm test`, and `npm run build` after behavior changes. For
 ## Truth and Release Boundaries
 
 - The default provider is a deterministic local SVG preview.
-- The implemented external adapter targets `qwen-image-2.0-pro`; no Qwen Image 3 integration is verified.
+- The implemented external adapters target Alibaba Cloud `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image`; neither is externally accepted, and no Qwen Image 3 integration is verified.
 - The Cloudflare Worker custom domain, D1, and R2 acceptance runtime is deployed and smoke-tested; Pages remains a fallback URL. Stripe restricted-key, signed-webhook, and one paid Sandbox credit-pack lifecycle are recorded in `docs/RELEASE_READINESS.md`. One real Google sign-in passed and Google's external-user consent screen is published; this is not product production approval. Google denial/failure paths, GitHub, Resend, Docker, real Qwen execution, and the remaining Stripe subscription/reversal/Portal/deletion lifecycle remain unverified.
 - Billing is fail-closed behind `BILLING_ENABLED` for new Checkout creation; configured webhook settlement and external cleanup stay available. Local and signed-event tests do not replace paid Stripe test-mode acceptance.
 - New guest generation is disabled. The scheduled 24-hour maintenance path remains only to drain legacy guest assets; backup deletion and production telemetry remain unverified.

@@ -46,6 +46,11 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
 
   const creditCost = qualities.find((item) => item.value === quality)?.credits ?? 2;
   const selectedModel = models.find((model) => model.id === modelId && model.available) ?? null;
+  const availableAspectRatios = selectedModel?.supportedAspectRatios.length ? selectedModel.supportedAspectRatios : aspectRatios;
+  const availableQualities = selectedModel?.supportedQualities.length
+    ? qualities.filter((item) => selectedModel.supportedQualities.includes(item.value))
+    : qualities;
+  const maxPromptLength = selectedModel?.maxPromptLength || 1000;
   const canGenerate = !generating && (!session.user || (prompt.trim().length >= 3 && Boolean(selectedModel)));
   const promptId = compact ? "studio-prompt" : "prompt";
 
@@ -64,6 +69,15 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
       setModelId(models.find((model) => model.available)?.id ?? "");
     }
   }, [modelId, models]);
+
+  useEffect(() => {
+    if (selectedModel && !selectedModel.supportedAspectRatios.includes(aspectRatio)) {
+      setAspectRatio(selectedModel.supportedAspectRatios[0] ?? "1:1");
+    }
+    if (selectedModel && !selectedModel.supportedQualities.includes(quality)) {
+      setQuality(selectedModel.supportedQualities[0] ?? "Standard");
+    }
+  }, [aspectRatio, quality, selectedModel]);
 
   useEffect(() => {
     if (session.user) {
@@ -147,7 +161,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
             id={promptId}
             className="textarea creation-prompt"
             value={prompt}
-            maxLength={1000}
+            maxLength={maxPromptLength}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -157,7 +171,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
             }}
             placeholder="Describe the image you want to create..."
           />
-          <span className="creation-count">{prompt.length}/1000</span>
+          <span className="creation-count">{prompt.length}/{maxPromptLength}</span>
         </div>
 
         <div className="creation-toolbar">
@@ -171,7 +185,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
               <span className="sr-only">Aspect ratio</span>
               <AspectGlyph ratio={aspectRatio} />
               <select className="select select-sm" value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as AspectRatio)} aria-label="Aspect ratio">
-                {aspectRatios.map((ratio) => <option key={ratio}>{ratio}</option>)}
+                {availableAspectRatios.map((ratio) => <option key={ratio}>{ratio}</option>)}
               </select>
             </label>
 
@@ -204,7 +218,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
             <label className="creation-select creation-quality-select">
               <span className="sr-only">Image quality</span>
               <select className="select select-sm" value={quality} onChange={(event) => setQuality(event.target.value as ImageQuality)} aria-label="Image quality">
-                {qualities.map((item) => <option key={item.value} value={item.value}>{item.value} · {item.credits} credit{item.credits > 1 ? "s" : ""}</option>)}
+                {availableQualities.map((item) => <option key={item.value} value={item.value}>{item.value} · {item.credits} credit{item.credits > 1 ? "s" : ""}</option>)}
               </select>
             </label>
 

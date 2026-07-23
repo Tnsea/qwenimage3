@@ -46,7 +46,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
 | Account-gated generation | **Implemented locally** with a signed-in requirement and server-authoritative credit reservation | External redeploy, real provider acceptance, and backup-deletion telemetry |
-| Real image provider | **Implemented, external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved model contract, license, cost model, live smoke, and rollback |
+| Real image provider | **Implemented, external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image` | Approved provider contract, license, cost model, paid live smoke, returned-host review, timeout behavior, and rollback |
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
@@ -260,7 +260,7 @@ The target policy must not be advertised as current behavior until cleanup telem
 - D1 stores relational records; private R2 stores generation source assets.
 - The Express/SQLite implementation is retained only as a legacy comparison adapter and is excluded from default scripts and deployment documentation.
 - Generation executes synchronously inside the HTTP request.
-- One active provider is selected by Worker environment: local preview or Alibaba Cloud Model Studio.
+- One active provider is selected by Worker environment: local preview, Alibaba Cloud Model Studio, or Kie.ai Qwen Image 2.
 - Rate-limit buckets, API request logs, idempotency state, maintenance runs, and cleanup compensation live in D1.
 
 ### Target production architecture

@@ -1,9 +1,12 @@
 import type { BillingOffer, Catalog, CatalogModel, CatalogPlan, CatalogPrompt, PricingPromotion } from "./types.js";
 
 export const SUPPORTED_QWEN_MODEL_ID = "qwen-image-2.0-pro";
+export const KIE_QWEN_MODEL_ID = "qwen2/text-to-image";
+const productAspectRatios = ["1:1", "3:2", "16:9", "4:3", "9:16"] as const;
+const productQualities = ["Standard", "High", "Ultra"] as const;
 
 export interface CatalogRuntime {
-  providerId: "local-preview" | "alibaba-model-studio";
+  providerId: "local-preview" | "alibaba-model-studio" | "kie-ai";
   providerModel: string;
   providerConfigured: boolean;
   creatorPriceLabel: string;
@@ -19,6 +22,9 @@ export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[]
   const qwenSelected = runtime.providerId === "alibaba-model-studio";
   const qwenModelSupported = runtime.providerModel === SUPPORTED_QWEN_MODEL_ID;
   const qwenAvailable = qwenSelected && qwenModelSupported && runtime.providerConfigured;
+  const kieSelected = runtime.providerId === "kie-ai";
+  const kieModelSupported = runtime.providerModel === KIE_QWEN_MODEL_ID;
+  const kieAvailable = kieSelected && kieModelSupported && runtime.providerConfigured;
 
   return [
     {
@@ -30,6 +36,9 @@ export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[]
       speed: "< 1 sec",
       cost: "4–16 account credits",
       bestFor: "Fast composition and layout previews",
+      supportedAspectRatios: [...productAspectRatios],
+      supportedQualities: [...productQualities],
+      maxPromptLength: 1000,
     },
     {
       id: SUPPORTED_QWEN_MODEL_ID,
@@ -40,6 +49,22 @@ export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[]
       speed: "Provider dependent",
       cost: "4–16 product credits",
       bestFor: "Provider-backed image generation through Alibaba Cloud Model Studio",
+      supportedAspectRatios: [...productAspectRatios],
+      supportedQualities: [...productQualities],
+      maxPromptLength: 1000,
+    },
+    {
+      id: KIE_QWEN_MODEL_ID,
+      name: "Qwen Image 2",
+      provider: "kie-ai",
+      available: kieAvailable,
+      status: kieAvailable ? "Available" : kieSelected && !kieModelSupported ? "Unsupported model configuration" : "Configuration required",
+      speed: "Provider dependent",
+      cost: "4 product credits",
+      bestFor: "2K provider-backed image generation through Kie.ai",
+      supportedAspectRatios: ["1:1", "16:9", "4:3", "9:16"],
+      supportedQualities: ["Standard"],
+      maxPromptLength: 800,
     },
     {
       id: "qwen-image-3",
@@ -50,6 +75,9 @@ export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[]
       speed: "Not available",
       cost: "Not available",
       bestFor: "Shown for roadmap transparency; generation is disabled",
+      supportedAspectRatios: [],
+      supportedQualities: [],
+      maxPromptLength: 0,
     },
   ];
 }
@@ -179,12 +207,19 @@ function isModel(value: unknown): value is CatalogModel {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.name === "string"
-    && ["local-preview", "alibaba-model-studio", "unassigned"].includes(String(value.provider))
+    && ["local-preview", "alibaba-model-studio", "kie-ai", "unassigned"].includes(String(value.provider))
     && typeof value.available === "boolean"
     && typeof value.status === "string"
     && typeof value.speed === "string"
     && typeof value.cost === "string"
-    && typeof value.bestFor === "string";
+    && typeof value.bestFor === "string"
+    && Array.isArray(value.supportedAspectRatios)
+    && value.supportedAspectRatios.every((item) => productAspectRatios.includes(item as typeof productAspectRatios[number]))
+    && Array.isArray(value.supportedQualities)
+    && value.supportedQualities.every((item) => productQualities.includes(item as typeof productQualities[number]))
+    && typeof value.maxPromptLength === "number"
+    && Number.isSafeInteger(value.maxPromptLength)
+    && value.maxPromptLength >= 0;
 }
 
 function isBillingOffer(value: unknown): value is BillingOffer {

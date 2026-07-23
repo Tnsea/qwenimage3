@@ -190,12 +190,15 @@ export interface CatalogPrompt {
 export interface CatalogModel {
   id: string;
   name: string;
-  provider: "local-preview" | "alibaba-model-studio" | "unassigned";
+  provider: "local-preview" | "alibaba-model-studio" | "kie-ai" | "unassigned";
   available: boolean;
   status: string;
   speed: string;
   cost: string;
   bestFor: string;
+  supportedAspectRatios: AspectRatio[];
+  supportedQualities: ImageQuality[];
+  maxPromptLength: number;
 }
 
 export interface Catalog {
