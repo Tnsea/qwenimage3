@@ -1050,6 +1050,7 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
 
   if (event.type === "invoice.paid") {
     const customerId = stripeObjectId(object.customer);
+    if (customerId && await deletedBillingOwnerExists(env, { customerId })) return;
     const subscriptionId = stripeInvoiceSubscription(object);
     const invoiceId = stripeObjectId(object.id);
     const paymentIntent = await stripeInvoicePaymentIntent(env, object, invoiceId);

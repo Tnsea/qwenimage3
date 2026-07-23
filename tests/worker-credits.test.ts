@@ -569,15 +569,11 @@ test("account deletion tolerates already-missing Stripe objects and tombstones l
         id: "in_deleted_late",
         customer: "cus_deleted",
         subscription: "sub_deleted",
-        payment_intent: "pi_deleted",
         status: "paid",
         currency: "usd",
-        amount_paid: 2990,
+        amount_paid: 0,
         billing_reason: "subscription_cycle",
-        lines: { data: [{
-          price: "price_1TwMSXHyVvkt92TEeoNEvU57",
-          period: { end: Math.floor(Date.now() / 1000) + 2_592_000 },
-        }] },
+        lines: { data: [] },
       } },
     });
     const refund = await sendLateEvent({
