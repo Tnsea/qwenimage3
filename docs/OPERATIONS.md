@@ -96,7 +96,7 @@ Current resources:
 - D1 database: `qwen-image-3-production`
 - R2 bucket: `qwen-image-3-assets`
 - Billing: disabled
-- Email/GitHub OAuth: disabled
+- Transactional account email and GitHub OAuth: disabled; Cloudflare Email Routing operational alerts: enabled
 - Google OAuth: enabled with Google Auth Platform publishing status `Production` for external Google accounts
 - Generation provider: deterministic local preview
 
