@@ -16,7 +16,7 @@ export function createCatalogCore(runtime: CatalogRuntime): Pick<Catalog, "plans
       name: "Guest",
       price: "$0",
       description: "Try the provider-aware image creation workflow",
-      features: ["3 generations per day", "Standard free queue", "Watermarked exports", "24-hour local history"],
+      features: ["3 generations per day", "Standard free queue", "Watermarked exports", "24-hour private history"],
     },
     {
       id: "free",
@@ -59,11 +59,11 @@ export function createCatalogCore(runtime: CatalogRuntime): Pick<Catalog, "plans
   const models: CatalogModel[] = [
     {
       id: "local-preview",
-      name: "Local Development Preview",
+      name: "Deterministic Preview",
       status: runtime.providerId === "local-preview" ? "Available" : "Development fallback",
       speed: "< 1 sec",
       cost: "Free guest / 1–4 credits",
-      bestFor: "Layout, prompt iteration, local development",
+      bestFor: "Layout and prompt iteration",
     },
     {
       id: runtime.providerId === "alibaba-model-studio" ? runtime.providerModel : "qwen-image-2.0-pro",

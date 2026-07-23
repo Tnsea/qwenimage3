@@ -6,11 +6,11 @@ export function HomeHero() {
       <div className="hero-content">
         <div className="release-pill">
           <Sparkles size={14} aria-hidden="true" />
-          <span>Independent Qwen Image 3 guide · Current provider shown before generation</span>
+          <span>Qwen Image 3 AI image generator · Current provider shown before generation</span>
         </div>
         <h1 id="page-title">
-          Qwen Image 3
-          <span>Prompt Guide &amp; Generator</span>
+          Qwen Image 3{" "}
+          <span>AI Image Generator Hub</span>
         </h1>
         <p className="hero-copy">
           Explore Qwen Image 3 prompt techniques, model-readiness updates, and a private AI image workflow.

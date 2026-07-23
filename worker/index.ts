@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { renderGeneration } from "../server/generator.js";
 import { createCatalogCore } from "../src/catalog.js";
 import type {
@@ -18,7 +19,15 @@ import type {
   PricingPromotion,
   Project,
   SessionState,
+  SupportMessage,
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTicketDetail,
+  SupportTicketPriority,
+  SupportTicketStatus,
   User,
+  WorkspaceActivity,
+  WorkspaceOverview,
 } from "../src/types.js";
 import {
   allOffers,
@@ -27,24 +36,31 @@ import {
   billingEnabled,
   stripeAccessConfigured,
   stripeWebhookConfigured,
-  type BillingEnvironment,
 } from "./offers.js";
+import {
+  creditMutationApplied,
+  grantCredits,
+  prepareCreditGrant,
+  prepareCreditReservation,
+  refundCredits,
+  settleCredits,
+} from "./credits.js";
+import type { Env } from "./env.js";
+import {
+  ExternalRequestError,
+  fetchWithTimeout,
+  timeoutMs,
+  trustedServiceUrl,
+} from "./external.js";
+import {
+  createAuthorizationUrl,
+  exchangeOAuthCode,
+  isOAuthProvider,
+  oauthMethods,
+  type OAuthProvider,
+} from "./oauth.js";
+import { runMaintenance, type MaintenanceStripeEvent } from "./maintenance.js";
 import { createToken, hashPassword, hashToken, hexToBytes, hmacSha256, timingSafeEqual, verifyPassword } from "./security.js";
-
-interface Env extends BillingEnvironment {
-  DB: D1Database;
-  ASSETS_BUCKET: R2Bucket;
-  ASSETS: Fetcher;
-  APP_BASE_URL: string;
-  GENERATION_PROVIDER?: string;
-  QWEN_MODEL_ID?: string;
-  QWEN_API_BASE_URL?: string;
-  DASHSCOPE_API_KEY?: string;
-  QWEN_IMAGE_ALLOWED_HOSTS?: string;
-  FREE_QUEUE_DELAY_MS?: string;
-  RESEND_API_KEY?: string;
-  EMAIL_FROM?: string;
-}
 
 type Variables = {
   requestId: string;
@@ -138,11 +154,7 @@ interface BillingPriceVersionRow {
   retired_at: string | null;
 }
 
-interface StripeEvent {
-  id: string;
-  type: string;
-  data: { object: Record<string, unknown> };
-}
+type StripeEvent = MaintenanceStripeEvent;
 
 const app = new Hono<WorkerContext>();
 const encoder = new TextEncoder();
@@ -154,6 +166,8 @@ const billingOfferIds = ["creator_intro", "creator_monthly", "credits_100", "cre
 const validRatios: AspectRatio[] = ["1:1", "3:2", "16:9", "4:3", "9:16"];
 const validStyles: ImageStyle[] = ["Photorealistic", "Editorial", "Cinematic", "Illustration"];
 const validQualities: ImageQuality[] = ["Standard", "High", "Ultra"];
+const validSupportCategories: SupportTicketCategory[] = ["generation", "billing", "api", "account", "other"];
+const validSupportPriorities: SupportTicketPriority[] = ["normal", "high"];
 const qualityCosts: Record<ImageQuality, number> = { Standard: 1, High: 2, Ultra: 4 };
 
 function now() {
@@ -193,7 +207,7 @@ function ipHint(c: Context<WorkerContext>) {
 }
 
 function errorResponse(c: Context<WorkerContext>, status: number, code: string, message: string) {
-  return c.json({ error: { code, message, requestId: c.get("requestId") } }, status as any);
+  return c.json({ error: { code, message, requestId: c.get("requestId") } }, status as ContentfulStatusCode);
 }
 
 function setPrivateCookie(c: Context<WorkerContext>, name: string, value: string, days: number) {
@@ -450,9 +464,14 @@ async function createSession(c: Context<WorkerContext>, userId: string) {
 
 async function createSecurityToken(env: Env, userId: string, purpose: "verify_email" | "reset_password") {
   const token = createToken();
+  const timestamp = now();
   const lifetime = purpose === "verify_email" ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-  await env.DB.prepare("INSERT INTO security_tokens (id, user_id, purpose, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), userId, purpose, await hashToken(token), new Date(Date.now() + lifetime).toISOString(), now()).run();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM security_tokens WHERE user_id = ? AND purpose = ? AND consumed_at IS NULL")
+      .bind(userId, purpose),
+    env.DB.prepare("INSERT INTO security_tokens (id, user_id, purpose, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), userId, purpose, await hashToken(token), new Date(Date.now() + lifetime).toISOString(), timestamp),
+  ]);
   return token;
 }
 
@@ -461,17 +480,100 @@ async function sendAuthEmail(env: Env, input: { email: string; name: string; tok
   const path = input.purpose === "verify_email" ? "/verify-email" : "/reset-password";
   const url = `${env.APP_BASE_URL.replace(/\/$/, "")}${path}?token=${encodeURIComponent(input.token)}`;
   const action = input.purpose === "verify_email" ? "Verify email" : "Reset password";
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: env.EMAIL_FROM,
       to: [input.email],
-      subject: `${action} · Qwen Image 3.0`,
+      subject: `${action} · Qwen Image Generator Hub`,
       html: `<p>Hello ${input.name.replace(/[<>&"']/g, "")},</p><p><a href="${url}">${action}</a>. This private link expires automatically.</p>`,
     }),
-  });
+  }, timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS), "Email delivery");
   return response.ok;
+}
+
+async function resolveOAuthUser(
+  env: Env,
+  input: { provider: OAuthProvider; subject: string; email: string; name: string },
+) {
+  const identity = await env.DB.prepare(`SELECT u.* FROM oauth_identities i
+    JOIN users u ON u.id = i.user_id
+    WHERE i.provider = ? AND i.provider_subject = ?`)
+    .bind(input.provider, input.subject)
+    .first<UserRow>();
+  if (identity) return identity;
+
+  let user = await env.DB.prepare("SELECT * FROM users WHERE email_normalized = ?")
+    .bind(input.email.toLowerCase())
+    .first<UserRow>();
+  const timestamp = now();
+  if (!user) {
+    const userId = crypto.randomUUID();
+    const identityId = crypto.randomUUID();
+    const welcomeGrant = prepareCreditGrant(env.DB, {
+      userId,
+      amount: 20,
+      type: "signup_grant",
+      referenceId: "email-verification",
+      description: "Verified social-account starter credits",
+      timestamp,
+    });
+    try {
+      const results = await env.DB.batch([
+        env.DB.prepare(`INSERT INTO users
+          (id, name, email_normalized, password_hash, email_verified_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .bind(
+            userId,
+            input.name.slice(0, 60),
+            input.email.toLowerCase(),
+            await hashPassword(createToken()),
+            timestamp,
+            timestamp,
+            timestamp,
+          ),
+        env.DB.prepare("INSERT INTO credit_accounts (user_id, available, reserved, updated_at) VALUES (?, 0, 0, ?)")
+          .bind(userId, timestamp),
+        env.DB.prepare("INSERT INTO billing_accounts (user_id, updated_at) VALUES (?, ?)")
+          .bind(userId, timestamp),
+        env.DB.prepare(`INSERT INTO oauth_identities
+          (id, user_id, provider, provider_subject, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .bind(identityId, userId, input.provider, input.subject, timestamp),
+        ...welcomeGrant.statements,
+      ]);
+      creditMutationApplied(results, 4);
+    } catch (reason) {
+      const raced = await env.DB.prepare("SELECT * FROM users WHERE email_normalized = ?")
+        .bind(input.email.toLowerCase())
+        .first<UserRow>();
+      if (!raced) throw reason;
+      user = raced;
+    }
+    if (!user) {
+      user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
+    }
+  }
+
+  if (!user) throw new Error("OAuth user resolution failed.");
+  const grant = prepareCreditGrant(env.DB, {
+    userId: user.id,
+    amount: 20,
+    type: "signup_grant",
+    referenceId: "email-verification",
+    description: "Verified social-account starter credits",
+    timestamp,
+  });
+  const results = await env.DB.batch([
+    env.DB.prepare("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?")
+      .bind(timestamp, timestamp, user.id),
+    env.DB.prepare(`INSERT OR IGNORE INTO oauth_identities
+      (id, user_id, provider, provider_subject, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), user.id, input.provider, input.subject, timestamp),
+    ...grant.statements,
+  ]);
+  creditMutationApplied(results, 2);
+  return (await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.id).first<UserRow>())!;
 }
 
 function generationFromRow(row: GenerationRow): Generation {
@@ -536,9 +638,23 @@ async function generateAsset(env: Env, input: GenerationRequest) {
     const result = renderGeneration(input);
     return { bytes: encoder.encode(result.svg), mimeType: "image/svg+xml", width: result.width, height: result.height, provider: "local-preview", model: "local-qwen-preview" };
   }
-  if (!env.DASHSCOPE_API_KEY || !env.QWEN_API_BASE_URL) throw new Error("Qwen provider is not configured.");
+  if (!env.DASHSCOPE_API_KEY || !env.QWEN_API_BASE_URL || !env.QWEN_API_ALLOWED_HOST || !env.QWEN_IMAGE_ALLOWED_HOSTS) {
+    throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The image provider is not configured.");
+  }
+  const providerBase = new URL(env.QWEN_API_BASE_URL);
+  const providerHost = env.QWEN_API_ALLOWED_HOST?.trim().toLowerCase() || "";
+  if (
+    providerBase.protocol !== "https:"
+    || providerBase.username
+    || providerBase.password
+    || providerBase.port
+    || !providerHost
+    || providerBase.hostname.toLowerCase() !== providerHost
+  ) {
+    throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The image provider is not configured.");
+  }
   const dimensions = imageDimensions(input.quality, input.aspectRatio);
-  const response = await fetch(`${env.QWEN_API_BASE_URL.replace(/\/$/, "")}/services/aigc/multimodal-generation/generation`, {
+  const response = await fetchWithTimeout(`${providerBase.toString().replace(/\/$/, "")}/services/aigc/multimodal-generation/generation`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.DASHSCOPE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -546,21 +662,31 @@ async function generateAsset(env: Env, input: GenerationRequest) {
       input: { messages: [{ role: "user", content: [{ text: `${input.prompt}\nVisual direction: ${input.style.toLowerCase()}.` }] }] },
       parameters: { size: `${dimensions.width}*${dimensions.height}`, n: 1, prompt_extend: true, watermark: false },
     }),
-  });
+  }, timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS, 60_000), "Image generation provider");
   const payload = await response.json() as { code?: string; message?: string; output?: { choices?: Array<{ message?: { content?: Array<{ image?: string }> } }> } };
-  if (!response.ok) throw new Error(payload.message || "The Qwen provider rejected the generation.");
-  const imageUrl = payload.output?.choices?.[0]?.message?.content?.find((item) => item.image)?.image;
-  if (!imageUrl) throw new Error("The Qwen provider returned no image.");
-  const parsed = new URL(imageUrl);
-  const allowedHosts = (env.QWEN_IMAGE_ALLOWED_HOSTS || "aliyuncs.com").split(",").map((value) => value.trim().replace(/^\*\./, "")).filter(Boolean);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || !allowedHosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
-    throw new Error("The Qwen provider returned an untrusted image location.");
+  if (!response.ok) {
+    throw new ExternalRequestError(
+      "PROVIDER_REJECTED",
+      "The image provider could not complete this request.",
+      payload.message || `Provider request failed with status ${response.status}.`,
+    );
   }
-  const image = await fetch(parsed, { redirect: "error" });
-  if (!image.ok) throw new Error("The generated image could not be downloaded.");
+  const imageUrl = payload.output?.choices?.[0]?.message?.content?.find((item) => item.image)?.image;
+  if (!imageUrl) throw new ExternalRequestError("PROVIDER_RESPONSE_INVALID", "The image provider returned no usable image.");
+  const parsed = new URL(imageUrl);
+  const allowedHosts = env.QWEN_IMAGE_ALLOWED_HOSTS.split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value && !value.includes("*"));
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || !allowedHosts.includes(parsed.hostname.toLowerCase())) {
+    throw new ExternalRequestError("PROVIDER_ASSET_REJECTED", "The image provider returned an untrusted asset location.");
+  }
+  const image = await fetchWithTimeout(parsed, { redirect: "error" }, timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS), "Generated image download");
+  if (!image.ok) throw new ExternalRequestError("PROVIDER_ASSET_UNAVAILABLE", "The generated image could not be downloaded.");
   const mimeType = (image.headers.get("content-type") || "").split(";")[0].toLowerCase();
   const bytes = new Uint8Array(await image.arrayBuffer());
-  if (bytes.byteLength > 25 * 1024 * 1024 || !validImageSignature(bytes, mimeType)) throw new Error("The generated image did not pass asset validation.");
+  if (bytes.byteLength > 25 * 1024 * 1024 || !validImageSignature(bytes, mimeType)) {
+    throw new ExternalRequestError("PROVIDER_ASSET_INVALID", "The generated image did not pass asset validation.");
+  }
   return { bytes, mimeType, ...dimensions, provider: "alibaba-model-studio", model: env.QWEN_MODEL_ID || "qwen-image-2.0-pro" };
 }
 
@@ -579,18 +705,36 @@ function watermarkedSvg(bytes: Uint8Array, mimeType: string, width: number, heig
   const unit = Math.min(safeWidth, safeHeight);
   const font = Math.max(18, Math.round(unit * 0.026));
   const source = `data:${mimeType};base64,${bytesToBase64(bytes)}`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}" data-export-watermark="free"><defs><pattern id="wm" width="${Math.max(280, font * 14)}" height="${Math.max(150, font * 7)}" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><text x="0" y="${font * 4}" fill="#fff" fill-opacity=".18" font-family="Arial,sans-serif" font-size="${font}" font-weight="700">QWEN IMAGE 3.0 · FREE</text></pattern></defs><image href="${source}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice"/><rect width="100%" height="100%" fill="url(#wm)"/><g transform="translate(${Math.max(16, safeWidth - 330)} ${Math.max(16, safeHeight - 72)})"><rect width="310" height="52" rx="26" fill="#080909" fill-opacity=".84" stroke="#fff" stroke-opacity=".24"/><circle cx="26" cy="26" r="8" fill="#8b5cf6"/><text x="48" y="33" fill="#fff" font-family="Arial,sans-serif" font-size="16" font-weight="700">Qwen Image 3.0 · Free export</text></g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}" data-export-watermark="free"><defs><pattern id="wm" width="${Math.max(320, font * 16)}" height="${Math.max(150, font * 7)}" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><text x="0" y="${font * 4}" fill="#fff" fill-opacity=".18" font-family="Arial,sans-serif" font-size="${font}" font-weight="700">QWEN IMAGE HUB · FREE</text></pattern></defs><image href="${source}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice"/><rect width="100%" height="100%" fill="url(#wm)"/><g transform="translate(${Math.max(16, safeWidth - 350)} ${Math.max(16, safeHeight - 72)})"><rect width="330" height="52" rx="26" fill="#080909" fill-opacity=".84" stroke="#fff" stroke-opacity=".24"/><circle cx="26" cy="26" r="8" fill="#8b5cf6"/><text x="48" y="33" fill="#fff" font-family="Arial,sans-serif" font-size="16" font-weight="700">Qwen Image Hub · Free export</text></g></svg>`;
 }
 
-async function stripeRequest<T>(env: Env, path: string, body?: URLSearchParams, method = "POST") {
-  if (!stripeAccessConfigured(env) || !env.STRIPE_SECRET_KEY) throw new Error("Stripe API access is not configured.");
-  const response = await fetch(`https://api.stripe.com${path}`, {
+async function stripeRequest<T>(
+  env: Env,
+  path: string,
+  body?: URLSearchParams,
+  method = "POST",
+  idempotencyKey?: string,
+) {
+  if (!stripeAccessConfigured(env) || !env.STRIPE_SECRET_KEY) {
+    throw new ExternalRequestError("BILLING_UNAVAILABLE", "Billing services are unavailable.");
+  }
+  const response = await fetchWithTimeout(`https://api.stripe.com${path}`, {
     method,
-    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
     body,
-  });
+  }, timeoutMs(env.STRIPE_TIMEOUT_MS), "Billing provider");
   const payload = await response.json() as T & { error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message || `Stripe request failed with status ${response.status}.`);
+  if (!response.ok) {
+    throw new ExternalRequestError(
+      "BILLING_PROVIDER_FAILED",
+      "Billing services could not complete this request.",
+      payload.error?.message || `Stripe request failed with status ${response.status}.`,
+    );
+  }
   return payload;
 }
 
@@ -678,16 +822,6 @@ async function verifyStripeSignature(secret: string, body: string, signature: st
   return signatures.some((value) => timingSafeEqual(expected, hexToBytes(value)));
 }
 
-async function addCredits(env: Env, input: { userId: string; amount: number; type: CreditEntry["type"]; referenceId: string; description: string }) {
-  const account = await creditAccount(env, input.userId);
-  const balance = account.available + input.amount;
-  await env.DB.batch([
-    env.DB.prepare("UPDATE credit_accounts SET available = ?, updated_at = ? WHERE user_id = ?").bind(balance, now(), input.userId),
-    env.DB.prepare("INSERT OR IGNORE INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), input.userId, input.type, input.amount, balance, input.referenceId, input.description, now()),
-  ]);
-}
-
 async function enforceRateLimit(c: Context<WorkerContext>, scope: string, limit: number, windowMs: number) {
   const timestamp = Date.now();
   const key = `${scope}:${c.req.header("cf-connecting-ip") || "unknown"}`;
@@ -712,11 +846,66 @@ async function enforceRateLimit(c: Context<WorkerContext>, scope: string, limit:
   return errorResponse(c, 429, "RATE_LIMITED", "Too many requests. Wait a moment and try again.");
 }
 
+function stripeMetadata(object: Record<string, unknown>) {
+  return object.metadata && typeof object.metadata === "object"
+    ? object.metadata as Record<string, unknown>
+    : {};
+}
+
+async function resolveCheckoutOrder(env: Env, object: Record<string, unknown>) {
+  const sessionId = stripeObjectId(object.id);
+  let order = await env.DB.prepare("SELECT * FROM billing_orders WHERE stripe_checkout_session_id = ?")
+    .bind(sessionId)
+    .first<BillingOrderRow>();
+  if (order) return order;
+
+  const attemptId = String(stripeMetadata(object).order_id || "");
+  if (!attemptId || !sessionId) return null;
+  const attempt = await env.DB.prepare(`SELECT * FROM billing_checkout_attempts
+    WHERE id = ? AND status IN ('creating', 'created', 'failed', 'completed')`)
+    .bind(attemptId)
+    .first<{
+      id: string;
+      user_id: string;
+      offer_id: string;
+      kind: "subscription" | "credits";
+      credits: number;
+      amount_cents: number;
+      currency: string;
+      stripe_price_id: string;
+    }>();
+  if (!attempt) return null;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT OR IGNORE INTO billing_orders
+      (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        attempt.id,
+        attempt.user_id,
+        sessionId,
+        attempt.offer_id,
+        attempt.kind,
+        attempt.credits,
+        attempt.amount_cents,
+        attempt.currency,
+        attempt.stripe_price_id,
+        now(),
+      ),
+    env.DB.prepare(`UPDATE billing_checkout_attempts
+      SET stripe_checkout_session_id = ?, status = 'created', updated_at = ?
+      WHERE id = ?`)
+      .bind(sessionId, now(), attempt.id),
+  ]);
+  order = await env.DB.prepare("SELECT * FROM billing_orders WHERE stripe_checkout_session_id = ?")
+    .bind(sessionId)
+    .first<BillingOrderRow>();
+  return order ?? null;
+}
+
 async function handleStripeEvent(env: Env, event: StripeEvent) {
   const object = event.data.object;
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
-    const sessionId = stripeObjectId(object.id);
-    const order = await env.DB.prepare("SELECT * FROM billing_orders WHERE stripe_checkout_session_id = ?").bind(sessionId).first<BillingOrderRow>();
+    const order = await resolveCheckoutOrder(env, object);
     if (!order) throw new Error("Stripe checkout does not match a local order.");
     if (order.status === "paid") return;
     if (order.kind === "credits") {
@@ -724,11 +913,14 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
       if (object.payment_status !== "paid" || !paymentIntent) throw new Error("Credit checkout is not paid.");
       const existing = await env.DB.prepare("SELECT payment_intent_id FROM billing_payments WHERE payment_intent_id = ?").bind(paymentIntent).first();
       if (!existing) {
-        await addCredits(env, { userId: order.user_id, amount: order.credits, type: "purchase_grant", referenceId: paymentIntent, description: `${order.credits}-credit Stripe purchase` });
+        await grantCredits(env.DB, { userId: order.user_id, amount: order.credits, type: "purchase_grant", referenceId: paymentIntent, description: `${order.credits}-credit Stripe purchase` });
         await env.DB.prepare("INSERT INTO billing_payments (payment_intent_id, user_id, billing_order_id, kind, credits_granted, amount_cents, currency, stripe_price_id, created_at, updated_at) VALUES (?, ?, ?, 'credits', ?, ?, ?, ?, ?, ?)")
           .bind(paymentIntent, order.user_id, order.id, order.credits, order.amount_cents, order.currency, order.stripe_price_id, now(), now()).run();
       }
-      await env.DB.prepare("UPDATE billing_orders SET status = 'paid', payment_intent_id = ?, completed_at = ? WHERE id = ?").bind(paymentIntent, now(), order.id).run();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE billing_orders SET status = 'paid', payment_intent_id = ?, completed_at = ? WHERE id = ?").bind(paymentIntent, now(), order.id),
+        env.DB.prepare("UPDATE billing_checkout_attempts SET status = 'completed', updated_at = ? WHERE id = ?").bind(now(), order.id),
+      ]);
       return;
     }
     const customerId = stripeObjectId(object.customer);
@@ -740,6 +932,7 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
         .bind(customerId, subscriptionId, now(), order.user_id),
       env.DB.prepare("UPDATE pricing_promotions SET redeemed_at = ? WHERE user_id = ? AND offer_id = 'creator_intro' AND ? = 'creator_intro'")
         .bind(now(), order.user_id, order.offer_id),
+      env.DB.prepare("UPDATE billing_checkout_attempts SET status = 'completed', updated_at = ? WHERE id = ?").bind(now(), order.id),
     ]);
     return;
   }
@@ -768,7 +961,7 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     if (!account || (account.stripe_subscription_id && account.stripe_subscription_id !== subscriptionId)) throw new Error("Paid invoice does not match a local subscription.");
     const existing = await env.DB.prepare("SELECT payment_intent_id FROM billing_payments WHERE payment_intent_id = ? OR invoice_id = ?").bind(paymentIntent, invoiceId).first();
     if (!existing) {
-      await addCredits(env, { userId: account.user_id, amount: priceVersion.credits, type: "subscription_grant", referenceId: invoiceId, description: "Creator VIP monthly credits" });
+      await grantCredits(env.DB, { userId: account.user_id, amount: priceVersion.credits, type: "subscription_grant", referenceId: invoiceId, description: "Creator VIP monthly credits" });
       await env.DB.prepare("INSERT INTO billing_payments (payment_intent_id, user_id, invoice_id, kind, credits_granted, amount_cents, currency, stripe_price_id, created_at, updated_at) VALUES (?, ?, ?, 'subscription', ?, ?, ?, ?, ?, ?)")
         .bind(paymentIntent, account.user_id, invoiceId, priceVersion.credits, priceVersion.amount_cents, priceVersion.currency, priceVersion.stripe_price_id, now(), now()).run();
     }
@@ -809,12 +1002,13 @@ app.use("*", async (c, next) => {
   c.set("requestId", requestId);
   await next();
   c.header("X-Request-Id", requestId);
-  c.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.stripe.com; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+  c.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "DENY");
   c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  c.header("Cross-Origin-Opener-Policy", "same-origin");
 });
 
 app.use("*", async (c, next) => {
@@ -829,10 +1023,19 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+export function browserWriteOriginAllowed(request: Request, appBaseUrl: string) {
+  const origin = request.headers.get("origin")?.replace(/\/$/, "");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (origin) {
+    const requestOrigin = new URL(request.url).origin;
+    return origin === appBaseUrl.replace(/\/$/, "") || origin === requestOrigin;
+  }
+  return !fetchSite || ["same-origin", "none"].includes(fetchSite);
+}
+
 app.use("*", async (c, next) => {
   if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method) && !c.req.header("authorization") && c.req.path !== "/api/billing/webhook") {
-    const origin = c.req.header("origin");
-    if (origin && origin.replace(/\/$/, "") !== c.env.APP_BASE_URL.replace(/\/$/, "")) {
+    if (!browserWriteOriginAllowed(c.req.raw, c.env.APP_BASE_URL)) {
       return errorResponse(c, 403, "ORIGIN_REJECTED", "This request origin is not allowed.");
     }
   }
@@ -849,6 +1052,38 @@ app.use("/api/generations", async (c, next) => {
   const limited = await enforceRateLimit(c, "web-generation", 30, 60 * 1000);
   if (limited) return limited;
   await next();
+});
+
+app.use("/v1/generations", async (c, next) => {
+  const startedAt = Date.now();
+  const actor = await resolveActor(c, false);
+  c.set("actor", actor);
+  try {
+    await next();
+  } finally {
+    try {
+      await c.env.DB.prepare(`INSERT INTO api_request_logs
+        (id, user_id, api_key_id, method, path, status_code, duration_ms, request_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(
+          crypto.randomUUID(),
+          actor?.userId ?? null,
+          actor?.apiKeyId ?? null,
+          c.req.method,
+          "/v1/generations",
+          c.res.status,
+          Date.now() - startedAt,
+          c.get("requestId"),
+          now(),
+        )
+        .run();
+    } catch (reason) {
+      console.error("api-request-log-failed", {
+        requestId: c.get("requestId"),
+        reason: reason instanceof Error ? reason.message : "unknown",
+      });
+    }
+  }
 });
 
 app.use("/v1/generations", async (c, next) => {
@@ -869,18 +1104,48 @@ app.use("/api/billing/*", async (c, next) => {
 
 app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
-  const providerConfigured = c.env.GENERATION_PROVIDER !== "qwen" || Boolean(c.env.DASHSCOPE_API_KEY && c.env.QWEN_API_BASE_URL);
+  const providerConfigured = c.env.GENERATION_PROVIDER !== "qwen" || Boolean(
+    c.env.DASHSCOPE_API_KEY
+      && c.env.QWEN_API_BASE_URL
+      && c.env.QWEN_API_ALLOWED_HOST
+      && c.env.QWEN_IMAGE_ALLOWED_HOSTS,
+  );
   const priceCatalogConfigured = (await activeBillingPriceVersions(c.env)).length === billingOfferIds.length;
+  const maintenance = await c.env.DB.prepare(`SELECT status, started_at, completed_at
+    FROM maintenance_runs ORDER BY started_at DESC LIMIT 1`)
+    .first<{ status: string; started_at: string; completed_at: string | null }>();
+  const oauth = oauthMethods(c.env);
+  const maintenanceCompletedAt = maintenance?.completed_at ? Date.parse(maintenance.completed_at) : Number.NaN;
+  const maintenanceAgeSeconds = Number.isFinite(maintenanceCompletedAt)
+    ? Math.max(0, Math.floor((Date.now() - maintenanceCompletedAt) / 1000))
+    : null;
   return c.json({
     status: providerConfigured ? "ok" : "degraded",
+    runtime: "cloudflare-worker",
+    revision: c.env.CF_VERSION_METADATA?.id || c.env.DEPLOY_REVISION || "unversioned",
     database: "cloudflare-d1",
     objectStorage: "cloudflare-r2",
     generator: c.env.QWEN_MODEL_ID || "local-qwen-preview",
     provider: c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview",
     providerConfigured,
     auth: "session-cookie",
-    oauth: { google: false, github: false },
+    oauth,
     email: { provider: c.env.RESEND_API_KEY ? "resend" : "none", configured: Boolean(c.env.RESEND_API_KEY && c.env.EMAIL_FROM) },
+    maintenance: maintenance ? {
+      status: maintenance.status,
+      startedAt: maintenance.started_at,
+      completedAt: maintenance.completed_at,
+      ageSeconds: maintenanceAgeSeconds,
+      fresh: maintenance.status === "completed"
+        && maintenanceAgeSeconds !== null
+        && maintenanceAgeSeconds <= 30 * 60,
+    } : {
+      status: "pending-first-run",
+      startedAt: null,
+      completedAt: null,
+      ageSeconds: null,
+      fresh: false,
+    },
     billing: {
       provider: "stripe",
       enabled: billingEnabled(c.env),
@@ -895,7 +1160,10 @@ app.get("/api/health", async (c) => {
 
 app.get("/api/session", async (c) => c.json(await sessionState(c.env, await resolveActor(c))));
 
-app.get("/api/auth/methods", (c) => c.json({ password: true, google: false, github: false }));
+app.get("/api/auth/methods", (c) => c.json({
+  password: true,
+  ...oauthMethods(c.env),
+}));
 
 app.post("/api/auth/register", async (c) => {
   const body = await readBody(c);
@@ -961,14 +1229,23 @@ app.post("/api/auth/verify-email", async (c) => {
     .bind(tokenHash, now()).first<{ id: string; user_id: string }>();
   if (!row) return errorResponse(c, 400, "INVALID_TOKEN", "This verification link is invalid or expired.");
   const timestamp = now();
-  const account = await creditAccount(c.env, row.user_id);
-  await c.env.DB.batch([
+  const welcomeGrant = prepareCreditGrant(c.env.DB, {
+    userId: row.user_id,
+    amount: 20,
+    type: "signup_grant",
+    referenceId: "email-verification",
+    description: "Verified account starter credits",
+    timestamp,
+  });
+  const results = await c.env.DB.batch([
     c.env.DB.prepare("UPDATE security_tokens SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL").bind(timestamp, row.id),
     c.env.DB.prepare("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?").bind(timestamp, timestamp, row.user_id),
-    c.env.DB.prepare("UPDATE credit_accounts SET available = CASE WHEN available = 0 THEN 20 ELSE available END, updated_at = ? WHERE user_id = ?").bind(timestamp, row.user_id),
-    ...(account.available === 0 ? [c.env.DB.prepare("INSERT OR IGNORE INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at) VALUES (?, ?, 'signup_grant', 20, 20, 'email-verification', 'Verified account starter credits', ?)")
-      .bind(crypto.randomUUID(), row.user_id, timestamp)] : []),
+    ...welcomeGrant.statements,
   ]);
+  if (!(results[0].meta.changes ?? 0)) {
+    return errorResponse(c, 400, "INVALID_TOKEN", "This verification link was already used.");
+  }
+  creditMutationApplied(results, 2);
   return c.json({ verified: true });
 });
 
@@ -997,6 +1274,80 @@ app.post("/api/auth/password-reset/confirm", async (c) => {
     c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(row.user_id),
   ]);
   return c.json({ reset: true });
+});
+
+app.get("/api/auth/oauth/:provider/start", async (c) => {
+  const provider = c.req.param("provider");
+  if (!isOAuthProvider(provider)) return errorResponse(c, 404, "NOT_FOUND", "Sign-in provider not found.");
+  if (!oauthMethods(c.env)[provider]) {
+    return errorResponse(c, 503, "OAUTH_UNAVAILABLE", "This sign-in provider is not configured.");
+  }
+  const actor = await resolveActor(c);
+  const state = createToken();
+  const codeVerifier = createToken(48);
+  const timestamp = now();
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at <= ?").bind(timestamp),
+    c.env.DB.prepare(`INSERT INTO oauth_states
+      (state_hash, provider, code_verifier, anonymous_session_id, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(
+        await hashToken(state),
+        provider,
+        codeVerifier,
+        actor.anonymousSessionId,
+        new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        timestamp,
+      ),
+  ]);
+  try {
+    return c.redirect(await createAuthorizationUrl(c.env, provider, state, codeVerifier), 302);
+  } catch (reason) {
+    console.error("oauth-start-failed", {
+      provider,
+      requestId: c.get("requestId"),
+      reason: reason instanceof Error ? reason.message : "unknown",
+    });
+    return errorResponse(c, 503, "OAUTH_UNAVAILABLE", "Social sign-in could not start.");
+  }
+});
+
+app.get("/api/auth/oauth/:provider/callback", async (c) => {
+  const provider = c.req.param("provider");
+  const returnTo = (query: string) => c.redirect(`${c.env.APP_BASE_URL.replace(/\/$/, "")}${query}`, 302);
+  if (!isOAuthProvider(provider)) return returnTo("/?oauth_error=provider");
+  const denied = c.req.query("error") || "";
+  const code = c.req.query("code") || "";
+  const state = c.req.query("state") || "";
+  if (denied || !code || !state) {
+    return returnTo(`/?oauth_error=${encodeURIComponent(denied || "missing_response")}`);
+  }
+  const stored = await c.env.DB.prepare(`DELETE FROM oauth_states
+    WHERE state_hash = ? AND provider = ? AND expires_at > ?
+    RETURNING code_verifier, anonymous_session_id`)
+    .bind(await hashToken(state), provider, now())
+    .first<{ code_verifier: string; anonymous_session_id: string | null }>();
+  if (!stored) return returnTo("/?oauth_error=invalid_state");
+  try {
+    const profile = await exchangeOAuthCode(c.env, provider, code, stored.code_verifier);
+    const row = await resolveOAuthUser(c.env, {
+      provider,
+      subject: profile.subject,
+      email: profile.email,
+      name: profile.name,
+    });
+    await createSession(c, row.id);
+    const migrated = await migrateGuestData(c.env, stored.anonymous_session_id, row.id);
+    deleteCookie(c, "qwen_guest", { path: "/" });
+    return returnTo(`/studio?oauth=success&migrated=${migrated}`);
+  } catch (reason) {
+    console.error("oauth-callback-failed", {
+      provider,
+      requestId: c.get("requestId"),
+      reason: reason instanceof Error ? reason.message : "unknown",
+    });
+    return returnTo("/?oauth_error=provider_response");
+  }
 });
 
 app.patch("/api/account/profile", async (c) => {
@@ -1057,14 +1408,26 @@ app.post("/api/account/sessions/revoke-others", async (c) => {
 app.get("/api/account/export", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
-  const [projects, generations, ledger, orders] = await Promise.all([
+  const [projects, generations, ledger, orders, supportTickets, supportMessages] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM projects WHERE user_id = ?").bind(actor.userId).all(),
     c.env.DB.prepare("SELECT id, prompt, aspect_ratio, style, quality, status, provider, model, credit_cost, created_at FROM generations WHERE owner_user_id = ?").bind(actor.userId).all(),
     c.env.DB.prepare("SELECT * FROM credit_ledger WHERE user_id = ?").bind(actor.userId).all(),
     c.env.DB.prepare("SELECT id, offer_id, kind, credits, amount_cents, currency, status, financial_status, created_at, completed_at FROM billing_orders WHERE user_id = ?").bind(actor.userId).all(),
+    c.env.DB.prepare("SELECT id, subject, category, priority, status, last_message_at, created_at, updated_at FROM support_tickets WHERE user_id = ?").bind(actor.userId).all(),
+    c.env.DB.prepare(`SELECT m.id, m.ticket_id, m.author, m.body, m.created_at FROM support_messages m
+      JOIN support_tickets t ON t.id = m.ticket_id WHERE t.user_id = ? ORDER BY m.created_at ASC`).bind(actor.userId).all(),
   ]);
   c.header("Content-Disposition", `attachment; filename="qwen-image-account-${now().slice(0, 10)}.json"`);
-  return c.json({ exportedAt: now(), user: actor.user, projects: projects.results, generations: generations.results, creditLedger: ledger.results, billingOrders: orders.results });
+  return c.json({
+    exportedAt: now(),
+    user: actor.user,
+    projects: projects.results,
+    generations: generations.results,
+    creditLedger: ledger.results,
+    billingOrders: orders.results,
+    supportTickets: supportTickets.results,
+    supportMessages: supportMessages.results,
+  });
 });
 
 app.delete("/api/account", async (c) => {
@@ -1076,16 +1439,108 @@ app.delete("/api/account", async (c) => {
   if (String(body.confirmation || "").trim().toUpperCase() !== "DELETE") return errorResponse(c, 400, "CONFIRMATION_REQUIRED", "Type DELETE to confirm permanent account deletion.");
   if (!(await verifyPassword(password, actor.userRow.password_hash))) return errorResponse(c, 401, "INVALID_CREDENTIALS", "Password is incorrect.");
   const account = await billingAccount(c.env, actor.userId!);
-  if (account.stripe_customer_id) {
-    if (!stripeAccessConfigured(c.env)) return errorResponse(c, 503, "BILLING_CLEANUP_UNAVAILABLE", "Account deletion is paused until Stripe cleanup is available.");
-    await stripeRequest(c.env, `/v1/customers/${encodeURIComponent(account.stripe_customer_id)}`, undefined, "DELETE");
+  const timestamp = now();
+  await c.env.DB.prepare(`INSERT INTO account_deletion_jobs (user_id, status, created_at, updated_at)
+    VALUES (?, 'requested', ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET last_error = NULL, updated_at = excluded.updated_at`)
+    .bind(actor.userId, timestamp, timestamp)
+    .run();
+  try {
+    if (account.stripe_subscription_id || account.stripe_customer_id) {
+      if (!stripeAccessConfigured(c.env)) {
+        throw new ExternalRequestError(
+          "BILLING_CLEANUP_UNAVAILABLE",
+          "Account deletion is paused until billing cleanup is available.",
+        );
+      }
+    }
+    if (account.stripe_subscription_id) {
+      const canceled = await stripeRequest<{ id?: string; status?: string }>(
+        c.env,
+        `/v1/subscriptions/${encodeURIComponent(account.stripe_subscription_id)}`,
+        undefined,
+        "DELETE",
+      );
+      if (canceled.id !== account.stripe_subscription_id || canceled.status !== "canceled") {
+        throw new ExternalRequestError("BILLING_CLEANUP_FAILED", "Billing services did not confirm subscription cancellation.");
+      }
+      await c.env.DB.batch([
+        c.env.DB.prepare("UPDATE account_deletion_jobs SET status = 'subscription_canceled', updated_at = ? WHERE user_id = ?")
+          .bind(now(), actor.userId),
+        c.env.DB.prepare(`UPDATE billing_accounts
+          SET stripe_subscription_id = NULL, plan = 'free', status = 'canceled', updated_at = ?
+          WHERE user_id = ?`).bind(now(), actor.userId),
+      ]);
+    }
+    if (account.stripe_customer_id) {
+      const deleted = await stripeRequest<{ id?: string; deleted?: boolean }>(
+        c.env,
+        `/v1/customers/${encodeURIComponent(account.stripe_customer_id)}`,
+        undefined,
+        "DELETE",
+      );
+      if (deleted.id !== account.stripe_customer_id || deleted.deleted !== true) {
+        throw new ExternalRequestError("BILLING_CLEANUP_FAILED", "Billing services did not confirm customer deletion.");
+      }
+      await c.env.DB.batch([
+        c.env.DB.prepare("UPDATE account_deletion_jobs SET status = 'customer_deleted', updated_at = ? WHERE user_id = ?")
+          .bind(now(), actor.userId),
+        c.env.DB.prepare("UPDATE billing_accounts SET stripe_customer_id = NULL, updated_at = ? WHERE user_id = ?")
+          .bind(now(), actor.userId),
+      ]);
+    }
+    const assets = await c.env.DB.prepare("SELECT r2_key FROM generations WHERE owner_user_id = ? AND r2_key IS NOT NULL")
+      .bind(actor.userId)
+      .all<{ r2_key: string }>();
+    const deletionId = crypto.randomUUID();
+    await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT OR IGNORE INTO r2_deletion_queue
+        (object_key, reason, reference_id, created_at, updated_at)
+        SELECT r2_key, 'account_deletion', ?, ?, ?
+        FROM generations WHERE owner_user_id = ? AND r2_key IS NOT NULL`)
+        .bind(deletionId, now(), now(), actor.userId),
+      c.env.DB.prepare(`INSERT INTO account_deletion_audit
+        (id, former_user_id, status, assets_queued, created_at, completed_at)
+        VALUES (?, ?, 'completed', ?, ?, ?)`)
+        .bind(deletionId, actor.userId, assets.results.length, timestamp, now()),
+      c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(actor.userId),
+    ]);
+    await Promise.allSettled(assets.results.map(async (asset) => {
+      try {
+        await c.env.ASSETS_BUCKET.delete(asset.r2_key);
+        await c.env.DB.prepare("DELETE FROM r2_deletion_queue WHERE object_key = ?")
+          .bind(asset.r2_key)
+          .run();
+      } catch (reason) {
+        await c.env.DB.prepare(`UPDATE r2_deletion_queue
+          SET attempts = attempts + 1, last_error = ?, updated_at = ? WHERE object_key = ?`)
+          .bind(reason instanceof Error ? reason.message : "R2 deletion failed.", now(), asset.r2_key)
+          .run();
+      }
+    }));
+    deleteCookie(c, "qwen_session", { path: "/" });
+    deleteCookie(c, "qwen_guest", { path: "/" });
+    return c.body(null, 204);
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : "Account deletion cleanup failed.";
+    await c.env.DB.prepare("UPDATE account_deletion_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE user_id = ?")
+      .bind(message, now(), actor.userId)
+      .run();
+    console.error("account-deletion-failed", {
+      userId: actor.userId,
+      requestId: c.get("requestId"),
+      reason: message,
+    });
+    const unavailable = reason instanceof ExternalRequestError && reason.code === "BILLING_CLEANUP_UNAVAILABLE";
+    return errorResponse(
+      c,
+      unavailable ? 503 : 502,
+      unavailable ? "BILLING_CLEANUP_UNAVAILABLE" : "ACCOUNT_DELETION_FAILED",
+      unavailable
+        ? reason.publicMessage
+        : "Account deletion is paused until external cleanup succeeds. Your account remains intact.",
+    );
   }
-  const assets = await c.env.DB.prepare("SELECT r2_key FROM generations WHERE owner_user_id = ? AND r2_key IS NOT NULL").bind(actor.userId).all<{ r2_key: string }>();
-  await Promise.all(assets.results.map((asset) => c.env.ASSETS_BUCKET.delete(asset.r2_key)));
-  await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(actor.userId).run();
-  deleteCookie(c, "qwen_session", { path: "/" });
-  deleteCookie(c, "qwen_guest", { path: "/" });
-  return c.body(null, 204);
 });
 
 app.get("/api/billing", async (c) => {
@@ -1134,39 +1589,115 @@ app.post("/api/billing/checkout", async (c) => {
   let customerId = account.stripe_customer_id;
   const priceVersion = await activeBillingPriceVersion(c.env, offer.id);
   if (!priceVersion) return errorResponse(c, 503, "OFFER_UNAVAILABLE", "This billing offer has no active price version.");
-  if (!customerId) {
-    const params = new URLSearchParams({ email: actor.user!.email, name: actor.user!.name, "metadata[user_id]": actor.userId! });
-    const customer = await stripeRequest<{ id?: string }>(c.env, "/v1/customers", params);
-    if (!customer.id?.startsWith("cus_")) return errorResponse(c, 502, "STRIPE_RESPONSE_INVALID", "Stripe did not return a customer.");
-    customerId = customer.id;
-    await c.env.DB.prepare("UPDATE billing_accounts SET stripe_customer_id = ?, updated_at = ? WHERE user_id = ?").bind(customerId, now(), actor.userId).run();
+  const attemptId = crypto.randomUUID();
+  const timestamp = now();
+  await c.env.DB.prepare(`INSERT INTO billing_checkout_attempts
+    (id, user_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?)`)
+    .bind(
+      attemptId,
+      actor.userId,
+      offer.id,
+      offer.kind,
+      offer.credits,
+      offer.amountCents,
+      offer.currency,
+      priceVersion.stripe_price_id,
+      timestamp,
+      timestamp,
+    )
+    .run();
+  try {
+    if (!customerId) {
+      const customerParams = new URLSearchParams({
+        email: actor.user!.email,
+        name: actor.user!.name,
+        "metadata[user_id]": actor.userId!,
+      });
+      const customer = await stripeRequest<{ id?: string }>(
+        c.env,
+        "/v1/customers",
+        customerParams,
+        "POST",
+        `customer-${actor.userId}`,
+      );
+      if (!customer.id?.startsWith("cus_")) {
+        throw new ExternalRequestError("EXTERNAL_RESPONSE_INVALID", "Billing services returned an invalid customer.");
+      }
+      customerId = customer.id;
+      await c.env.DB.prepare("UPDATE billing_accounts SET stripe_customer_id = ?, updated_at = ? WHERE user_id = ?")
+        .bind(customerId, now(), actor.userId)
+        .run();
+    }
+    const params = new URLSearchParams({
+      mode: offer.kind === "subscription" ? "subscription" : "payment",
+      customer: customerId,
+      client_reference_id: actor.userId!,
+      success_url: `${c.env.APP_BASE_URL.replace(/\/$/, "")}/studio/billing?checkout=success`,
+      cancel_url: `${c.env.APP_BASE_URL.replace(/\/$/, "")}/studio/billing?checkout=canceled`,
+      "line_items[0][price]": priceVersion.stripe_price_id,
+      "line_items[0][quantity]": "1",
+      "metadata[user_id]": actor.userId!,
+      "metadata[offer_id]": offer.id,
+      "metadata[kind]": offer.kind,
+      "metadata[order_id]": attemptId,
+    });
+    if (offer.kind === "subscription") {
+      params.set("subscription_data[metadata][user_id]", actor.userId!);
+      params.set("subscription_data[metadata][offer_id]", offer.id);
+      params.set("subscription_data[metadata][order_id]", attemptId);
+    } else {
+      params.set("payment_intent_data[metadata][user_id]", actor.userId!);
+      params.set("payment_intent_data[metadata][offer_id]", offer.id);
+      params.set("payment_intent_data[metadata][order_id]", attemptId);
+    }
+    const checkout = await stripeRequest<{ id?: string; url?: string }>(
+      c.env,
+      "/v1/checkout/sessions",
+      params,
+      "POST",
+      `checkout-${attemptId}`,
+    );
+    if (!checkout.id?.startsWith("cs_")) {
+      throw new ExternalRequestError("EXTERNAL_RESPONSE_INVALID", "Billing services returned an invalid Checkout Session.");
+    }
+    const checkoutUrl = trustedServiceUrl(checkout.url, "checkout.stripe.com", "Billing provider");
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE billing_checkout_attempts
+        SET stripe_checkout_session_id = ?, status = 'created', updated_at = ? WHERE id = ?`)
+        .bind(checkout.id, now(), attemptId),
+      c.env.DB.prepare(`INSERT OR IGNORE INTO billing_orders
+        (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(
+          attemptId,
+          actor.userId,
+          checkout.id,
+          offer.id,
+          offer.kind,
+          offer.credits,
+          offer.amountCents,
+          offer.currency,
+          priceVersion.stripe_price_id,
+          timestamp,
+        ),
+    ]);
+    return c.json({ url: checkoutUrl }, 201);
+  } catch (reason) {
+    await c.env.DB.prepare(`UPDATE billing_checkout_attempts
+      SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`)
+      .bind(reason instanceof Error ? reason.message : "Checkout creation failed.", now(), attemptId)
+      .run();
+    console.error("billing-checkout-failed", {
+      attemptId,
+      requestId: c.get("requestId"),
+      reason: reason instanceof Error ? reason.message : "unknown",
+    });
+    const message = reason instanceof ExternalRequestError
+      ? reason.publicMessage
+      : "Billing services could not start Checkout.";
+    return errorResponse(c, 502, "BILLING_FAILED", message);
   }
-  const params = new URLSearchParams({
-    mode: offer.kind === "subscription" ? "subscription" : "payment",
-    customer: customerId,
-    client_reference_id: actor.userId!,
-    success_url: `${c.env.APP_BASE_URL.replace(/\/$/, "")}/studio/billing?checkout=success`,
-    cancel_url: `${c.env.APP_BASE_URL.replace(/\/$/, "")}/studio/billing?checkout=canceled`,
-    "line_items[0][price]": priceVersion.stripe_price_id,
-    "line_items[0][quantity]": "1",
-    "metadata[user_id]": actor.userId!,
-    "metadata[offer_id]": offer.id,
-    "metadata[kind]": offer.kind,
-  });
-  if (offer.kind === "subscription") {
-    params.set("subscription_data[metadata][user_id]", actor.userId!);
-    params.set("subscription_data[metadata][offer_id]", offer.id);
-  } else {
-    params.set("payment_intent_data[metadata][user_id]", actor.userId!);
-    params.set("payment_intent_data[metadata][offer_id]", offer.id);
-  }
-  const checkout = await stripeRequest<{ id?: string; url?: string }>(c.env, "/v1/checkout/sessions", params);
-  if (!checkout.id?.startsWith("cs_") || !checkout.url || new URL(checkout.url).hostname !== "checkout.stripe.com") {
-    return errorResponse(c, 502, "STRIPE_RESPONSE_INVALID", "Stripe did not return a valid Checkout Session.");
-  }
-  await c.env.DB.prepare("INSERT INTO billing_orders (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), actor.userId, checkout.id, offer.id, offer.kind, offer.credits, offer.amountCents, offer.currency, priceVersion.stripe_price_id, now()).run();
-  return c.json({ url: checkout.url }, 201);
 });
 
 app.post("/api/billing/portal", async (c) => {
@@ -1178,8 +1709,16 @@ app.post("/api/billing/portal", async (c) => {
     customer: account.stripe_customer_id,
     return_url: `${c.env.APP_BASE_URL.replace(/\/$/, "")}/studio/billing`,
   }));
-  if (!portal.url || new URL(portal.url).hostname !== "billing.stripe.com") return errorResponse(c, 502, "STRIPE_RESPONSE_INVALID", "Stripe did not return a valid portal URL.");
-  return c.json({ url: portal.url });
+  try {
+    return c.json({ url: trustedServiceUrl(portal.url, "billing.stripe.com", "Billing provider") });
+  } catch (reason) {
+    return errorResponse(
+      c,
+      502,
+      "STRIPE_RESPONSE_INVALID",
+      reason instanceof ExternalRequestError ? reason.publicMessage : "Billing services returned an invalid portal URL.",
+    );
+  }
 });
 
 app.post("/api/billing/webhook", async (c) => {
@@ -1214,7 +1753,12 @@ app.post("/api/billing/webhook", async (c) => {
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "Stripe event could not be processed.";
     await c.env.DB.prepare("UPDATE billing_events SET status = 'failed', last_error = ?, updated_at = ? WHERE stripe_event_id = ?").bind(message, now(), event.id).run();
-    return errorResponse(c, 503, "WEBHOOK_PROCESSING_FAILED", message);
+    console.error("billing-webhook-processing-failed", {
+      eventId: event.id,
+      requestId: c.get("requestId"),
+      reason: message,
+    });
+    return errorResponse(c, 503, "WEBHOOK_PROCESSING_FAILED", "The billing event could not be processed yet and will be retried.");
   }
 });
 
@@ -1230,8 +1774,8 @@ app.get("/api/generations", async (c) => {
 });
 
 async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
-  const started = Date.now();
-  const actor = await resolveActor(c, !apiOnly);
+  const actor = apiOnly ? c.get("actor") : await resolveActor(c, true);
+  c.set("actor", actor);
   if (apiOnly && (!actor.user || !actor.apiKeyId)) return errorResponse(c, 401, "INVALID_API_KEY", "Provide a valid API key in the Authorization header.");
   if (apiOnly && !actor.scopes.includes("generations:write")) return errorResponse(c, 403, "INSUFFICIENT_SCOPE", "This API key does not have generations:write access.");
   const body = await readBody(c);
@@ -1251,85 +1795,254 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
   const idempotencyKey = c.req.header("idempotency-key")?.trim() || "";
   if (apiOnly && idempotencyKey && actor.userId) {
     if (idempotencyKey.length > 128) return errorResponse(c, 400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be 128 characters or fewer.");
-    const existing = await c.env.DB.prepare("SELECT g.* FROM idempotency_keys i JOIN generations g ON g.id = i.generation_id WHERE i.user_id = ? AND i.idempotency_key = ?")
+    const existing = await c.env.DB.prepare(`SELECT r.status request_status, r.failure_code, g.* FROM generation_requests r
+      LEFT JOIN generations g ON g.id = r.generation_id
+      WHERE r.user_id = ? AND r.idempotency_key = ?`)
+      .bind(actor.userId, idempotencyKey)
+      .first<(GenerationRow & { request_status: string; failure_code: string | null })>();
+    if (existing) {
+      if (existing.request_status === "failed") {
+        return errorResponse(c, 503, existing.failure_code || "GENERATION_FAILED", "The earlier request failed without charging credits.");
+      }
+      if (!existing.id || existing.request_status !== "completed" || existing.status === "processing") {
+        c.header("Retry-After", "2");
+        return errorResponse(c, 409, "REQUEST_IN_PROGRESS", "A request with this Idempotency-Key is still processing.");
+      }
+      return c.json(generationFromRow(existing));
+    }
+    const legacy = await c.env.DB.prepare("SELECT g.* FROM idempotency_keys i JOIN generations g ON g.id = i.generation_id WHERE i.user_id = ? AND i.idempotency_key = ?")
       .bind(actor.userId, idempotencyKey).first<GenerationRow>();
-    if (existing) return c.json(generationFromRow(existing));
+    if (legacy) {
+      if (legacy.status === "processing") {
+        c.header("Retry-After", "2");
+        return errorResponse(c, 409, "REQUEST_IN_PROGRESS", "A request with this Idempotency-Key is still processing.");
+      }
+      return c.json(generationFromRow(legacy));
+    }
   }
   const vip = await isVip(c.env, actor.userId);
   const queueTier = vip ? "vip" : "free";
   const generationId = crypto.randomUUID();
   const creditCost = actor.userId ? qualityCosts[input.quality] : 0;
   const timestamp = now();
+  let generationRequestId: string | null = null;
+  if (apiOnly && idempotencyKey && actor.userId) {
+    generationRequestId = crypto.randomUUID();
+    const claim = await c.env.DB.prepare(`INSERT OR IGNORE INTO generation_requests
+      (id, user_id, api_key_id, idempotency_key, generation_id, status, created_at, updated_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?)`)
+      .bind(
+        generationRequestId,
+        actor.userId,
+        actor.apiKeyId,
+        idempotencyKey,
+        generationId,
+        timestamp,
+        timestamp,
+        new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      )
+      .run();
+    if (!(claim.meta.changes ?? 0)) {
+      const concurrent = await c.env.DB.prepare(`SELECT r.status request_status, g.*
+        FROM generation_requests r
+        LEFT JOIN generations g ON g.id = r.generation_id
+        WHERE r.user_id = ? AND r.idempotency_key = ?`)
+        .bind(actor.userId, idempotencyKey)
+        .first<GenerationRow & { request_status: string; failure_code: string | null }>();
+      if (concurrent?.request_status === "failed") {
+        return errorResponse(c, 503, concurrent.failure_code || "GENERATION_FAILED", "The earlier request failed without charging credits.");
+      }
+      if (concurrent?.id && concurrent.request_status === "completed" && concurrent.status !== "processing") {
+        return c.json(generationFromRow(concurrent));
+      }
+      c.header("Retry-After", "2");
+      return errorResponse(c, 409, "REQUEST_IN_PROGRESS", "A request with this Idempotency-Key is still processing.");
+    }
+  }
+
+  const insertGeneration = (ownerGuard: string, guardValues: Array<string | number>) => c.env.DB.prepare(`INSERT INTO generations
+    (id, owner_user_id, anonymous_session_id, project_id, prompt, aspect_ratio, style, quality, status, provider, model, credit_cost, queue_tier, queued_at, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?
+    WHERE ${ownerGuard}`)
+    .bind(
+      generationId,
+      actor.userId,
+      actor.anonymousSessionId,
+      input.projectId || null,
+      input.prompt,
+      input.aspectRatio,
+      input.style,
+      input.quality,
+      c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview",
+      c.env.QWEN_MODEL_ID || "local-qwen-preview",
+      creditCost,
+      queueTier,
+      timestamp,
+      timestamp,
+      timestamp,
+      ...guardValues,
+    );
+
   if (actor.userId) {
-    const billing = await billingAccount(c.env, actor.userId);
-    if (billing.spending_blocked) return errorResponse(c, 423, "BILLING_REVIEW_REQUIRED", billing.block_reason || "Credit spending is paused.");
-    const credits = await creditAccount(c.env, actor.userId);
-    if (credits.available < creditCost) return errorResponse(c, 402, "INSUFFICIENT_CREDITS", `This generation costs ${creditCost} credits.`);
-    await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE credit_accounts SET available = available - ?, reserved = reserved + ?, updated_at = ? WHERE user_id = ? AND available >= ?")
-        .bind(creditCost, creditCost, timestamp, actor.userId, creditCost),
-      c.env.DB.prepare("INSERT INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at) VALUES (?, ?, 'generation_reservation', ?, ?, ?, 'Generation credit reservation', ?)")
-        .bind(crypto.randomUUID(), actor.userId, -creditCost, credits.available - creditCost, generationId, timestamp),
-    ]);
+    const reservation = prepareCreditReservation(c.env.DB, {
+      userId: actor.userId,
+      amount: creditCost,
+      referenceId: generationId,
+      timestamp,
+    });
+    const statements = [
+      ...reservation.statements,
+      insertGeneration("EXISTS (SELECT 1 FROM credit_ledger WHERE id = ?)", [reservation.ledgerId]),
+    ];
+    if (idempotencyKey) {
+      statements.push(
+        c.env.DB.prepare(`INSERT OR IGNORE INTO idempotency_keys
+          (user_id, idempotency_key, generation_id, created_at)
+          SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM generations WHERE id = ?)`)
+          .bind(actor.userId, idempotencyKey, generationId, timestamp, generationId),
+      );
+    }
+    if (generationRequestId) {
+      statements.push(
+        c.env.DB.prepare(`UPDATE generation_requests SET status = 'processing', updated_at = ?
+          WHERE id = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ?)`)
+          .bind(timestamp, generationRequestId, generationId),
+      );
+    }
+    const results = await c.env.DB.batch(statements);
+    const reserved = creditMutationApplied(results);
+    const generationInserted = results[2].meta.changes ?? 0;
+    if (!reserved || generationInserted !== 1) {
+      if (generationRequestId) {
+        await c.env.DB.prepare("DELETE FROM generation_requests WHERE id = ? AND status = 'claimed'")
+          .bind(generationRequestId)
+          .run();
+      }
+      const billing = await billingAccount(c.env, actor.userId);
+      if (billing.spending_blocked) {
+        return errorResponse(c, 423, "BILLING_REVIEW_REQUIRED", billing.block_reason || "Credit spending is paused.");
+      }
+      return errorResponse(c, 402, "INSUFFICIENT_CREDITS", `This generation costs ${creditCost} credits.`);
+    }
   } else if (actor.anonymousSessionId) {
-    const quota = await c.env.DB.prepare("UPDATE anonymous_sessions SET used_count = used_count + 1 WHERE id = ? AND quota_date = ? AND used_count < ?")
-      .bind(actor.anonymousSessionId, quotaDate(), GUEST_LIMIT).run();
-    if (!quota.meta.changes) return errorResponse(c, 429, "ANONYMOUS_LIMIT_REACHED", "You have used today's three free generations. Sign up for 20 credits or return tomorrow.");
+    const results = await c.env.DB.batch([
+      insertGeneration(`EXISTS (
+        SELECT 1 FROM anonymous_sessions
+        WHERE id = ? AND quota_date = ? AND used_count < ?
+      )`, [actor.anonymousSessionId, quotaDate(), GUEST_LIMIT]),
+      c.env.DB.prepare(`UPDATE anonymous_sessions SET used_count = used_count + 1
+        WHERE id = ? AND quota_date = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ?)`)
+        .bind(actor.anonymousSessionId, quotaDate(), generationId),
+    ]);
+    if ((results[0].meta.changes ?? 0) !== 1 || (results[1].meta.changes ?? 0) !== 1) {
+      return errorResponse(c, 429, "ANONYMOUS_LIMIT_REACHED", "You have used today's three free generations. Sign up for 20 credits or return tomorrow.");
+    }
   } else {
     return errorResponse(c, 401, "UNAUTHENTICATED", "A session is required to generate an image.");
   }
-  await c.env.DB.prepare(`INSERT INTO generations
-    (id, owner_user_id, anonymous_session_id, project_id, prompt, aspect_ratio, style, quality, status, provider, model, credit_cost, queue_tier, queued_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(generationId, actor.userId, actor.anonymousSessionId, input.projectId || null, input.prompt, input.aspectRatio, input.style, input.quality,
-      c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview", c.env.QWEN_MODEL_ID || "local-qwen-preview", creditCost, queueTier, timestamp, timestamp, timestamp).run();
-  if (apiOnly && idempotencyKey && actor.userId) {
-    await c.env.DB.prepare("INSERT INTO idempotency_keys (user_id, idempotency_key, generation_id, created_at) VALUES (?, ?, ?, ?)")
-      .bind(actor.userId, idempotencyKey, generationId, timestamp).run();
-  }
+  let objectKey: string | null = null;
+  let completed = false;
   try {
     if (!vip) {
       const delay = Math.min(10_000, Math.max(0, Number.parseInt(c.env.FREE_QUEUE_DELAY_MS || "1800", 10) || 1800));
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
+    await c.env.DB.prepare("UPDATE generations SET processing_started_at = ?, updated_at = ? WHERE id = ? AND status = 'processing'")
+      .bind(now(), now(), generationId)
+      .run();
     const asset = await generateAsset(c.env, input);
     const extension = asset.mimeType === "image/svg+xml" ? "svg" : asset.mimeType === "image/jpeg" ? "jpg" : asset.mimeType === "image/webp" ? "webp" : "png";
     const key = `generations/${actor.userId ? `users/${actor.userId}` : `guests/${actor.anonymousSessionId}`}/${generationId}.${extension}`;
+    objectKey = key;
     await c.env.ASSETS_BUCKET.put(key, asset.bytes, {
       httpMetadata: { contentType: asset.mimeType, cacheControl: "private, no-store" },
       customMetadata: { generationId, ownerType: actor.userId ? "user" : "guest" },
     });
-    await c.env.DB.prepare("UPDATE generations SET status = 'complete', width = ?, height = ?, r2_key = ?, mime_type = ?, provider = ?, model = ?, processing_started_at = ?, updated_at = ? WHERE id = ?")
-      .bind(asset.width, asset.height, key, asset.mimeType, asset.provider, asset.model, timestamp, now(), generationId).run();
+    const completion = await c.env.DB.prepare(`UPDATE generations
+      SET status = 'complete', width = ?, height = ?, r2_key = ?, mime_type = ?, provider = ?, model = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing'`)
+      .bind(asset.width, asset.height, key, asset.mimeType, asset.provider, asset.model, now(), generationId)
+      .run();
+    if ((completion.meta.changes ?? 0) !== 1) {
+      throw new Error("Generation completion state changed unexpectedly.");
+    }
+    completed = true;
     if (actor.userId) {
-      const credits = await creditAccount(c.env, actor.userId);
-      await c.env.DB.batch([
-        c.env.DB.prepare("UPDATE credit_accounts SET reserved = MAX(0, reserved - ?), updated_at = ? WHERE user_id = ?").bind(creditCost, now(), actor.userId),
-        c.env.DB.prepare("INSERT INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at) VALUES (?, ?, 'generation_settlement', 0, ?, ?, 'Generation completed', ?)")
-          .bind(crypto.randomUUID(), actor.userId, credits.available, generationId, now()),
-      ]);
+      try {
+        await settleCredits(c.env.DB, { userId: actor.userId, amount: creditCost, referenceId: generationId });
+      } catch (reason) {
+        console.error("generation-settlement-deferred", {
+          generationId,
+          requestId: c.get("requestId"),
+          reason: reason instanceof Error ? reason.message : "unknown",
+        });
+      }
+    }
+    if (generationRequestId) {
+      await c.env.DB.prepare("UPDATE generation_requests SET status = 'completed', updated_at = ? WHERE id = ?")
+        .bind(now(), generationRequestId)
+        .run();
     }
     const row = (await c.env.DB.prepare("SELECT * FROM generations WHERE id = ?").bind(generationId).first<GenerationRow>())!;
     c.header("X-Generation-Queue", queueTier);
-    if (apiOnly && actor.userId && actor.apiKeyId) {
-      await c.env.DB.prepare("INSERT INTO api_request_logs (id, user_id, api_key_id, method, path, status_code, duration_ms, request_id, created_at) VALUES (?, ?, ?, 'POST', '/v1/generations', 201, ?, ?, ?)")
-        .bind(crypto.randomUUID(), actor.userId, actor.apiKeyId, Date.now() - started, c.get("requestId"), now()).run();
-    }
     return c.json(generationFromRow(row), 201);
   } catch (reason) {
-    await c.env.DB.prepare("UPDATE generations SET status = 'failed', updated_at = ? WHERE id = ?").bind(now(), generationId).run();
-    if (actor.userId) {
-      const credits = await creditAccount(c.env, actor.userId);
-      const restored = credits.available + creditCost;
-      await c.env.DB.batch([
-        c.env.DB.prepare("UPDATE credit_accounts SET available = available + ?, reserved = MAX(0, reserved - ?), updated_at = ? WHERE user_id = ?").bind(creditCost, creditCost, now(), actor.userId),
-        c.env.DB.prepare("INSERT INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at) VALUES (?, ?, 'generation_refund', ?, ?, ?, 'Failed generation credit restoration', ?)")
-          .bind(crypto.randomUUID(), actor.userId, creditCost, restored, generationId, now()),
-      ]);
-    } else if (actor.anonymousSessionId) {
-      await c.env.DB.prepare("UPDATE anonymous_sessions SET used_count = MAX(0, used_count - 1) WHERE id = ? AND quota_date = ?").bind(actor.anonymousSessionId, quotaDate()).run();
+    if (!completed) {
+      if (objectKey) {
+        try {
+          await c.env.ASSETS_BUCKET.delete(objectKey);
+        } catch (cleanupReason) {
+          await c.env.DB.prepare(`INSERT INTO r2_deletion_queue
+            (object_key, reason, reference_id, attempts, last_error, created_at, updated_at)
+            VALUES (?, 'failed_generation', ?, 1, ?, ?, ?)
+            ON CONFLICT(object_key) DO UPDATE SET
+              attempts = attempts + 1, last_error = excluded.last_error, updated_at = excluded.updated_at`)
+            .bind(
+              objectKey,
+              generationId,
+              cleanupReason instanceof Error ? cleanupReason.message : "R2 deletion failed.",
+              now(),
+              now(),
+            )
+            .run()
+            .catch(() => undefined);
+        }
+      }
+      const failed = await c.env.DB.prepare("UPDATE generations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'processing'")
+        .bind(now(), generationId)
+        .run();
+      if ((failed.meta.changes ?? 0) === 1 && actor.userId) {
+        await refundCredits(c.env.DB, { userId: actor.userId, amount: creditCost, referenceId: generationId });
+      } else if ((failed.meta.changes ?? 0) === 1 && actor.anonymousSessionId) {
+        await c.env.DB.prepare("UPDATE anonymous_sessions SET used_count = MAX(0, used_count - 1) WHERE id = ? AND quota_date = ?")
+          .bind(actor.anonymousSessionId, quotaDate())
+          .run();
+      }
+      if (generationRequestId) {
+        await c.env.DB.prepare("UPDATE generation_requests SET status = 'failed', failure_code = ?, updated_at = ? WHERE id = ?")
+          .bind(reason instanceof ExternalRequestError ? reason.code : "GENERATION_FAILED", now(), generationRequestId)
+          .run();
+      }
     }
-    return errorResponse(c, 503, "GENERATION_FAILED", reason instanceof Error ? reason.message : "The image could not be generated. No allowance or credits were charged.");
+    console.error("generation-request-failed", {
+      generationId,
+      requestId: c.get("requestId"),
+      reason: reason instanceof Error ? reason.message : "unknown",
+      completed,
+    });
+    if (completed) {
+      c.header("Retry-After", "2");
+      return errorResponse(c, 503, "GENERATION_PERSISTED", "The image was saved, but its response could not be completed. Retry with the same Idempotency-Key.");
+    }
+    const timeout = reason instanceof ExternalRequestError && reason.code === "EXTERNAL_TIMEOUT";
+    return errorResponse(
+      c,
+      timeout ? 504 : 503,
+      timeout ? "GENERATION_TIMEOUT" : "GENERATION_FAILED",
+      timeout
+        ? "The image provider timed out. No allowance or credits were charged."
+        : "The image could not be generated. No allowance or credits were charged.",
+    );
   }
 }
 
@@ -1382,7 +2095,270 @@ app.patch("/api/generations/:id/favorite", async (c) => {
   return c.json({ favorite: Boolean(body.favorite) });
 });
 
-function projectFromRow(row: { id: string; name: string; description: string; archived: number; created_at: string; generation_count: number | null }): Project {
+interface SupportTicketQueryRow {
+  id: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  message_count: number;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SupportMessageQueryRow {
+  id: string;
+  ticket_id: string;
+  author: SupportMessage["author"];
+  body: string;
+  created_at: string;
+}
+
+function supportTicketFromRow(row: SupportTicketQueryRow): SupportTicket {
+  return {
+    id: row.id,
+    subject: row.subject,
+    category: row.category,
+    priority: row.priority,
+    status: row.status,
+    messageCount: Number(row.message_count),
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function workerSupportTicket(env: Env, userId: string, ticketId: string): Promise<SupportTicketDetail | null> {
+  const row = await env.DB.prepare(`SELECT t.id, t.subject, t.category, t.priority, t.status, t.last_message_at, t.created_at, t.updated_at,
+    COUNT(m.id) message_count
+    FROM support_tickets t LEFT JOIN support_messages m ON m.ticket_id = t.id
+    WHERE t.id = ? AND t.user_id = ? GROUP BY t.id`)
+    .bind(ticketId, userId).first<SupportTicketQueryRow>();
+  if (!row) return null;
+  const messages = await env.DB.prepare(`SELECT id, ticket_id, author, body, created_at
+    FROM support_messages WHERE ticket_id = ? ORDER BY created_at ASC`)
+    .bind(ticketId).all<SupportMessageQueryRow>();
+  return {
+    ...supportTicketFromRow(row),
+    messages: messages.results.map((message) => ({
+      id: message.id,
+      ticketId: message.ticket_id,
+      author: message.author,
+      body: message.body,
+      createdAt: message.created_at,
+    })),
+  };
+}
+
+app.get("/api/workspace/overview", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const [account, credits, counts, generationRows, creditRows, paymentRows, supportRows] = await Promise.all([
+    billingAccount(c.env, actor.userId!),
+    creditAccount(c.env, actor.userId!),
+    c.env.DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM generations WHERE owner_user_id = ?) generations_all_time,
+      (SELECT COUNT(*) FROM generations WHERE owner_user_id = ? AND created_at >= ?) generations_this_month,
+      (SELECT COUNT(*) FROM projects WHERE user_id = ? AND archived = 0) active_projects,
+      (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) active_api_keys,
+      (SELECT COUNT(*) FROM support_tickets WHERE user_id = ? AND status IN ('open', 'waiting')) open_support_tickets`)
+      .bind(actor.userId, actor.userId, monthStart.toISOString(), actor.userId, actor.userId, actor.userId)
+      .first<{
+        generations_all_time: number;
+        generations_this_month: number;
+        active_projects: number;
+        active_api_keys: number;
+        open_support_tickets: number;
+      }>(),
+    c.env.DB.prepare("SELECT id, prompt, status, quality, created_at FROM generations WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT 5")
+      .bind(actor.userId).all<{ id: string; prompt: string; status: Generation["status"]; quality: ImageQuality; created_at: string }>(),
+    c.env.DB.prepare("SELECT id, type, amount, description, created_at FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 5")
+      .bind(actor.userId).all<{ id: string; type: CreditEntry["type"]; amount: number; description: string; created_at: string }>(),
+    c.env.DB.prepare("SELECT id, offer_id, status, financial_status, amount_cents, currency, created_at FROM billing_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 5")
+      .bind(actor.userId).all<{ id: string; offer_id: string; status: string; financial_status: string; amount_cents: number; currency: string; created_at: string }>(),
+    c.env.DB.prepare("SELECT id, subject, status, category, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC LIMIT 5")
+      .bind(actor.userId).all<{ id: string; subject: string; status: string; category: string; updated_at: string }>(),
+  ]);
+
+  const recentActivity: WorkspaceActivity[] = [
+    ...generationRows.results.map((item) => ({
+      id: `generation:${item.id}`,
+      type: "generation" as const,
+      title: item.status === "complete" ? "Image generated" : item.status === "failed" ? "Generation failed safely" : "Generation started",
+      detail: item.prompt,
+      status: item.quality,
+      href: "/studio/history",
+      createdAt: item.created_at,
+    })),
+    ...creditRows.results.map((item) => ({
+      id: `credit:${item.id}`,
+      type: "credit" as const,
+      title: item.description,
+      detail: `${item.amount > 0 ? "+" : ""}${item.amount} credits`,
+      status: item.type.replaceAll("_", " "),
+      href: "/studio/credits",
+      createdAt: item.created_at,
+    })),
+    ...paymentRows.results.map((item) => ({
+      id: `payment:${item.id}`,
+      type: "payment" as const,
+      title: item.offer_id.replaceAll("_", " "),
+      detail: new Intl.NumberFormat("en-US", { style: "currency", currency: item.currency.toUpperCase() }).format(item.amount_cents / 100),
+      status: item.financial_status === "normal" ? item.status : item.financial_status,
+      href: "/studio/payments",
+      createdAt: item.created_at,
+    })),
+    ...supportRows.results.map((item) => ({
+      id: `support:${item.id}`,
+      type: "support" as const,
+      title: item.subject,
+      detail: `${item.category} support`,
+      status: item.status,
+      href: "/studio/support",
+      createdAt: item.updated_at,
+    })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+
+  const overview: WorkspaceOverview = {
+    plan: { name: account.plan === "creator" ? "Creator" : "Free", status: account.status },
+    credits,
+    usage: {
+      generationsThisMonth: Number(counts?.generations_this_month ?? 0),
+      generationsAllTime: Number(counts?.generations_all_time ?? 0),
+    },
+    activeProjects: Number(counts?.active_projects ?? 0),
+    activeApiKeys: Number(counts?.active_api_keys ?? 0),
+    openSupportTickets: Number(counts?.open_support_tickets ?? 0),
+    recentActivity,
+  };
+  return c.json(overview);
+});
+
+app.get("/api/support/tickets", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const rows = await c.env.DB.prepare(`SELECT t.id, t.subject, t.category, t.priority, t.status, t.last_message_at, t.created_at, t.updated_at,
+    COUNT(m.id) message_count
+    FROM support_tickets t LEFT JOIN support_messages m ON m.ticket_id = t.id
+    WHERE t.user_id = ? GROUP BY t.id ORDER BY t.updated_at DESC`)
+    .bind(actor.userId).all<SupportTicketQueryRow>();
+  return c.json({ tickets: rows.results.map(supportTicketFromRow) });
+});
+
+app.post("/api/support/tickets", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const limited = await enforceRateLimit(c, `support:${actor.userId}`, 30, 60 * 60 * 1000);
+  if (limited) return limited;
+  const body = await readBody(c);
+  const subject = typeof body.subject === "string" ? body.subject.trim() : "";
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  const category = body.category as SupportTicketCategory;
+  const priority = body.priority as SupportTicketPriority;
+  if (subject.length < 4 || subject.length > 120) return errorResponse(c, 400, "INVALID_SUBJECT", "Subject must be between 4 and 120 characters.");
+  if (message.length < 10 || message.length > 4000) return errorResponse(c, 400, "INVALID_MESSAGE", "Message must be between 10 and 4000 characters.");
+  if (!validSupportCategories.includes(category)) return errorResponse(c, 400, "INVALID_CATEGORY", "Choose a valid support category.");
+  if (!validSupportPriorities.includes(priority)) return errorResponse(c, 400, "INVALID_PRIORITY", "Choose a valid support priority.");
+  const ticketId = crypto.randomUUID();
+  const createdAt = now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO support_tickets
+      (id, user_id, subject, category, priority, status, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`)
+      .bind(ticketId, actor.userId, subject, category, priority, createdAt, createdAt, createdAt),
+    c.env.DB.prepare("INSERT INTO support_messages (id, ticket_id, author, body, created_at) VALUES (?, ?, 'user', ?, ?)")
+      .bind(crypto.randomUUID(), ticketId, message, createdAt),
+  ]);
+  return c.json((await workerSupportTicket(c.env, actor.userId!, ticketId))!, 201);
+});
+
+app.get("/api/support/tickets/:id", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const ticket = await workerSupportTicket(c.env, actor.userId!, c.req.param("id"));
+  if (!ticket) return errorResponse(c, 404, "NOT_FOUND", "Support ticket not found.");
+  return c.json(ticket);
+});
+
+app.post("/api/support/tickets/:id/messages", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const limited = await enforceRateLimit(c, `support:${actor.userId}`, 30, 60 * 60 * 1000);
+  if (limited) return limited;
+  const body = await readBody(c);
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (message.length < 2 || message.length > 4000) return errorResponse(c, 400, "INVALID_MESSAGE", "Reply must be between 2 and 4000 characters.");
+  const ticket = await c.env.DB.prepare("SELECT status FROM support_tickets WHERE id = ? AND user_id = ?")
+    .bind(c.req.param("id"), actor.userId).first<{ status: SupportTicketStatus }>();
+  if (!ticket) return errorResponse(c, 404, "NOT_FOUND", "Support ticket not found.");
+  if (ticket.status === "closed") return errorResponse(c, 409, "TICKET_CLOSED", "Reopen this ticket before replying.");
+  const createdAt = now();
+  await c.env.DB.batch([
+    c.env.DB.prepare("INSERT INTO support_messages (id, ticket_id, author, body, created_at) VALUES (?, ?, 'user', ?, ?)")
+      .bind(crypto.randomUUID(), c.req.param("id"), message, createdAt),
+    c.env.DB.prepare("UPDATE support_tickets SET status = 'open', last_message_at = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+      .bind(createdAt, createdAt, c.req.param("id"), actor.userId),
+  ]);
+  return c.json((await workerSupportTicket(c.env, actor.userId!, c.req.param("id")))!, 201);
+});
+
+app.patch("/api/support/tickets/:id", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const body = await readBody(c);
+  const status = body.status;
+  if (status !== "open" && status !== "closed") return errorResponse(c, 400, "INVALID_STATUS", "A ticket can be reopened or closed.");
+  const result = await c.env.DB.prepare("UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .bind(status, now(), c.req.param("id"), actor.userId).run();
+  if (!result.meta.changes) return errorResponse(c, 404, "NOT_FOUND", "Support ticket not found.");
+  return c.json((await workerSupportTicket(c.env, actor.userId!, c.req.param("id")))!);
+});
+
+interface ProjectQueryRow {
+  id: string;
+  name: string;
+  description: string;
+  archived: number;
+  created_at: string;
+  generation_count: number | null;
+}
+
+interface CreditLedgerQueryRow {
+  id: string;
+  type: CreditEntry["type"];
+  amount: number;
+  balance_after: number;
+  reference_id: string | null;
+  description: string;
+  created_at: string;
+}
+
+interface ApiKeyQueryRow {
+  id: string;
+  name: string;
+  prefix: string;
+  last_used_at: string | null;
+  scopes: string;
+  created_at: string;
+}
+
+interface ApiRequestQueryRow {
+  id: string;
+  user_id: string | null;
+  api_key_id: string | null;
+  method: string;
+  path: string;
+  status_code: number;
+  duration_ms: number;
+  request_id: string;
+  created_at: string;
+}
+
+function projectFromRow(row: ProjectQueryRow): Project {
   return { id: row.id, name: row.name, description: row.description, archived: Boolean(row.archived), createdAt: row.created_at, generationCount: row.generation_count || 0 };
 }
 
@@ -1390,7 +2366,7 @@ app.get("/api/projects", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   const rows = await c.env.DB.prepare(`SELECT p.*, COUNT(g.id) AS generation_count FROM projects p
-    LEFT JOIN generations g ON g.project_id = p.id WHERE p.user_id = ? GROUP BY p.id ORDER BY p.updated_at DESC`).bind(actor.userId).all<any>();
+    LEFT JOIN generations g ON g.project_id = p.id WHERE p.user_id = ? GROUP BY p.id ORDER BY p.updated_at DESC`).bind(actor.userId).all<ProjectQueryRow>();
   return c.json({ projects: rows.results.map(projectFromRow) });
 });
 
@@ -1419,7 +2395,8 @@ app.patch("/api/projects/:id", async (c) => {
     .bind(name, description, body.archived ? 1 : 0, now(), c.req.param("id"), actor.userId).run();
   if (!result.meta.changes) return errorResponse(c, 404, "NOT_FOUND", "Project not found.");
   const row = await c.env.DB.prepare(`SELECT p.*, COUNT(g.id) AS generation_count FROM projects p LEFT JOIN generations g ON g.project_id = p.id WHERE p.id = ? GROUP BY p.id`)
-    .bind(c.req.param("id")).first<any>();
+    .bind(c.req.param("id")).first<ProjectQueryRow>();
+  if (!row) return errorResponse(c, 404, "NOT_FOUND", "Project not found.");
   return c.json(projectFromRow(row));
 });
 
@@ -1427,7 +2404,7 @@ app.get("/api/credits", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   const account = await creditAccount(c.env, actor.userId!);
-  const rows = await c.env.DB.prepare("SELECT * FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").bind(actor.userId).all<any>();
+  const rows = await c.env.DB.prepare("SELECT * FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").bind(actor.userId).all<CreditLedgerQueryRow>();
   const ledger: CreditEntry[] = rows.results.map((row) => ({
     id: row.id, type: row.type, amount: row.amount, balanceAfter: row.balance_after, referenceId: row.reference_id, description: row.description, createdAt: row.created_at,
   }));
@@ -1437,7 +2414,7 @@ app.get("/api/credits", async (c) => {
 app.get("/api/api-keys", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
-  const rows = await c.env.DB.prepare("SELECT id, name, prefix, last_used_at, scopes, created_at FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC").bind(actor.userId).all<any>();
+  const rows = await c.env.DB.prepare("SELECT id, name, prefix, last_used_at, scopes, created_at FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC").bind(actor.userId).all<ApiKeyQueryRow>();
   const apiKeys: ApiKeySummary[] = rows.results.map((row) => ({ id: row.id, name: row.name, prefix: row.prefix, lastUsedAt: row.last_used_at, scopes: row.scopes.split(","), createdAt: row.created_at }));
   return c.json({ apiKeys });
 });
@@ -1467,7 +2444,7 @@ app.delete("/api/api-keys/:id", async (c) => {
 app.get("/api/api-logs", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
-  const rows = await c.env.DB.prepare("SELECT * FROM api_request_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").bind(actor.userId).all<any>();
+  const rows = await c.env.DB.prepare("SELECT * FROM api_request_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").bind(actor.userId).all<ApiRequestQueryRow>();
   const requests: ApiRequestLog[] = rows.results.map((row) => ({
     id: row.id, userId: row.user_id, apiKeyId: row.api_key_id, method: row.method, path: row.path, statusCode: row.status_code, durationMs: row.duration_ms, requestId: row.request_id, createdAt: row.created_at,
   }));
@@ -1484,7 +2461,12 @@ app.get("/api/catalog", async (c) => {
     ...createCatalogCore({
       providerId,
       providerModel: c.env.QWEN_MODEL_ID || (providerId === "alibaba-model-studio" ? "qwen-image-2.0-pro" : "local-qwen-preview"),
-      providerConfigured: providerId === "local-preview" || Boolean(c.env.DASHSCOPE_API_KEY && c.env.QWEN_API_BASE_URL),
+      providerConfigured: providerId === "local-preview" || Boolean(
+        c.env.DASHSCOPE_API_KEY
+          && c.env.QWEN_API_BASE_URL
+          && c.env.QWEN_API_ALLOWED_HOST
+          && c.env.QWEN_IMAGE_ALLOWED_HOSTS,
+      ),
       creatorPriceLabel: creatorOffer?.priceLabel ?? "$10 / month",
       creatorCredits: creatorOffer?.credits ?? 300,
       creatorPlanned: !billingReady,
@@ -1501,86 +2483,20 @@ app.onError((reason, c) => {
 
 app.notFound(async (c) => {
   if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/v1/")) return errorResponse(c, 404, "NOT_FOUND", "Route not found.");
-  return c.env.ASSETS.fetch(c.req.raw);
+  const asset = await c.env.ASSETS.fetch(c.req.raw);
+  if (!asset.headers.get("content-type")?.toLowerCase().includes("text/html")) return asset;
+  const headers = new Headers(asset.headers);
+  // Zone-level Web Analytics is independent of Worker code. no-transform keeps
+  // the reviewed HTML immutable at the edge and prevents automatic beacon injection.
+  headers.set("Cache-Control", "public, max-age=0, must-revalidate, no-transform");
+  return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
 });
-
-async function retryFailedBillingEvents(env: Env) {
-  const failed = await env.DB.prepare(`SELECT stripe_event_id, payload_json FROM billing_events
-    WHERE status = 'failed' AND attempts < 8 ORDER BY updated_at ASC LIMIT 10`)
-    .all<{ stripe_event_id: string; payload_json: string }>();
-  for (const row of failed.results) {
-    const claimed = await env.DB.prepare(`UPDATE billing_events SET status = 'processing', attempts = attempts + 1,
-      last_error = NULL, processing_started_at = ?, updated_at = ?
-      WHERE stripe_event_id = ? AND status = 'failed'`)
-      .bind(now(), now(), row.stripe_event_id).run();
-    if (!claimed.meta.changes) continue;
-    try {
-      const event = JSON.parse(row.payload_json) as StripeEvent;
-      if (event.id !== row.stripe_event_id || !event.type || !event.data?.object) {
-        throw new Error("Stored Stripe event is incomplete.");
-      }
-      await handleStripeEvent(env, event);
-      await env.DB.prepare(`UPDATE billing_events SET status = 'completed', completed_at = ?, updated_at = ?
-        WHERE stripe_event_id = ?`).bind(now(), now(), row.stripe_event_id).run();
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "Stripe event could not be retried.";
-      await env.DB.prepare(`UPDATE billing_events SET status = 'failed', last_error = ?, updated_at = ?
-        WHERE stripe_event_id = ?`).bind(message, now(), row.stripe_event_id).run();
-    }
-  }
-}
-
-async function runMaintenance(env: Env) {
-  const timestamp = now();
-  const guestCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const processingCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-  await retryFailedBillingEvents(env);
-  const guestAssets = await env.DB.prepare("SELECT id, r2_key FROM generations WHERE anonymous_session_id IS NOT NULL AND created_at < ?")
-    .bind(guestCutoff).all<{ id: string; r2_key: string | null }>();
-  await Promise.all(guestAssets.results.flatMap((row) => row.r2_key ? [env.ASSETS_BUCKET.delete(row.r2_key)] : []));
-  if (guestAssets.results.length) {
-    await env.DB.batch(guestAssets.results.map((row) => env.DB.prepare("DELETE FROM generations WHERE id = ?").bind(row.id)));
-  }
-
-  const stale = await env.DB.prepare("SELECT id, owner_user_id, anonymous_session_id, credit_cost, created_at FROM generations WHERE status = 'processing' AND updated_at < ?")
-    .bind(processingCutoff).all<{ id: string; owner_user_id: string | null; anonymous_session_id: string | null; credit_cost: number; created_at: string }>();
-  for (const generation of stale.results) {
-    if (generation.owner_user_id) {
-      const account = await creditAccount(env, generation.owner_user_id);
-      await env.DB.batch([
-        env.DB.prepare(`UPDATE credit_accounts SET available = available + ?, reserved = MAX(0, reserved - ?), updated_at = ?
-          WHERE user_id = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ? AND status = 'processing')`)
-          .bind(generation.credit_cost, generation.credit_cost, timestamp, generation.owner_user_id, generation.id),
-        env.DB.prepare(`INSERT OR IGNORE INTO credit_ledger (id, user_id, type, amount, balance_after, reference_id, description, created_at)
-          SELECT ?, ?, 'generation_refund', ?, ?, ?, 'Stale generation credit restoration', ?
-          WHERE EXISTS (SELECT 1 FROM generations WHERE id = ? AND status = 'processing')`)
-          .bind(crypto.randomUUID(), generation.owner_user_id, generation.credit_cost, account.available + generation.credit_cost, generation.id, timestamp, generation.id),
-        env.DB.prepare("UPDATE generations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'processing'").bind(timestamp, generation.id),
-      ]);
-    } else if (generation.anonymous_session_id) {
-      await env.DB.batch([
-        env.DB.prepare(`UPDATE anonymous_sessions SET used_count = CASE WHEN quota_date = ? THEN MAX(0, used_count - 1) ELSE used_count END
-          WHERE id = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ? AND status = 'processing')`)
-          .bind(generation.created_at.slice(0, 10), generation.anonymous_session_id, generation.id),
-        env.DB.prepare("UPDATE generations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'processing'").bind(timestamp, generation.id),
-      ]);
-    }
-  }
-
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(timestamp),
-    env.DB.prepare("DELETE FROM security_tokens WHERE expires_at <= ? OR consumed_at IS NOT NULL").bind(timestamp),
-    env.DB.prepare("DELETE FROM rate_limit_buckets WHERE reset_at <= ?").bind(Date.now()),
-    env.DB.prepare("DELETE FROM idempotency_keys WHERE created_at < ?").bind(guestCutoff),
-    env.DB.prepare("DELETE FROM anonymous_sessions WHERE expires_at <= ?").bind(timestamp),
-  ]);
-}
 
 export default {
   fetch(request: Request, env: Env, executionContext: ExecutionContext) {
     return app.fetch(request, env, executionContext);
   },
   scheduled(_controller: ScheduledController, env: Env, executionContext: ExecutionContext) {
-    executionContext.waitUntil(runMaintenance(env));
+    executionContext.waitUntil(runMaintenance(env, handleStripeEvent));
   },
 } satisfies ExportedHandler<Env>;

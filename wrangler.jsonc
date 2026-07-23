@@ -18,6 +18,9 @@
   ],
   "vars": {
     "APP_BASE_URL": "https://qwen-image-3.net",
+    "DEPLOY_REVISION": "codex-worker-online-hardening",
+    "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
+    "STRIPE_TIMEOUT_MS": "15000",
     "BILLING_ENABLED": "false",
     "GENERATION_PROVIDER": "local",
     "QWEN_MODEL_ID": "local-qwen-preview",

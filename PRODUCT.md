@@ -52,10 +52,10 @@ Qwen Image Generator Hub helps a visitor create a private image from a plain-Eng
 | Google/GitHub OAuth | **Implemented, external verification pending** | Registered applications and real callback acceptance |
 | Guest migration | **Verified locally** for generations from the previous 24 hours | Retention policy and expiry cleanup |
 | Credits | **Verified locally** for signup grant and generation reserve/settle/refund | Reconciliation monitoring and commercial policy |
-| Studio | **Verified locally** for overview, create, projects, history/failure states, favorites, credits, billing, scoped keys, API activity, and settings | Search/filter depth and production operational analytics |
+| Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
 | Stripe adapter | **Implemented and locally verified; blocked for public use** | Stripe test-mode lifecycle acceptance, reconciliation monitoring, and approved refund/dispute policy |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
-| Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; local SQLite remains supported | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
+| Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
 | Content library | **Prototype**: twelve prompt records, eight unique example cards, and ten homepage FAQs | 60/80-item editorial inventory and content review workflow |
 
 ## 4. Current User Experience
@@ -80,15 +80,18 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 | Route | Current behavior |
 |---|---|
-| `/studio` | Balance, project count, generation count, and recent work |
+| `/studio` | Plan, balance, current-month usage, active-key count, recent work, and normalized account activity |
 | `/studio/new` | Signed-in generation with optional project assignment |
 | `/studio/projects` | Create, archive, and restore projects |
 | `/studio/history` | Recent account generations |
 | `/studio/favorites` | Favorited generations |
 | `/studio/credits` | Available/reserved balances and ledger entries |
 | `/studio/billing` | Billing state, configured Stripe offers, history, and Customer Portal entry |
+| `/studio/payments` | Reconciled Checkout orders, recorded spend, refunds, and disputes |
 | `/studio/api-keys` | Issue once-visible hashed keys and revoke them |
 | `/studio/api-activity` | Review authenticated request status, latency, key association, and request IDs |
+| `/studio/support` | Open, review, reply to, close, and reopen user-owned private support tickets |
+| `/studio/profile` | Workspace identity, membership date, plan, and email verification state |
 | `/studio/settings` | Verification, profile, password, sessions, export, and fail-safe external-first account deletion |
 
 ### Global navigation requirements
@@ -123,7 +126,7 @@ Current rules:
 - Quality costs are Standard 1, High 2, and Ultra 4 credits for accounts; guest requests cost zero credits.
 - A guest receives three successful attempts per UTC date.
 - Provider failure restores guest allowance.
-- Successful assets are private and downloadable without a watermark.
+- Successful assets are private; guest and free-account downloads use the product’s visible free-export watermark, while an accepted Creator entitlement may download the original.
 
 Failed records render an explicit no-charge state in the generator and Studio, with retry and removal actions where applicable.
 
@@ -206,13 +209,13 @@ Request:
 }
 ```
 
-The same idempotency key returns the stored generation for 24 hours. Keys carry an explicit `generations:write` scope; SQLite or D1 stores rate-limit buckets and per-request status, duration, request ID, user, and key association. Per-key budgets, async reads/cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
+The same completed idempotency key returns the stored generation for 24 hours; a concurrent request receives `409 REQUEST_IN_PROGRESS` with `Retry-After`, and a stored failure is replayed without charging again. Keys carry an explicit `generations:write` scope. D1 stores rate-limit buckets and every request result, duration, request ID, and available user/key association. Per-key budgets, async reads/cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
 
 ## 6. Data, Privacy, and Security Contract
 
 ### Current verified safeguards
 
-- Local passwords use salted `scrypt`; the Cloudflare runtime uses salted PBKDF2-SHA-256 hashes with the work factor encoded beside each hash.
+- The canonical Worker uses salted PBKDF2-SHA-256 password hashes with the work factor encoded beside each hash.
 - Session, guest, security, OAuth state, and API key tokens are stored as hashes where appropriate.
 - Account and generation ownership checks run on the server.
 - Cookies are HttpOnly and SameSite=Lax; production HTTPS configuration adds Secure and HSTS.
@@ -225,9 +228,9 @@ The same idempotency key returns the stored generation for 24 hours. Keys carry 
 
 - Guest sessions expire after 30 days; guest generation assets are deleted after 24 hours by scheduled maintenance.
 - Free-account retention and backup-deletion timing are not implemented.
-- Rate limiting is IP-based and persisted in SQLite locally or D1 in pre-release; production per-account/key budgets and load acceptance remain pending.
-- Provider assets require approved HTTPS hosts, public DNS resolution, bounded redirects, allowed MIME types, valid signatures, and size limits.
-- SQLite schema changes are recorded in `schema_migrations`; D1 uses ordered SQL migrations. Rollback/upgrade exercises remain pending.
+- Rate limiting is IP-based and persisted in D1 locally and in acceptance; production per-account/key budgets and load acceptance remain pending.
+- Provider API and asset URLs require HTTPS and exact configured hosts; redirects are rejected. Assets also require allowed MIME types, valid signatures, and size limits.
+- D1 uses ordered forward-only SQL migrations. Rollback/upgrade exercises remain pending.
 - OAuth, email, Stripe, generation, and asset-download calls have explicit timeouts; provider-specific retry budgets remain pending.
 - Production privacy notice, terms, commercial-use statement, and launch-region review are pending.
 
@@ -245,13 +248,12 @@ The target policy must not be advertised as current behavior until cleanup telem
 ### Current architecture
 
 - React single-page application built by Vite.
-- Express serves local JSON APIs and the emitted local static bundle.
-- The Cloudflare acceptance runtime uses a custom-domain Hono Worker with a Pages fallback.
-- SQLite with WAL stores local identity, sessions, generation assets, credits, API keys, OAuth state, and billing records.
-- D1 stores deployed relational records; private R2 stores deployed generation source assets.
+- A Hono Worker is the single active business backend in Wrangler development and Cloudflare acceptance; Pages remains a fallback URL.
+- D1 stores relational records; private R2 stores generation source assets.
+- The Express/SQLite implementation is retained only as a legacy comparison adapter and is excluded from default scripts and deployment documentation.
 - Generation executes synchronously inside the HTTP request.
-- One active provider is selected at process startup: local preview or Alibaba Cloud Model Studio.
-- Rate-limit buckets and API request logs live in the active relational store.
+- One active provider is selected by Worker environment: local preview or Alibaba Cloud Model Studio.
+- Rate-limit buckets, API request logs, idempotency state, maintenance runs, and cleanup compensation live in D1.
 
 ### Target production architecture
 
@@ -299,22 +301,22 @@ The current production bundle passes the JavaScript size target locally. No publ
 ### Completed and locally verified
 
 - English responsive public interface and navigation.
-- Local guest-first generation, download, quota, and history.
+- Worker-backed guest-first generation, download, quota, and history.
 - Email/password authentication, verification, recovery, and sessions.
 - Google and GitHub OAuth adapters.
-- Guest migration, projects, favorites, account export, and local deletion.
+- Guest migration, projects, favorites, account export, and externally checkpointed deletion.
 - Credit ledger and generation reserve/settle/refund.
 - Hashed API keys and synchronous idempotent developer generation.
 - Stripe adapter and signed webhook tests.
 - Alibaba Cloud Qwen 2.0 adapter mapping and binary persistence tests.
 - Recoverable Stripe events, validated invoices, refund/dispute quarantine, and external-first account deletion.
-- Versioned migrations, scheduled retention/recovery maintenance, SQLite-backed rate limits, API scopes/logs, provider SSRF protection, production startup gates, explicit failed states, and 404 routes.
+- Forward-only migrations, scheduled retention/recovery maintenance, D1-backed rate limits, complete API result logs, R2 cleanup compensation, exact-host provider protection, explicit failed states, and 404 routes.
 
 ### Release-blocking work
 
 - Complete Stripe test-mode lifecycle acceptance, approved refund/dispute policy, and reconciliation monitoring.
 - Prove guest/account retention against backup deletion and production telemetry.
-- Establish the first Git baseline and CI evidence.
+- Obtain the first successful GitHub CI run for the committed baseline and hardening branch.
 - Complete real provider, email, OAuth, and Stripe test-mode acceptance.
 - Complete accessibility, browser, mobile, security, and container acceptance.
 - Approve legal, privacy, commercial-use, pricing, tax, and launch-region decisions.
@@ -354,13 +356,13 @@ Closed decisions:
 - [x] Email verification grants 20 credits once.
 - [x] Account and API generation share the credit ledger.
 - [x] Projects, history, favorites, API keys, sessions, export, and local deletion have automated flow coverage.
-- [x] TypeScript checks, 32 automated tests, and production builds pass locally.
+- [x] Strict TypeScript, React Hooks, basic JSX accessibility checks, automated tests, production build, and production-artifact scan pass locally.
 - [ ] Dependency audit currently reports three high-severity development-tool findings through Wrangler/Miniflare/Sharp; confirm an upstream fixed release before production approval.
 - [x] Production JavaScript gzip is below 180 KB.
 - [x] Guest assets are deleted after 24 hours by tested scheduled maintenance.
 - [x] Unsupported Qwen Image 3 release marketing is removed from the live UI.
 - [x] Billing events are retryable; invoices are validated; refunds/disputes quarantine spending; account deletion is external-first.
-- [x] API scopes/logs, persisted limits, failed states, and dedicated 404 routes are locally verified.
+- [x] API scopes/result logs, persisted limits, concurrent D1 credit invariants, failed states, and dedicated 404 routes are locally verified.
 
 ### Required before external beta
 

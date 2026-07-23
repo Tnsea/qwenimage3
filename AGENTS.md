@@ -11,16 +11,16 @@ This repository is an English-only, independent image-generation web product. It
 - Type-check: `npm run check`
 - Test: `npm test`
 - Build: `npm run build`
-- Start emitted build locally: `npm run start:local`
-- Start production build: `npm start` (fails closed unless production configuration passes)
+- Start the built Worker locally: `npm start`
+- Run the legacy Express comparison adapter only when explicitly required: `npm run legacy:dev`
 
 Run `npm run check`, `npm test`, and `npm run build` after behavior changes. For documentation-only work, verify local Markdown links and search for conflicting status claims.
 
 ## Stack and Layout
 
 - `src/`: React 19 client, Tailwind CSS 4, daisyUI 5.
-- `server/`: Express 5 API, providers, auth, billing, security, and SQLite access.
-- `worker/`: Cloudflare Worker API, D1 migrations, R2 asset access, and Stripe webhook handling for the acceptance runtime.
+- `server/`: legacy Express/SQLite comparison implementation; not an active product runtime.
+- `worker/`: canonical Cloudflare Worker API, D1 migrations, R2 asset access, OAuth, maintenance, and Stripe webhook handling.
 - `tests/`: Node test-runner integration and adapter tests.
 - `docs/`: architecture, operations, and release readiness.
 - `PRODUCT.md`: product contract and current/target status.
@@ -32,7 +32,7 @@ Run `npm run check`, `npm test`, and `npm run build` after behavior changes. For
 - Preserve private-by-default ownership checks and server-authoritative quotas.
 - Never expose secrets, raw session/API tokens, or provider credentials.
 - Database balance changes and billing fulfillment must remain transactional and idempotent.
-- Add local SQLite changes through the versioned migration registry and Cloudflare D1 changes through `worker/migrations/`.
+- Add canonical schema changes through forward-only D1 migrations in `worker/migrations/`. Touch the legacy SQLite registry only when a task explicitly targets the comparison adapter.
 - Do not add a dependency, environment variable, route, or user-visible capability without updating its authoritative documentation and tests.
 
 ## Truth and Release Boundaries

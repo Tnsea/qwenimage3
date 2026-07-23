@@ -5,6 +5,7 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import {
   canAccessGeneration,
+  addSupportMessage,
   claimBillingEvent,
   completeBillingEvent,
   completeGeneration,
@@ -24,6 +25,7 @@ import {
   createProject,
   createSecurityToken,
   createSession,
+  createSupportTicket,
   createUser,
   deleteUserAccount,
   deleteGeneration,
@@ -44,6 +46,8 @@ import {
   getGenerationRecord,
   getOrCreatePricingPromotion,
   getPricingPromotionForUser,
+  getSupportTicket,
+  getWorkspaceOverview,
   listApiKeys,
   listApiRequestLogs,
   listActiveBillingPriceVersions,
@@ -52,6 +56,7 @@ import {
   listGenerations,
   listProjects,
   listSessions,
+  listSupportTickets,
   maintenanceStatus,
   markGenerationProcessing,
   markPaymentReversal,
@@ -74,6 +79,7 @@ import {
   updateUserPassword,
   updateUserProfile,
   updateSubscriptionStatus,
+  updateSupportTicketStatus,
   updateProject,
 } from "./db.js";
 import { billingProviderInfo, BillingError, cancelStripeSubscription, createStripeCheckout, createStripeCustomer, createStripePortal, deleteStripeCustomer, findBillingOffer, findPaidStripeInvoicePaymentIntent, verifyStripeWebhook, type StripeEvent } from "./billing.js";
@@ -85,7 +91,16 @@ import { freeQueueDelayMs, generationQueue, type GenerationQueueTier } from "./g
 import { createToken, hashPassword, hashToken, verifyPassword } from "./security.js";
 import { originalExport, watermarkedExport } from "./watermark.js";
 import { createCatalogCore } from "../src/catalog.js";
-import type { AspectRatio, GenerationRequest, ImageQuality, ImageStyle, SessionState, User } from "../src/types.js";
+import type {
+  AspectRatio,
+  GenerationRequest,
+  ImageQuality,
+  ImageStyle,
+  SessionState,
+  SupportTicketCategory,
+  SupportTicketPriority,
+  User,
+} from "../src/types.js";
 
 const GUEST_LIMIT = 3;
 const SESSION_DAYS = 30;
@@ -96,6 +111,8 @@ const OAUTH_STATE_MINUTES = 10;
 const validRatios: AspectRatio[] = ["1:1", "3:2", "16:9", "4:3", "9:16"];
 const validStyles: ImageStyle[] = ["Photorealistic", "Editorial", "Cinematic", "Illustration"];
 const validQualities: ImageQuality[] = ["Standard", "High", "Ultra"];
+const validSupportCategories: SupportTicketCategory[] = ["generation", "billing", "api", "account", "other"];
+const validSupportPriorities: SupportTicketPriority[] = ["normal", "high"];
 const qualityCosts: Record<ImageQuality, number> = { Standard: 1, High: 2, Ultra: 4 };
 const billingOfferIds = ["creator_intro", "creator_monthly", "credits_100", "credits_300"] as const;
 
@@ -599,6 +616,7 @@ export function createApp() {
   app.use("/api/generations", createRateLimiter("web-generation", 30, 60 * 1000));
   app.use("/v1/generations", createRateLimiter("api-generation", 120, 60 * 1000));
   app.use("/api/billing", createRateLimiter("billing", 30, 60 * 1000));
+  app.use("/api/support", createRateLimiter("support", 30, 60 * 60 * 1000));
 
   app.get("/api/health", (_request, response) => {
     const provider = providerInfo();
@@ -1072,6 +1090,72 @@ export function createApp() {
     const favorite = Boolean(request.body?.favorite);
     if (!toggleFavorite(request.params.id, actor.user!.id, favorite)) return sendError(response, 404, "NOT_FOUND", "Generation not found.");
     response.json({ favorite });
+  });
+
+  app.get("/api/workspace/overview", (request, response) => {
+    const actor = requireUser(request, response);
+    if (actor) response.json(getWorkspaceOverview(actor.user!.id));
+  });
+
+  app.get("/api/support/tickets", (request, response) => {
+    const actor = requireUser(request, response);
+    if (actor) response.json({ tickets: listSupportTickets(actor.user!.id) });
+  });
+
+  app.post("/api/support/tickets", (request, response) => {
+    const actor = requireUser(request, response);
+    if (!actor) return;
+    const subject = typeof request.body?.subject === "string" ? request.body.subject.trim() : "";
+    const message = typeof request.body?.message === "string" ? request.body.message.trim() : "";
+    const category = request.body?.category as SupportTicketCategory;
+    const priority = request.body?.priority as SupportTicketPriority;
+    if (subject.length < 4 || subject.length > 120) return sendError(response, 400, "INVALID_SUBJECT", "Subject must be between 4 and 120 characters.");
+    if (message.length < 10 || message.length > 4000) return sendError(response, 400, "INVALID_MESSAGE", "Message must be between 10 and 4000 characters.");
+    if (!validSupportCategories.includes(category)) return sendError(response, 400, "INVALID_CATEGORY", "Choose a valid support category.");
+    if (!validSupportPriorities.includes(priority)) return sendError(response, 400, "INVALID_PRIORITY", "Choose a valid support priority.");
+    response.status(201).json(createSupportTicket({
+      id: crypto.randomUUID(),
+      messageId: crypto.randomUUID(),
+      userId: actor.user!.id,
+      subject,
+      category,
+      priority,
+      message,
+    }));
+  });
+
+  app.get("/api/support/tickets/:id", (request, response) => {
+    const actor = requireUser(request, response);
+    if (!actor) return;
+    const ticket = getSupportTicket(actor.user!.id, request.params.id);
+    if (!ticket) return sendError(response, 404, "NOT_FOUND", "Support ticket not found.");
+    response.json(ticket);
+  });
+
+  app.post("/api/support/tickets/:id/messages", (request, response) => {
+    const actor = requireUser(request, response);
+    if (!actor) return;
+    const message = typeof request.body?.message === "string" ? request.body.message.trim() : "";
+    if (message.length < 2 || message.length > 4000) return sendError(response, 400, "INVALID_MESSAGE", "Reply must be between 2 and 4000 characters.");
+    const result = addSupportMessage({
+      id: crypto.randomUUID(),
+      ticketId: request.params.id,
+      userId: actor.user!.id,
+      message,
+    });
+    if (result.outcome === "not_found") return sendError(response, 404, "NOT_FOUND", "Support ticket not found.");
+    if (result.outcome === "closed") return sendError(response, 409, "TICKET_CLOSED", "Reopen this ticket before replying.");
+    response.status(201).json(result.ticket);
+  });
+
+  app.patch("/api/support/tickets/:id", (request, response) => {
+    const actor = requireUser(request, response);
+    if (!actor) return;
+    const status = request.body?.status;
+    if (status !== "open" && status !== "closed") return sendError(response, 400, "INVALID_STATUS", "A ticket can be reopened or closed.");
+    const ticket = updateSupportTicketStatus({ ticketId: request.params.id, userId: actor.user!.id, status });
+    if (!ticket) return sendError(response, 404, "NOT_FOUND", "Support ticket not found.");
+    response.json(ticket);
   });
 
   app.get("/api/projects", (request, response) => {

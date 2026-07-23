@@ -13,7 +13,7 @@ test("homepage build injects the real semantic page into the first-response docu
   assert.match(prerender, /<HomeHero \/>/);
   assert.match(prerender, /<GeneratorWorkspace/);
   assert.match(prerender, /<HomeSections/);
-  assert.match(hero, /<h1 id="page-title">[\s\S]*Qwen Image 3/);
+  assert.match(hero, /<h1 id="page-title">[\s\S]*Qwen Image 3[\s\S]*AI Image Generator Hub/);
   assert.match(hero, /Qwen Image 3 itself is not presented as[\s\S]*verified or available here/);
   assert.match(marketing, /<h2>What to know before using a Qwen Image 3 prompt\.<\/h2>/);
   assert.match(marketing, /No verified Qwen Image 3 provider is currently available here/);

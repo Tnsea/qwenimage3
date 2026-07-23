@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock3, Coins, Crown, Download, FolderOpen, Heart, Image as ImageIcon, RefreshCw, Sparkles, Trash2, WandSparkles } from "lucide-react";
 import { api, ApiClientError } from "../api";
 import type { AspectRatio, Generation, ImageQuality, ImageStyle, Project, SessionState } from "../types";
@@ -48,11 +48,11 @@ export function GeneratorWorkspace({ session, compact = false, prerendered = fal
   const activeMeta = useMemo(() => active ? `${active.aspectRatio} · ${active.style} · ${active.quality}` : "", [active]);
   const canGenerate = prompt.trim().length >= 3 && !generating;
 
-  async function loadGenerations() {
+  const loadGenerations = useCallback(async () => {
     const payload = await api<{ generations: Generation[] }>("/api/generations?limit=12");
     setGenerations(payload.generations);
     setActive((current) => current && payload.generations.some((item) => item.id === current.id) ? current : payload.generations[0] ?? null);
-  }
+  }, []);
 
   useEffect(() => {
     if (initialPrompt) setPrompt(initialPrompt);
@@ -66,7 +66,7 @@ export function GeneratorWorkspace({ session, compact = false, prerendered = fal
       setProjects([]);
       setProjectId("");
     }
-  }, [session.user?.id]);
+  }, [loadGenerations, session.user]);
 
   async function generate(promptOverride?: string) {
     const requestedPrompt = (promptOverride ?? prompt).trim();
@@ -158,7 +158,7 @@ export function GeneratorWorkspace({ session, compact = false, prerendered = fal
         <div className="result-panel">
           <div className="result-heading"><h2>Your generated image result</h2><span>{activeMeta}</span></div>
           <div className={`result-stage ${active?.imageUrl ? "has-image" : ""}`}>
-            {active?.imageUrl ? <><img src={active.imageUrl} alt={`Generated image for: ${active.prompt.slice(0, 100)}`} /><div className="result-actions">{session.user && <button className="btn btn-sm" type="button" onClick={() => void setFavorite(!active.favorite)}><Heart size={14} fill={active.favorite ? "currentColor" : "none"} />{active.favorite ? "Saved" : "Favorite"}</button>}<button className="btn btn-sm" type="button" onClick={() => { setPrompt(active.prompt); void generate(active.prompt); }}><RefreshCw size={14} />Variation</button><a className="btn btn-sm" href={active.downloadUrl ?? active.imageUrl}><Download size={14} />{session.entitlements.watermarkedExports ? "Watermarked export" : "Download original"}</a></div></> : active?.status === "failed" ? <div className="result-placeholder"><span className="image-placeholder-icon"><ImageIcon size={23} /></span><strong>Generation failed safely</strong><p>No guest allowance or credits were charged. Edit the prompt or retry it now.</p><button className="btn btn-sm" type="button" onClick={() => { setPrompt(active.prompt); void generate(active.prompt); }}><RefreshCw size={14} />Retry prompt</button></div> : <div className="result-placeholder"><span className={`image-placeholder-icon ${generating ? "is-loading" : ""}`}>{generating ? <RefreshCw size={23} /> : <ImageIcon size={23} />}</span><strong>{generating ? (isVip ? "Creating with VIP priority" : "Waiting in the free queue") : "Your image will appear here"}</strong><p>{generating ? (isVip ? "Your request bypassed the standard free queue." : "VIP requests are processed first; yours will start automatically.") : "Start by describing the image you want."}</p></div>}
+            {active?.imageUrl ? <><img src={active.imageUrl} alt={`Generated result for: ${active.prompt.slice(0, 100)}`} /><div className="result-actions">{session.user && <button className="btn btn-sm" type="button" onClick={() => void setFavorite(!active.favorite)}><Heart size={14} fill={active.favorite ? "currentColor" : "none"} />{active.favorite ? "Saved" : "Favorite"}</button>}<button className="btn btn-sm" type="button" onClick={() => { setPrompt(active.prompt); void generate(active.prompt); }}><RefreshCw size={14} />Variation</button><a className="btn btn-sm" href={active.downloadUrl ?? active.imageUrl}><Download size={14} />{session.entitlements.watermarkedExports ? "Watermarked export" : "Download original"}</a></div></> : active?.status === "failed" ? <div className="result-placeholder"><span className="image-placeholder-icon"><ImageIcon size={23} /></span><strong>Generation failed safely</strong><p>No guest allowance or credits were charged. Edit the prompt or retry it now.</p><button className="btn btn-sm" type="button" onClick={() => { setPrompt(active.prompt); void generate(active.prompt); }}><RefreshCw size={14} />Retry prompt</button></div> : <div className="result-placeholder"><span className={`image-placeholder-icon ${generating ? "is-loading" : ""}`}>{generating ? <RefreshCw size={23} /> : <ImageIcon size={23} />}</span><strong>{generating ? (isVip ? "Creating with VIP priority" : "Waiting in the free queue") : "Your image will appear here"}</strong><p>{generating ? (isVip ? "Your request bypassed the standard free queue." : "VIP requests are processed first; yours will start automatically.") : "Start by describing the image you want."}</p></div>}
           </div>
 
           <div className="recent-heading"><h3>Recent private image results</h3><span>{generations.length ? `${generations.length} private item${generations.length > 1 ? "s" : ""}` : "No images yet"}</span></div>

@@ -117,12 +117,6 @@ export interface AuthMethods {
   github: boolean;
 }
 
-export interface AuthTokenDelivery {
-  delivered: boolean;
-  delivery: "console" | "resend" | "none";
-  devToken?: string;
-}
-
 export interface BillingOffer {
   id: "creator_intro" | "creator_monthly" | "credits_100" | "credits_300";
   name: string;
@@ -206,6 +200,65 @@ export interface BillingSummary {
     createdAt: string;
     completedAt: string | null;
   }>;
+}
+
+export type SupportTicketCategory = "generation" | "billing" | "api" | "account" | "other";
+export type SupportTicketPriority = "normal" | "high";
+export type SupportTicketStatus = "open" | "waiting" | "resolved" | "closed";
+
+export interface SupportMessage {
+  id: string;
+  ticketId: string;
+  author: "user" | "support";
+  body: string;
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  messageCount: number;
+  lastMessageAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicket {
+  messages: SupportMessage[];
+}
+
+export type WorkspaceActivityType = "generation" | "credit" | "payment" | "support";
+
+export interface WorkspaceActivity {
+  id: string;
+  type: WorkspaceActivityType;
+  title: string;
+  detail: string;
+  status: string;
+  href: string;
+  createdAt: string;
+}
+
+export interface WorkspaceOverview {
+  plan: {
+    name: "Free" | "Creator";
+    status: BillingSummary["account"]["status"];
+  };
+  credits: {
+    available: number;
+    reserved: number;
+  };
+  usage: {
+    generationsThisMonth: number;
+    generationsAllTime: number;
+  };
+  activeProjects: number;
+  activeApiKeys: number;
+  openSupportTickets: number;
+  recentActivity: WorkspaceActivity[];
 }
 
 export interface ApiErrorPayload {

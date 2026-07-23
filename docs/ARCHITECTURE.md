@@ -8,17 +8,14 @@ This document describes the repository as it exists. Future architecture is clea
 
 ```mermaid
 flowchart TD
-  B[Browser] -->|Local development| E[Express application]
-  E --> S[(SQLite with WAL)]
-  B -->|Cloudflare acceptance| W[Custom domain + Hono Worker]
+  B[Browser] -->|Wrangler development or Cloudflare acceptance| W[Hono Worker]
   W --> D[(Cloudflare D1)]
   W --> R[(Private R2 bucket)]
-  E --> P{Configured provider}
-  W --> P
+  W --> P{Configured provider}
   P --> L[Deterministic local SVG]
   P --> Q[Alibaba Cloud Qwen 2.0 adapter]
-  E --> T[Stripe API and webhooks]
   W --> T
+  E[Legacy Express adapter] -. comparison only .-> S[(SQLite with WAL)]
 ```
 
 The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers directly. Provider credentials remain server-side. The deployed custom-domain environment is an acceptance target, not an approved production launch.
@@ -31,39 +28,40 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | Search entry document | `vite.config.ts`, `src/prerender.tsx`, `index.html` | Build-time homepage prerender plus canonical, social, and structured metadata for first-response crawler access |
 | Navigation | `src/components/Header.tsx` | Desktop/mobile public routes and signed-in account actions |
 | Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, result/history actions |
-| Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, local verification, recovery, and configured OAuth entry |
-| Studio | `src/components/Studio.tsx` | Projects, history, favorites, credits, billing, keys, settings, and deletion confirmation |
-| API application | `server/app.ts` | HTTP routes, validation, ownership, quotas, generation, billing webhook dispatch, and static serving |
-| Persistence | `server/db.ts` | SQLite schema, transactions, queries, migrations, and account cascades |
-| Cloudflare API | `worker/index.ts` | Same-origin Hono routes, Web Crypto authentication, D1 accounting, R2 assets, Stripe webhook processing, and Pages asset fallback |
-| D1 migrations | `worker/migrations/` | Production-shaped relational schema for users, sessions, credits, generations, billing, and rate limits |
-| Provider boundary | `server/providers/` | Active local or Alibaba Cloud generation provider |
-| External adapters | `server/oauth.ts`, `server/mailer.ts`, `server/billing.ts` | OAuth profile exchange, email delivery, Stripe requests, and webhook verification |
-| Runtime configuration gate | `server/config.ts` | Reject unsafe production email, cookies, storage, provider, asset-host, and billing configuration |
+| Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, recovery, and dynamically configured OAuth entry |
+| Studio | `src/components/Studio.tsx` | Responsive authenticated shell, aggregate overview, projects, history, credits, billing/payments, keys, private support conversations, profile, settings, and deletion confirmation |
+| Canonical API | `worker/index.ts` | Same-origin routes, ownership, quotas, generation, billing, maintenance, and HTTP composition |
+| Credit service | `worker/credits.ts` | Exactly-once grants plus atomic reservation, settlement, and refund statements |
+| OAuth adapter | `worker/oauth.ts` | D1-backed state, PKCE authorization, token exchange, and verified identity mapping |
+| External request boundary | `worker/external.ts` | Bounded timeouts, normalized errors, redirect control, and trusted URL validation |
+| Maintenance service | `worker/maintenance.ts` | Billing retries, stale-task recovery, retention, and R2 cleanup compensation |
+| Runtime contract | `worker/env.ts` | Worker bindings, non-secret variables, and managed-secret names |
+| D1 migrations | `worker/migrations/` | Forward-only schema for identity, credits, generation state, billing, maintenance, OAuth, and cleanup compensation |
+| Legacy comparison adapter | `server/` | Preserved Express/SQLite implementation; excluded from active development and deployment scripts |
 
 ## Trust Boundaries
 
 ### Browser to API
 
 - Account and guest sessions use opaque HttpOnly cookies.
-- Local passwords use salted scrypt; Cloudflare passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and encoded work factors.
-- API keys use a Bearer token whose hash is stored in SQLite or D1.
+- Worker passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and encoded work factors.
+- API keys use a Bearer token whose hash is stored in D1.
 - Client-provided project IDs are checked against the authenticated owner.
 - Client-provided billing quantities and prices are ignored; offers come from server configuration.
 - API keys carry explicit scopes; authenticated API calls persist status, duration, request ID, user, and key association.
-- IP rate-limit buckets are persisted in SQLite locally and D1 in the acceptance runtime.
+- IP rate-limit buckets are persisted in D1 in Wrangler development and the acceptance runtime.
 
 ### API to external providers
 
 - OAuth state is one-time and PKCE protects authorization-code exchange.
 - OAuth access tokens are not persisted.
 - Stripe webhooks are verified against the raw body with timestamped HMAC.
-- Qwen assets require approved HTTPS host suffixes, public DNS results, bounded redirects, PNG/JPEG/WebP MIME and file signatures, and a 25 MB limit.
+- Qwen API and asset URLs require HTTPS and exact configured hostnames; redirects are rejected. Assets also require PNG/JPEG/WebP MIME and file signatures and a 25 MB limit.
 - OAuth, email, Stripe, Qwen generation, and provider-asset requests use explicit timeouts.
 
 ## Persistence Models
 
-Local SQLite runs in WAL mode with foreign keys and a five-second busy timeout. The deployed Worker uses D1 for relational records and a private R2 bucket for original generation bytes. R2 keys are stored in D1 and never exposed as public object URLs.
+The canonical Worker uses D1 for relational records and a private R2 bucket for original generation bytes in both Wrangler development and the acceptance runtime. R2 keys are stored in D1 and never exposed as public object URLs. SQLite remains only in the legacy comparison adapter.
 
 | Table | Current role |
 |---|---|
@@ -79,17 +77,22 @@ Local SQLite runs in WAL mode with foreign keys and a five-second busy timeout. 
 | `credit_ledger` | Append-only product credit events |
 | `api_keys` | Prefix, secret hash, scopes, last-use time, and revocation |
 | `api_request_logs` | API key/user association, route, status, latency, and request ID |
+| `support_tickets` | User-owned request metadata, priority, lifecycle status, and last-message time |
+| `support_messages` | Ordered user/support conversation entries linked to an owned ticket |
 | `idempotency_keys` | User/key to generation mapping with 24-hour lookup |
+| `generation_requests` | Concurrent idempotency claim, processing, completion, and stable failure state |
 | `billing_accounts` | Stripe identifiers, local subscription state, and financial-review block |
 | `billing_price_versions` | Immutable Stripe Price-to-offer/amount/credits versions; one active checkout version per offer |
 | `billing_orders` | Checkout session, price-version snapshot, amount, credits, fulfillment, and financial state |
+| `billing_checkout_attempts` | Pre-Stripe recoverable order intent and Checkout association |
 | `billing_events` | Retryable processing/completed/failed Stripe event state and attempts |
 | `billing_payments` | PaymentIntent-to-user/order/invoice/Price-version mapping for refunds, disputes, and recurring grants |
 | `rate_limit_buckets` | Persistent request window counters |
 | `maintenance_runs` | Last retention/recovery result |
-| `schema_migrations` | Applied schema version, name, and timestamp |
+| `r2_deletion_queue` | Retriable compensation for failed or post-account-deletion object cleanup |
+| `account_deletion_jobs`, `account_deletion_audit` | External cleanup progress and durable completion evidence |
 
-Local schema evolution records each additive upgrade in `schema_migrations` and applies it under `BEGIN IMMEDIATE`. D1 uses ordered SQL migrations in `worker/migrations/`. Backup, restore, lifecycle, and rollback exercises are still required before production approval.
+D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, restore, lifecycle, and rollback exercises are still required before production approval.
 
 ## Transaction Flows
 
@@ -97,8 +100,7 @@ Local schema evolution records each additive upgrade in `schema_migrations` and 
 
 1. `/api/session` creates or resumes an anonymous session.
 2. `/api/generations` validates prompt and settings.
-3. The active relational store atomically increments the UTC daily quota count.
-4. A processing generation row is stored.
+3. D1 atomically claims quota and stores the processing generation.
 5. The active provider runs synchronously.
 6. Success stores the image; failure marks the row failed and decrements quota.
 
@@ -106,36 +108,36 @@ Local schema evolution records each additive upgrade in `schema_migrations` and 
 
 1. Resolve a cookie session or API key.
 2. Validate ownership and idempotency.
-3. Move cost from available to reserved and append a reservation entry in one transaction.
-4. Store the processing generation and call the provider.
+3. A unique idempotency claim elects one executor; concurrent requests receive `409 REQUEST_IN_PROGRESS`.
+4. Move cost from available to reserved, append a reservation entry, and store the processing generation in one D1 batch.
 5. Success stores the image and appends settlement; failure appends refund and restores available balance.
 
-A startup and 15-minute maintenance transaction marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale reservations, and restores same-day guest quota. Generation execution remains synchronous and has no durable queue.
+The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale reservations, restores same-day guest quota, and drains R2 cleanup compensation. Generation execution remains synchronous and has no durable queue.
 
 ### Registration and verification
 
 1. Registration creates the user, zero-balance account, billing row, and account session.
 2. Eligible generations from the active guest session and previous 24 hours move to the account.
-3. A one-time verification token is delivered through console or Resend.
+3. A one-time verification token replaces any older active token and is delivered through Resend when configured.
 4. Token consumption marks the address verified and grants 20 credits once.
 
 ### Billing
 
-1. The server selects a configured offer and creates Stripe Checkout.
-2. A local pending order is written after Checkout returns.
+1. The Worker stores a recoverable checkout attempt with a local order ID.
+2. Stripe Checkout uses that order ID as its Stripe idempotency key and metadata; the returned session is associated with the attempt.
 3. A signed Stripe event atomically claims a retryable processing state; missing local dependencies return a retryable HTTP response.
 4. Credit packs map the PaymentIntent to the order; Creator invoices validate Customer, subscription, configured Price, exact USD 800 or 1000 amount, paid state, billing reason, and PaymentIntent before granting.
 5. Refund/dispute events mark financial records and quarantine further credit spending for review.
-6. Account deletion cancels a known subscription and deletes the Stripe Customer before local data is removed; failure preserves local identity.
+6. Account deletion checkpoints subscription cancellation and Customer deletion, atomically queues owned R2 keys before removing D1 identity state, and retains a deletion audit. Failed object cleanup is retried by maintenance.
 
 `BILLING_ENABLED` gates new Checkout creation, not settlement or cleanup. When Stripe credentials remain configured, signed webhooks continue to drain existing financial events and account deletion can still remove external customer state. These paths are locally regression-tested and restricted-key/signed-webhook smoke-tested, but remain blocked for public billing until paid Stripe test-mode, reconciliation, policy, and legal evidence passes [Release Readiness](./RELEASE_READINESS.md).
 
 ## Current Deployment Shape
 
-- Development: Vite on `127.0.0.1:5173`; Express on `127.0.0.1:8787`.
-- Emitted local build: Express serves `dist/` and API routes on port 8787.
-- Production entry: `server/config.ts` fails closed on local provider/email, insecure cookies/URLs, ephemeral storage, missing trusted asset hosts, or incomplete enabled billing.
-- Container: a multi-stage Node 22 Alpine image runs as the `node` user with a named SQLite volume.
+- Development: Wrangler serves the built client and same-origin Worker on port 8787 with local D1/R2 emulation.
+- Local release smoke: `npm start` rebuilds the client, applies local D1 migrations, and starts the same Worker entry.
+- Default build/deploy/CI paths exclude Express and SQLite.
+- The retained container runs the legacy Node/SQLite comparison adapter and is local-only.
 - Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production` and private R2 bucket `qwen-image-3-assets` are bound. `https://qwen-image-3.pages.dev` remains a fallback.
 - Live smoke passed for health, guest cookie, ten-minute promotion persistence, free-queue generation, D1 metadata, R2-backed retrieval, and watermarked export.
 - Billing, email, OAuth, and real Qwen execution remain disabled/unverified; the custom domain does not by itself approve a production launch.

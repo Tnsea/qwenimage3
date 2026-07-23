@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, FileQuestion } from "lucide-react";
 import { api } from "./api";
 import { parseCatalog } from "./catalog";
@@ -86,10 +86,12 @@ export default function App() {
     }
   }, [path]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const themeName = theme === "dark" ? "qwen" : "qwen-light";
     window.localStorage.setItem("qwen-theme", theme);
-    document.documentElement.style.background = theme === "dark" ? "#080909" : "#f3f2ee";
-    document.body.style.background = theme === "dark" ? "#080909" : "#f3f2ee";
+    document.documentElement.dataset.theme = themeName;
+    document.documentElement.style.colorScheme = theme;
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#080909" : "#f4f3ef");
   }, [theme]);
 
   function navigate(nextPath: string) {
@@ -121,7 +123,7 @@ export default function App() {
 
   let page: React.ReactNode;
   if (path.startsWith("/studio")) {
-    page = <Studio path={path} session={session} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} />;
+    page = <Studio path={path} session={session} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onLogout={logout} />;
   } else if (path === "/examples") {
     page = <ExamplesPage catalog={catalog} onUsePrompt={usePrompt} />;
   } else if (path === "/prompts") {
@@ -143,12 +145,12 @@ export default function App() {
       </main>
     );
   } else {
-    page = <main className="content-page studio-gate"><div className="card card-border"><div className="card-body"><FileQuestion size={34} /><span className="badge badge-outline">404</span><h1>This page does not exist.</h1><p>The address may be outdated, or the page may have moved. Your generations and account data are unchanged.</p><div className="card-actions"><button className="btn" type="button" onClick={() => navigate("/")}><ArrowLeft size={15} />Back to generator</button></div></div></div></main>;
+    page = <main className="content-page studio-gate"><div className="card card-border"><div className="card-body"><FileQuestion size={34} /><span className="badge badge-outline">404</span><h1>This page does not exist.</h1><p>The address may be outdated, or the page may have moved. Your generations and account data are unchanged.</p><div className="card-actions"><button className="btn btn-primary" type="button" onClick={() => navigate("/")}><ArrowLeft size={15} />Back to generator</button></div></div></div></main>;
   }
 
   return (
-    <div className={`page-shell ${theme === "light" ? "light-mode" : ""}`} data-theme="qwen">
-      <Header path={path} session={session} theme={theme} mobileOpen={mobileOpen} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onMobile={() => setMobileOpen((value) => !value)} onSignIn={() => openAuth("login")} onRegister={() => openAuth("register")} onLogout={() => void logout()} />
+    <div className={`page-shell ${theme === "light" ? "light-mode" : ""}`} data-theme={theme === "dark" ? "qwen" : "qwen-light"}>
+      {(!path.startsWith("/studio") || !session.user) && <Header path={path} session={session} theme={theme} mobileOpen={mobileOpen} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onMobile={() => setMobileOpen((value) => !value)} onSignIn={() => openAuth("login")} onRegister={() => openAuth("register")} onLogout={() => void logout()} />}
       {startupError && <div role="alert" className="alert alert-error global-alert"><span>{startupError}</span></div>}
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
@@ -161,6 +163,7 @@ export default function App() {
       }} onSuccess={(nextSession, migrated, verifiedNow) => {
         setSession(nextSession);
         setAuthOpen(false);
+        navigate("/studio");
         if (verifiedNow) setNotice("Email verified. Your 20 welcome credits are ready.");
         else if (migrated > 0) setNotice(`Account ready. ${migrated} guest generation${migrated > 1 ? "s were" : " was"} migrated.${nextSession.user?.emailVerified ? "" : " Verify your email to unlock credits."}`);
         else setNotice(nextSession.user?.emailVerified ? "Account ready. Your 20 welcome credits are available." : "Account ready. Check your email to unlock 20 welcome credits.");

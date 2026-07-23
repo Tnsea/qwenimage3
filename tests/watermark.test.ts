@@ -15,8 +15,9 @@ test("free exports wrap the private source in a visible repeated watermark", () 
   assert.equal(exported.extension, "svg");
   assert.equal(exported.watermarked, true);
   assert.match(String(exported.data), /data-export-watermark="free"/);
-  assert.match(String(exported.data), /QWEN IMAGE 3\.0 · FREE/);
-  assert.match(String(exported.data), /Qwen Image 3\.0 · Free export/);
+  assert.match(String(exported.data), /QWEN IMAGE HUB · FREE/);
+  assert.match(String(exported.data), /Qwen Image Hub · Free export/);
+  assert.doesNotMatch(String(exported.data), /Qwen Image 3/);
   assert.match(String(exported.data), /data:image\/svg\+xml;base64,/);
 });
 

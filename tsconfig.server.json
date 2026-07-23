@@ -10,5 +10,5 @@
     "types": ["node"]
   },
   "include": ["server", "tests"],
-  "exclude": ["tests/worker-auth.test.ts"]
+  "exclude": ["tests/worker-*.test.ts"]
 }

@@ -4,27 +4,22 @@ Last verified: July 23, 2026
 
 This runbook covers local execution, the Cloudflare acceptance environment, and the remaining production gates. The custom-domain environment is deployed but is not an approved production launch.
 
-## Environment Matrix
+## Canonical Worker Environment
 
 | Variable | Local default | Required when | Security note |
 |---|---|---|---|
-| `PORT` | `8787` | Changing API port | Numeric listener port |
-| `HOST` | `127.0.0.1` | Container or network bind | Use `0.0.0.0` only behind intended network controls |
-| `DATABASE_PATH` | `./data/qwenimage.db` | Custom storage path | Back up the database and WAL consistently |
-| `APP_BASE_URL` | Local URL | Email links, OAuth, billing redirects | Must be the canonical HTTPS origin outside local development |
-| `CORS_ORIGINS` | `APP_BASE_URL` | Additional exact browser origins | Comma-separated exact origins; localhost is added only outside production |
-| `COOKIE_SECURE` | `false` | HTTPS deployment | Must be `true` on the public service |
-| `EXTERNAL_HTTP_TIMEOUT_MS` | `15000` | OAuth and email calls | Minimum effective value is one second |
-| `EMAIL_PROVIDER` | `console` | Select `console` or `resend` | Console is local-only |
-| `ALLOW_DEV_AUTH_TOKENS` | `true` | Local verification/recovery | Must be `false` on any public service |
+| `APP_BASE_URL` | Canonical acceptance URL in checked-in config | Email links, OAuth, billing redirects | Must be the exact HTTPS origin outside Wrangler-local development |
+| `DEPLOY_REVISION` | Fallback release label | Health/deployment correlation in local and legacy Pages runtimes | The canonical Worker reports its immutable Cloudflare version ID from `CF_VERSION_METADATA` |
+| `EXTERNAL_HTTP_TIMEOUT_MS` | `15000` | OAuth, email, generation, and asset calls | Effective range is 1–120 seconds |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Empty | Resend delivery | Keep in managed secrets |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Empty | Google sign-in | Callback origin must match `APP_BASE_URL` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Empty | GitHub sign-in | Callback origin must match `APP_BASE_URL` |
 | `GENERATION_PROVIDER` | `local` | Select `local` or `qwen` | `local` is a deterministic preview, not a real model |
 | `DASHSCOPE_API_KEY` | Empty | Qwen provider | Server-side secret |
-| `QWEN_API_BASE_URL` | Empty | Qwen provider | Must identify the intended Model Studio workspace/region |
+| `QWEN_API_BASE_URL` | Empty | Qwen provider | HTTPS URL for the intended Model Studio workspace/region |
+| `QWEN_API_ALLOWED_HOST` | Empty | Qwen provider | Exact hostname of `QWEN_API_BASE_URL`; wildcards and suffix matching are not accepted |
 | `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Model override | Require release-gate evidence before changing |
-| `QWEN_IMAGE_ALLOWED_HOSTS` | `aliyuncs.com` | Qwen asset download | Explicit suffix allowlist; DNS must also resolve publicly |
+| `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
 | `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
 | `STRIPE_TIMEOUT_MS` | `15000` | Stripe API calls | Minimum effective value is one second |
 | `STRIPE_SECRET_KEY` | Empty | Stripe API, Portal, and external cleanup | Use a restricted managed key; never commit it |
@@ -34,7 +29,9 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `STRIPE_PRICE_CREDITS_100` | Empty | Seed the first 100-credit version | Verify USD 7 one-time amount before seeding |
 | `STRIPE_PRICE_CREDITS_300` | Empty | Seed the first 300-credit version | Verify USD 18 one-time amount before seeding |
 
-`NODE_ENV` is set by npm scripts and is not copied into `.env.example` as a user secret.
+`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables.
+
+The variables `PORT`, `HOST`, `DATABASE_PATH`, `CORS_ORIGINS`, `COOKIE_SECURE`, `EMAIL_PROVIDER`, and `ALLOW_DEV_AUTH_TOKENS` apply only to the inactive Express/SQLite comparison adapter in `server/` and `.env.example`.
 
 ## Local Development
 
@@ -43,17 +40,16 @@ npm install
 npm run dev
 ```
 
-- Web: `http://127.0.0.1:5173`
-- API: `http://127.0.0.1:8787`
+- Web and same-origin API: `http://127.0.0.1:8787`
 - Health: `http://127.0.0.1:8787/api/health`
 
-Console email logs one-time links and returns development tokens to the local UI. Treat terminal output as sensitive while those tokens are valid.
+`npm run dev` builds the React client, applies forward-only migrations to Wrangler-local D1, watches the web build, and runs the canonical Worker with local D1/R2 emulation. Email and OAuth remain unavailable unless their Worker secrets are supplied; the client never receives a development verification token.
 
 ## Emitted Build Smoke
 
 ```bash
 npm run build
-npm run start:local
+npm start
 ```
 
 Smoke checks:
@@ -65,17 +61,18 @@ curl -fsSI http://127.0.0.1:8787/
 
 Expected local health characteristics:
 
-- `status: ok` when the selected generation and email providers report configured;
+- `runtime: cloudflare-worker`;
+- `status: ok` when the selected generation provider is configured;
 - `provider: local-preview` and `generator: local-qwen-preview` by default;
 - Google/GitHub `false` without credentials;
 - Stripe `configured: false` without the required credentials and one active database Price version per offer;
-- database reported as SQLite.
+- `database: cloudflare-d1`, `objectStorage: cloudflare-r2`, a revision label, and maintenance freshness.
 
-The health endpoint is a configuration/readiness summary, not a deep provider request, database write probe, billing reconciliation check, or deployment marker.
+The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request or billing reconciliation probe.
 
-`npm start` sets `NODE_ENV=production` and refuses to listen unless the canonical URL is HTTPS, cookies are secure, development tokens are disabled, storage is persistent, Resend and Qwen are configured, asset hosts are explicit, and every variable for any enabled billing surface is present.
+HTML responses use `Cache-Control: public, max-age=0, must-revalidate, no-transform`. The `no-transform` directive prevents Cloudflare zone-level Web Analytics from injecting an unreviewed beacon into the application shell; the strict CSP remains an independent fail-closed control.
 
-The checked-in `compose.yaml` is a local-demo profile: it explicitly runs `npm run start:local` with console email and the deterministic local generator. Production orchestration must retain the image's default production command and supply the validated environment instead of copying that local profile.
+The checked-in `compose.yaml`, `Dockerfile`, and `server/` tree run only the legacy Express/SQLite comparison adapter. They are excluded from the default development, build, CI artifact, and Cloudflare deployment paths.
 
 ## Cloudflare Acceptance Environment
 
@@ -91,14 +88,17 @@ Current resources:
 - Email/OAuth: disabled
 - Generation provider: deterministic local preview
 
-Deploy and migrate:
+Release verification, migration, and deployment:
 
 ```bash
+npm run verify:release
+npx wrangler d1 export qwen-image-3-production --remote --output backups/qwen-image-3-YYYYMMDD-HHMMSS.sql
 npm run cf:migrate:remote
 npm run cf:deploy
 ```
 
 `wrangler.worker.jsonc` is the public custom-domain deployment source of truth. `wrangler.jsonc` retains the Pages fallback configuration.
+Capture an R2 object inventory through the authenticated Cloudflare API or dashboard before migrations that affect object references; current Wrangler has no object-list command.
 
 Live smoke:
 
@@ -111,7 +111,9 @@ curl -fsSI https://www.qwen-image-3.net/pricing
 
 Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance also created a guest generation, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. Stripe Sandbox acceptance created and expired an API-only Checkout Session, deleted that temporary Customer, delivered a signed no-op subscription update through the canonical webhook, and confirmed idempotent replay. A separate application-created USD 7/100-credit Checkout then completed with Stripe's test card: the Stripe-origin `checkout.session.completed` event completed once in D1, the order and payment became paid, and one ledger row granted exactly 100 credits. New Checkout was disabled again before the payment was submitted.
 
-Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. `BILLING_ENABLED=false` blocks new Checkout while allowing configured signed webhooks and Stripe-side account cleanup to finish. Enabling new purchases requires updating that switch in the Worker configuration and redeploying only after test-mode acceptance passes.
+Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. OAuth callbacks are `/api/auth/oauth/google/callback` and `/api/auth/oauth/github/callback` under `APP_BASE_URL`. `BILLING_ENABLED=false` blocks new Checkout while allowing configured signed webhooks and Stripe-side account cleanup to finish. Enabling new purchases requires updating that switch and redeploying only after test-mode acceptance passes.
+
+Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. The CSP deliberately permits only same-origin scripts and connections; analytics must not be “fixed” by weakening CSP.
 
 ## Billing Price Versions
 
@@ -133,24 +135,24 @@ VALUES
 
 Do not update the amount or credits on an existing row and do not delete retired rows while Stripe subscriptions or financial records may reference them. Before applying the migration, export D1, confirm the new Stripe Price in Sandbox, keep `BILLING_ENABLED=false`, migrate, deploy, verify `/api/health` reports `priceCatalogConfigured: true`, exercise Checkout and invoice replay, then explicitly decide whether to enable sales.
 
-## Container
+## Legacy Container
 
 ```bash
 docker compose up --build
 ```
 
-The checked-in Compose service is for local evaluation only. It deliberately uses:
+The checked-in Compose service is a retained comparison path only. It deliberately uses:
 
 - `COOKIE_SECURE=false`;
 - `EMAIL_PROVIDER=console`;
 - `ALLOW_DEV_AUTH_TOKENS=true`;
 - `GENERATION_PROVIDER=local`.
 
-A deployment platform must override those values, use managed secrets, mount durable storage, provide health supervision, and prove backup/restore. The current workspace has not executed the container because Docker Compose and a running daemon are unavailable.
+It must not be used as an internet deployment configuration. The current workspace has not executed it because Docker Compose and a running daemon are unavailable.
 
 ## Database Backup and Restore
 
-SQLite uses WAL mode. Prefer an online SQLite backup rather than copying only the main database file while the service is writing.
+The following SQLite procedure applies only to preserved legacy/runtime evidence. SQLite uses WAL mode, so prefer an online backup rather than copying only the main database file while it is writing.
 
 Backup example:
 
@@ -215,7 +217,7 @@ Current behavior:
 - account and guest sessions have 30-day expiries;
 - guest-to-account migration considers the previous 24 hours;
 - guest history and asset access are denied after 24 hours;
-- maintenance runs at startup and every 15 minutes to delete guest asset rows older than 24 hours, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded generation reservations, and record its result;
+- Worker maintenance runs every 15 minutes to delete guest assets older than 24 hours, drain the R2 deletion compensation queue, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded generation reservations, and record its result;
 - free/paid account assets, billing/audit records, and backups do not yet have approved deletion schedules.
 
 Required before external beta:
@@ -227,14 +229,14 @@ Required before external beta:
 
 ## Monitoring and Incidents
 
-Current logging is process console output plus request IDs. Authenticated developer generation calls are stored in `api_request_logs`, and retention/recovery summaries are stored in `maintenance_runs`. No production log pipeline, metrics, traces, dashboards, or alerts are configured.
+Current logging is Cloudflare invocation output plus request IDs. Every `/v1/generations` attempt is recorded with status, duration, and request ID; valid keys also retain user/key association. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, and failed object cleanup in `r2_deletion_queue`. No production metrics, traces, dashboards, reconciliation alarms, or on-call alerts are configured.
 
 Production acceptance requires at minimum:
 
 - request rate, latency, and error code dashboards;
 - generation success, timeout, moderation, and stranded-reservation alerts;
 - credit and Stripe reconciliation alarms;
-- database capacity, WAL, backup, and restore monitoring;
+- D1 capacity, R2 cleanup backlog, backup, and restore monitoring;
 - provider health and cost alerts;
 - deploy revision and rollback marker.
 

@@ -1,4 +1,4 @@
-import { Coins, Menu as MenuIcon, Moon, Search, Sun, X } from "lucide-react";
+import { Coins, Menu as MenuIcon, Moon, Sun, X } from "lucide-react";
 import type { SessionState } from "../types";
 
 const navigation = [
@@ -35,7 +35,7 @@ export function Header({ path, session, theme, mobileOpen, onNavigate, onTheme, 
       <nav className="navbar site-navbar" aria-label="Primary navigation">
         <div className="navbar-start">
           <a className="brand-link" href="/" onClick={link("/")} aria-label="Qwen Image 3 home">
-            <span className="brand-mark" aria-hidden="true"><Search size={21} strokeWidth={3.4} /></span>
+            <img className="brand-favicon" src="/favicon-32x32.png" width={32} height={32} alt="" />
             <span>Qwen Image 3</span>
           </a>
         </div>
@@ -60,7 +60,7 @@ export function Header({ path, session, theme, mobileOpen, onNavigate, onTheme, 
           )}
           <div className="tooltip tooltip-bottom desktop-action" data-tip={theme === "dark" ? "Light theme" : "Dark theme"}>
             <button className="btn btn-ghost btn-circle nav-icon-button" type="button" onClick={onTheme} aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
-              {theme === "dark" ? <Moon size={17} /> : <Sun size={18} />}
+              {theme === "dark" ? <Sun size={18} /> : <Moon size={17} />}
             </button>
           </div>
 

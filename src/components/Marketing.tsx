@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Check, Code2, Coins, Copy, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, Sparkles, WandSparkles, Zap } from "lucide-react";
+import { ArrowRight, BookOpen, Check, Code2, Coins, Copy, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
 import { useState } from "react";
 import type { Catalog } from "../types";
 import { PricingCountdown, usePromotionCountdown } from "./PricingCountdown";
@@ -13,7 +13,7 @@ interface NavigateProps {
 
 export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: { catalog: Catalog } & NavigateProps) {
   const faqs = [
-    ["Can I generate without signing in?", "Yes. Every guest receives three private generations per day. Free previews and exports include a Qwen Image 3 watermark."],
+    ["Can I generate without signing in?", "Yes. Every guest receives three private generations per day. Free previews and exports include a Qwen Image Hub watermark."],
     ["What happens to guest images?", "Guest images stay attached to the private browser session for up to 24 hours and can migrate when you create an account."],
     ["How do credits work?", "Standard costs 1 credit, High costs 2, and Ultra costs 4. Credits are reserved first and settled only after a successful result."],
     ["Are failed generations charged?", "No. A system or provider failure releases the reservation automatically and restores guest allowance."],
@@ -54,13 +54,15 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: {
         </div>
 
         <figure className="workflow-figure">
+          {/* "Qwen Image 3" is the product name, not a redundant description of the img element. */}
+          {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
           <img
             src="/qwen-image-3-workflow.png"
             width="1200"
             height="630"
             loading="lazy"
             decoding="async"
-            alt="Qwen Image 3 prompt workflow showing prompt writing, provider verification, and private image creation"
+            alt="Qwen Image 3 prompt workflow: write, verify the provider, and create privately"
           />
           <figcaption>Write the brief, verify the configured provider, then generate and refine privately.</figcaption>
         </figure>
@@ -133,7 +135,7 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: {
             <h3>Check the model before generating</h3>
             <p>
               Model names, provider configuration, speed, and status belong in one inspectable place. This hub
-              currently supports a deterministic local preview and an optional adapter targeting Qwen Image 2.0
+              currently supports a deterministic preview and an optional adapter targeting Qwen Image 2.0
               Pro; neither should be mistaken for a verified Qwen Image 3 integration. Visit
               the <a className="link" href="/models">model comparison</a> whenever availability matters to your
               project. Planned or unconfigured options remain labeled instead of being presented as live features.
@@ -169,7 +171,7 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: {
       </section>
 
       <section className="marketing-section model-preview">
-        <div className="model-preview-copy"><div className="section-kicker">Transparent model layer</div><h2>Track Qwen Image 3 readiness before you spend.</h2><p>The Models page reports the implemented provider and exact configured model. Unverified releases are never advertised as available.</p><button className="btn" type="button" onClick={() => onNavigate("/models")}>Compare models <ArrowRight size={16} /></button></div>
+        <div className="model-preview-copy"><div className="section-kicker">Transparent model layer</div><h2>Track Qwen Image 3 readiness before you spend.</h2><p>The Models page reports the implemented provider and exact configured model. Unverified releases are never advertised as available.</p><button className="btn btn-primary" type="button" onClick={() => onNavigate("/models")}>Compare models <ArrowRight size={16} /></button></div>
         <div className="model-signal-card card card-border">{catalog.models.map((model) => <div className="signal-line" key={model.id}><span className={`status ${model.status === "Available" ? "status-success" : "status-warning"}`} />{model.name}<strong>{model.status}</strong></div>)}<div className="signal-metrics"><span><Gauge />Status from server configuration</span><span><ShieldCheck />Private by default</span><span><Code2 />Stable provider boundary</span></div></div>
       </section>
 
@@ -190,7 +192,7 @@ function PageIntro({ eyebrow, title, copy }: { eyebrow: string; title: string; c
 export function PromptsPage({ catalog, onUsePrompt }: { catalog: Catalog; onUsePrompt: (prompt: string) => void }) {
   const [copied, setCopied] = useState("");
   async function copy(id: string, prompt: string) { await navigator.clipboard.writeText(prompt); setCopied(id); window.setTimeout(() => setCopied(""), 1600); }
-  return <main className="content-page"><PageIntro eyebrow="Prompt library" title="Qwen Image 3 prompts, explained." copy="Practical English templates for products, campaigns, spaces, posters, and cinematic scenes. Copy one or send the complete setup to the configured generator." /><div className="library-grid">{catalog.prompts.map((item, index) => <article className="card card-border library-card" key={item.id}><div className={`library-index prompt-art-${index + 1}`}>{String(index + 1).padStart(2, "0")}</div><div className="card-body"><span className="badge badge-outline">{item.category}</span><h2 className="card-title">{item.title}</h2><p>{item.prompt}</p><div className="prompt-anatomy"><span>Subject</span><span>Setting</span><span>Light</span><span>Style</span></div><div className="card-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => void copy(item.id, item.prompt)}><Copy size={14} />{copied === item.id ? "Copied" : "Copy"}</button><button className="btn btn-sm" type="button" onClick={() => onUsePrompt(item.prompt)}>Use in generator <ArrowRight size={14} /></button></div></div></article>)}</div></main>;
+  return <main className="content-page"><PageIntro eyebrow="Prompt library" title="Qwen Image 3 prompts, explained." copy="Practical English templates for products, campaigns, spaces, posters, and cinematic scenes. Copy one or send the complete setup to the configured generator." /><div className="library-grid">{catalog.prompts.map((item, index) => <article className="card card-border library-card" key={item.id}><div className={`library-index prompt-art-${index + 1}`}>{String(index + 1).padStart(2, "0")}</div><div className="card-body"><span className="badge badge-outline">{item.category}</span><h2 className="card-title">{item.title}</h2><p>{item.prompt}</p><div className="prompt-anatomy"><span>Subject</span><span>Setting</span><span>Light</span><span>Style</span></div><div className="card-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => void copy(item.id, item.prompt)}><Copy size={14} />{copied === item.id ? "Copied" : "Copy"}</button><button className="btn btn-primary btn-sm" type="button" onClick={() => onUsePrompt(item.prompt)}>Use in generator <ArrowRight size={14} /></button></div></div></article>)}</div></main>;
 }
 
 export function ExamplesPage({ catalog, onUsePrompt }: { catalog: Catalog; onUsePrompt: (prompt: string) => void }) {
@@ -198,7 +200,7 @@ export function ExamplesPage({ catalog, onUsePrompt }: { catalog: Catalog; onUse
 }
 
 export function ModelsPage({ catalog, onNavigate }: { catalog: Catalog; onNavigate: (path: string) => void }) {
-  return <main className="content-page"><PageIntro eyebrow="Model catalog" title="Qwen Image 3 model status, without the fog." copy="No verified Qwen Image 3 provider is available here today. Implemented and planned providers remain clearly separated from the working local preview." /><div className="model-table card card-border"><div className="overflow-x-auto"><table className="table"><thead><tr><th>Model</th><th>Status</th><th>Speed</th><th>Cost</th><th>Best for</th></tr></thead><tbody>{catalog.models.map((model) => <tr key={model.id}><td><strong>{model.name}</strong><small>{model.id}</small></td><td><span className={`badge ${model.status === "Available" ? "badge-success badge-soft" : "badge-warning badge-soft"}`}>{model.status}</span></td><td>{model.speed}</td><td>{model.cost}</td><td>{model.bestFor}</td></tr>)}</tbody></table></div></div><div className="content-cta card card-border"><div><h2>One contract across providers.</h2><p>Create a key in Studio and call the same generation endpoint as models are approved.</p></div><button className="btn" type="button" onClick={() => onNavigate("/api")}>Read API guide <ArrowRight size={15} /></button></div></main>;
+  return <main className="content-page"><PageIntro eyebrow="Model catalog" title="Qwen Image 3 model status, without the fog." copy="No verified Qwen Image 3 provider is available here today. Implemented and planned providers remain clearly separated from the working local preview." /><div className="model-table card card-border"><div className="overflow-x-auto"><table className="table"><thead><tr><th>Model</th><th>Status</th><th>Speed</th><th>Cost</th><th>Best for</th></tr></thead><tbody>{catalog.models.map((model) => <tr key={model.id}><td><strong>{model.name}</strong><small>{model.id}</small></td><td><span className={`badge ${model.status === "Available" ? "badge-success badge-soft" : "badge-warning badge-soft"}`}>{model.status}</span></td><td>{model.speed}</td><td>{model.cost}</td><td>{model.bestFor}</td></tr>)}</tbody></table></div></div><div className="content-cta card card-border"><div><h2>One contract across providers.</h2><p>Create a key in Studio and call the same generation endpoint as models are approved.</p></div><button className="btn btn-primary" type="button" onClick={() => onNavigate("/api")}>Read API guide <ArrowRight size={15} /></button></div></main>;
 }
 
 export function PricingPage({ catalog, onNavigate, onRegister }: { catalog: Catalog; onNavigate: (path: string) => void; onRegister: () => void }) {
@@ -268,6 +270,10 @@ export function GuidesPage({ onNavigate }: { onNavigate: (path: string) => void 
 }
 
 export function ApiPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const code = `curl -X POST http://127.0.0.1:8787/v1/generations \\\n+  -H "Authorization: Bearer $QWEN_HUB_API_KEY" \\\n+  -H "Idempotency-Key: launch-001" \\\n+  -H "Content-Type: application/json" \\\n+  -d '{"prompt":"A glass pavilion at dawn","aspect_ratio":"16:9","style":"editorial","quality":"high"}'`;
-  return <main className="content-page"><PageIntro eyebrow="Developer API" title="Build with the provider-aware generation API." copy="Create a scoped key in Studio, submit the same model-neutral request, and rely on idempotent credit settlement." /><div className="api-layout"><section><div className="api-feature"><KeyRound /><div><h2>Hashed API keys</h2><p>The full secret appears once. The database stores only a SHA-256 hash and revocation state.</p></div></div><div className="api-feature"><Zap /><div><h2>Idempotent requests</h2><p>Repeat a request with the same key for 24 hours and receive the original generation without another charge.</p></div></div><div className="api-feature"><ShieldCheck /><div><h2>Shared private ledger</h2><p>Web and API usage reserve and settle against the same account balance.</p></div></div><button className="btn" type="button" onClick={() => onNavigate("/studio/api-keys")}>Create an API key <ArrowRight size={15} /></button></section><section className="mockup-code api-code"><pre data-prefix="$"><code>{code}</code></pre></section></div></main>;
+  const code = `curl -X POST https://qwen-image-3.net/v1/generations \\
+  -H "Authorization: Bearer $QWEN_HUB_API_KEY" \\
+  -H "Idempotency-Key: launch-001" \\
+  -H "Content-Type: application/json" \\
+  -d '{"prompt":"A glass pavilion at dawn","aspect_ratio":"16:9","style":"editorial","quality":"high"}'`;
+  return <main className="content-page"><PageIntro eyebrow="Developer API" title="Build with the provider-aware generation API." copy="Create a scoped key in Studio, submit the same model-neutral request, and rely on idempotent credit settlement." /><div className="api-layout"><section><div className="api-feature"><KeyRound /><div><h2>Hashed API keys</h2><p>The full secret appears once. The database stores only a SHA-256 hash and revocation state.</p></div></div><div className="api-feature"><Zap /><div><h2>Idempotent requests</h2><p>Repeat a request with the same key for 24 hours and receive the original generation without another charge.</p></div></div><div className="api-feature"><ShieldCheck /><div><h2>Shared private ledger</h2><p>Web and API usage reserve and settle against the same account balance.</p></div></div><button className="btn btn-primary" type="button" onClick={() => onNavigate("/studio/api-keys")}>Create an API key <ArrowRight size={15} /></button></section><section className="mockup-code api-code"><pre data-prefix="$"><code>{code}</code></pre></section></div></main>;
 }
