@@ -3037,14 +3037,13 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
       c.header("Retry-After", "2");
       return errorResponse(c, 503, "GENERATION_PERSISTED", "The image was saved, but its response could not be completed. Retry with the same Idempotency-Key.");
     }
-    const timeout = reason instanceof ExternalRequestError && reason.code === "EXTERNAL_TIMEOUT";
+    const providerFailure = reason instanceof ExternalRequestError ? reason : null;
+    const timeout = providerFailure?.code === "EXTERNAL_TIMEOUT";
     return errorResponse(
       c,
       timeout ? 504 : 503,
-      timeout ? "GENERATION_TIMEOUT" : "GENERATION_FAILED",
-      timeout
-        ? "The image provider timed out. No allowance or credits were charged."
-        : "The image could not be generated. No allowance or credits were charged.",
+      timeout ? "GENERATION_TIMEOUT" : providerFailure?.code || "GENERATION_FAILED",
+      `${providerFailure?.publicMessage || "The image could not be generated."} No allowance or credits were charged.`,
     );
   }
 }
