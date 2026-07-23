@@ -11,7 +11,7 @@ import {
   settleCredits,
 } from "../worker/credits.js";
 import { runMaintenance } from "../worker/maintenance.js";
-import worker from "../worker/index.js";
+import worker, { refundCreditsAtRisk } from "../worker/index.js";
 import { hashPassword, hashToken } from "../worker/security.js";
 
 async function createDatabase() {
@@ -368,7 +368,7 @@ test("Worker retries an early fraud warning that arrives before payment settleme
       FROM billing_accounts WHERE user_id = 'user-1'`)
       .first<{ spending_blocked: number; block_reason: string | null }>();
     assert.equal(account?.spending_blocked, 1);
-    assert.match(account?.block_reason ?? "", /early fraud warning/i);
+    assert.match(account?.block_reason ?? "", /payment risk review/i);
     const risk = await database.prepare(`SELECT warning_id, charge_id, payment_intent_id,
       actionable, fraud_type, status FROM billing_risk_events WHERE stripe_event_id = 'evt_risk'`)
       .first<{
@@ -401,6 +401,338 @@ test("Worker retries an early fraud warning that arrives before payment settleme
     assert.deepEqual(recordedEvent, { status: "completed", attempts: 2, last_error: null });
   } finally {
     globalThis.fetch = originalFetch;
+    await miniflare.dispose();
+  }
+});
+
+test("billing review resolution is authenticated, idempotent, non-negative, and consolidated per payment", async () => {
+  const { miniflare, database } = await createDatabase();
+  try {
+    assert.deepEqual(refundCreditsAtRisk(400, 1200, 300), {
+      amountCentsAtRisk: 300,
+      creditsAtRisk: 100,
+    });
+    assert.deepEqual(refundCreditsAtRisk(400, 1200, 301), {
+      amountCentsAtRisk: 301,
+      creditsAtRisk: 101,
+    });
+    assert.deepEqual(refundCreditsAtRisk(400, 1200, undefined), {
+      amountCentsAtRisk: 1200,
+      creditsAtRisk: 400,
+    });
+    const timestamp = new Date().toISOString();
+    await database.batch([
+      database.prepare(`INSERT INTO billing_orders
+        (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents,
+          currency, status, payment_intent_id, financial_status, stripe_price_id,
+          created_at, completed_at)
+        VALUES ('order-review', 'user-1', 'cs_review', 'credits_400', 'credits',
+          400, 1200, 'usd', 'paid', 'pi_review', 'normal',
+          'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+      database.prepare(`INSERT INTO billing_payments
+        (payment_intent_id, user_id, billing_order_id, kind, credits_granted,
+          amount_cents, currency, status, stripe_price_id, created_at, updated_at)
+        VALUES ('pi_review', 'user-1', 'order-review', 'credits', 400, 1200,
+          'usd', 'paid', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+    ]);
+    const webhookSecret = "whsec_review_resolution";
+    const operatorToken = "billing-operator-test-token-1234567890";
+    const environment = {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      BILLING_OPERATOR_TOKEN: operatorToken,
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      STRIPE_WEBHOOK_SECRET: webhookSecret,
+      DB: database,
+      ASSETS_BUCKET: { delete: async () => undefined },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    };
+    const executionContext = { passThroughOnException() {}, waitUntil() {} };
+    const sendEvent = async (event: Record<string, unknown>) => {
+      const body = JSON.stringify(event);
+      const signedAt = Math.floor(Date.now() / 1000);
+      const signature = createHmac("sha256", webhookSecret)
+        .update(`${signedAt}.${body}`)
+        .digest("hex");
+      return worker.fetch(new Request("https://qwen-image-3.net/api/billing/webhook", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Stripe-Signature": `t=${signedAt},v1=${signature}`,
+        },
+        body,
+      }), environment as never, executionContext as never);
+    };
+    const operatorRequest = (
+      path: string,
+      init: RequestInit = {},
+    ) => worker.fetch(new Request(`https://qwen-image-3.net${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${operatorToken}`,
+        "Content-Type": "application/json",
+        "X-Operator-Id": "risk@example.com",
+        ...(init.headers || {}),
+      },
+    }), environment as never, executionContext as never);
+
+    assert.equal((await sendEvent({
+      id: "evt_review_radar",
+      type: "radar.early_fraud_warning.created",
+      data: { object: {
+        id: "issfr_review",
+        actionable: true,
+        charge: { id: "ch_review", payment_intent: "pi_review" },
+        fraud_type: "made_with_stolen_card",
+      } },
+    })).status, 200);
+
+    const unauthorized = await worker.fetch(
+      new Request("https://qwen-image-3.net/api/operator/billing/reviews"),
+      environment as never,
+      executionContext as never,
+    );
+    assert.equal(unauthorized.status, 401);
+    const listed = await operatorRequest("/api/operator/billing/reviews");
+    assert.equal(listed.status, 200);
+    const listedBody = await listed.json() as {
+      reviews: Array<{ id: string; creditsAtRisk: number; status: string }>;
+    };
+    assert.equal(listedBody.reviews.length, 1);
+    assert.equal(listedBody.reviews[0]?.creditsAtRisk, 400);
+    assert.equal(listedBody.reviews[0]?.status, "open");
+    const reviewId = listedBody.reviews[0]!.id;
+
+    const cleared = await operatorRequest(
+      `/api/operator/billing/reviews/${reviewId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "review-clear-001" },
+        body: JSON.stringify({
+          decision: "cleared",
+          note: "Stripe evidence confirms the Radar warning was a false positive.",
+        }),
+      },
+    );
+    assert.equal(cleared.status, 200);
+    assert.equal((await cleared.json() as { replayed: boolean }).replayed, false);
+    let account = await database.prepare(`SELECT spending_blocked, block_reason
+      FROM billing_accounts WHERE user_id = 'user-1'`)
+      .first<{ spending_blocked: number; block_reason: string | null }>();
+    assert.deepEqual(account, { spending_blocked: 0, block_reason: null });
+
+    assert.equal((await sendEvent({
+      id: "evt_review_refund",
+      type: "charge.refunded",
+      data: { object: {
+        id: "ch_review",
+        payment_intent: "pi_review",
+        amount_refunded: 1200,
+      } },
+    })).status, 200);
+    const oneReview = await database.prepare("SELECT COUNT(*) count FROM billing_reviews")
+      .first<{ count: number }>();
+    const twoTriggers = await database.prepare("SELECT COUNT(*) count FROM billing_review_events")
+      .first<{ count: number }>();
+    assert.equal(oneReview?.count, 1);
+    assert.equal(twoTriggers?.count, 2);
+    const degradedHealth = await worker.fetch(
+      new Request("https://qwen-image-3.net/api/health"),
+      environment as never,
+      executionContext as never,
+    );
+    const degradedHealthBody = await degradedHealth.json() as {
+      status: string;
+      billing: {
+        reviewHealth: {
+          healthy: boolean;
+          openReviews: number;
+          outstandingLossReviews: number;
+        };
+      };
+    };
+    assert.equal(degradedHealthBody.status, "degraded");
+    assert.deepEqual(degradedHealthBody.billing.reviewHealth, {
+      healthy: false,
+      openReviews: 1,
+      outstandingLossReviews: 0,
+    });
+    const checkoutApiSecret = "qh_checkout_review_block";
+    await database.batch([
+      database.prepare("UPDATE users SET email_verified_at = ? WHERE id = 'user-1'")
+        .bind(timestamp),
+      database.prepare(`INSERT INTO api_keys
+        (id, user_id, name, prefix, secret_hash, scopes, created_at)
+        VALUES ('key-review-checkout', 'user-1', 'Review checkout',
+          'qh_checkout', ?, 'generations:write', ?)`)
+        .bind(await hashToken(checkoutApiSecret), timestamp),
+    ]);
+    const blockedCheckout = await worker.fetch(new Request(
+      "https://qwen-image-3.net/api/billing/checkout",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${checkoutApiSecret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ offerId: "credits_400" }),
+      },
+    ), {
+      ...environment,
+      BILLING_ENABLED: "true",
+      STRIPE_SECRET_KEY: "rk_test_checkout_review",
+      STRIPE_PRICE_CREDITS_400: "price_1TwMSbHyVvkt92TEBWGvGd0Y",
+    } as never, executionContext as never);
+    assert.equal(blockedCheckout.status, 423);
+    assert.equal(
+      (await blockedCheckout.json() as { error: { code: string } }).error.code,
+      "BILLING_REVIEW_REQUIRED",
+    );
+    const invalidClear = await operatorRequest(
+      `/api/operator/billing/reviews/${reviewId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "review-clear-002" },
+        body: JSON.stringify({
+          decision: "cleared",
+          note: "A completed refund cannot be cleared without recovering the loss.",
+        }),
+      },
+    );
+    assert.equal(invalidClear.status, 409);
+
+    const firstRecovery = await operatorRequest(
+      `/api/operator/billing/reviews/${reviewId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "review-recover-001" },
+        body: JSON.stringify({
+          decision: "confirmed_loss",
+          note: "The refund is confirmed; recover only credits that remain available.",
+        }),
+      },
+    );
+    assert.equal(firstRecovery.status, 200);
+    const firstRecoveryBody = await firstRecovery.json() as {
+      action: {
+        reviewId: string;
+        decision: string;
+        creditsReclaimed: number;
+        unrecoveredAfter: number;
+        operatorId: string;
+      };
+      replayed: boolean;
+    };
+    assert.equal(firstRecoveryBody.replayed, false);
+    assert.equal(firstRecoveryBody.action.reviewId, reviewId);
+    assert.equal(firstRecoveryBody.action.decision, "confirmed_loss");
+    assert.equal(firstRecoveryBody.action.creditsReclaimed, 4);
+    assert.equal(firstRecoveryBody.action.unrecoveredAfter, 396);
+    assert.equal(firstRecoveryBody.action.operatorId, "risk@example.com");
+    account = await database.prepare(`SELECT spending_blocked, block_reason
+      FROM billing_accounts WHERE user_id = 'user-1'`)
+      .first<{ spending_blocked: number; block_reason: string | null }>();
+    assert.equal(account?.spending_blocked, 1);
+    assert.match(account?.block_reason ?? "", /unrecovered payment loss/i);
+    const afterFirstRecovery = await database.prepare(`SELECT available, reserved
+      FROM credit_accounts WHERE user_id = 'user-1'`)
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(afterFirstRecovery, { available: 0, reserved: 0 });
+
+    const replayedRecovery = await operatorRequest(
+      `/api/operator/billing/reviews/${reviewId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "review-recover-001" },
+        body: JSON.stringify({
+          decision: "confirmed_loss",
+          note: "The refund is confirmed; recover only credits that remain available.",
+        }),
+      },
+    );
+    assert.equal(replayedRecovery.status, 200);
+    assert.equal((await replayedRecovery.json() as { replayed: boolean }).replayed, true);
+
+    await grantCredits(database, {
+      userId: "user-1",
+      amount: 400,
+      type: "manual_adjustment",
+      referenceId: "support-repayment",
+      description: "Support-approved repayment",
+    });
+    const secondRecovery = await operatorRequest(
+      `/api/operator/billing/reviews/${reviewId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "review-recover-002" },
+        body: JSON.stringify({
+          decision: "confirmed_loss",
+          note: "Recover the remaining disputed credits after support repayment.",
+        }),
+      },
+    );
+    assert.equal(secondRecovery.status, 200);
+    const secondRecoveryBody = await secondRecovery.json() as {
+      action: { creditsReclaimed: number; unrecoveredAfter: number };
+    };
+    assert.equal(secondRecoveryBody.action.creditsReclaimed, 396);
+    assert.equal(secondRecoveryBody.action.unrecoveredAfter, 0);
+    const finalReview = await database.prepare(`SELECT status, decision,
+        credits_at_risk, credits_reclaimed, unrecovered_credits
+      FROM billing_reviews WHERE id = ?`)
+      .bind(reviewId)
+      .first<{
+        status: string;
+        decision: string;
+        credits_at_risk: number;
+        credits_reclaimed: number;
+        unrecovered_credits: number;
+      }>();
+    assert.deepEqual(finalReview, {
+      status: "resolved",
+      decision: "confirmed_loss",
+      credits_at_risk: 400,
+      credits_reclaimed: 400,
+      unrecovered_credits: 0,
+    });
+    const finalCredits = await database.prepare(`SELECT available, reserved
+      FROM credit_accounts WHERE user_id = 'user-1'`)
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(finalCredits, { available: 4, reserved: 0 });
+    account = await database.prepare(`SELECT spending_blocked, block_reason
+      FROM billing_accounts WHERE user_id = 'user-1'`)
+      .first<{ spending_blocked: number; block_reason: string | null }>();
+    assert.deepEqual(account, { spending_blocked: 0, block_reason: null });
+    const adjustments = await database.prepare(`SELECT COUNT(*) count, SUM(amount) total
+      FROM credit_ledger
+      WHERE type = 'manual_adjustment' AND description = 'Billing loss credit recovery'`)
+      .first<{ count: number; total: number }>();
+    assert.deepEqual(adjustments, { count: 2, total: -400 });
+    const recoveredHealth = await worker.fetch(
+      new Request("https://qwen-image-3.net/api/health"),
+      environment as never,
+      executionContext as never,
+    );
+    const recoveredHealthBody = await recoveredHealth.json() as {
+      status: string;
+      billing: {
+        reviewHealth: {
+          healthy: boolean;
+          openReviews: number;
+          outstandingLossReviews: number;
+        };
+      };
+    };
+    assert.equal(recoveredHealthBody.status, "ok");
+    assert.deepEqual(recoveredHealthBody.billing.reviewHealth, {
+      healthy: true,
+      openReviews: 0,
+      outstandingLossReviews: 0,
+    });
+  } finally {
     await miniflare.dispose();
   }
 });

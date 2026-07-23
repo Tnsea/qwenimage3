@@ -149,6 +149,8 @@ interface BillingOrderRow {
 
 interface BillingPaymentOwnerRow {
   user_id: string;
+  credits_granted: number;
+  amount_cents: number;
 }
 
 interface BillingPriceVersionRow {
@@ -161,6 +163,38 @@ interface BillingPriceVersionRow {
   active_for_checkout: number;
   effective_from: string;
   retired_at: string | null;
+}
+
+type BillingReviewTrigger = "early_fraud_warning" | "refund" | "dispute";
+type BillingReviewDecision = "confirmed_loss" | "cleared";
+
+interface BillingReviewRow {
+  id: string;
+  payment_intent_id: string;
+  user_id: string;
+  latest_trigger_type: BillingReviewTrigger;
+  status: "open" | "resolved";
+  decision: BillingReviewDecision | null;
+  credits_at_risk: number;
+  credits_reclaimed: number;
+  unrecovered_credits: number;
+  operator_note: string | null;
+  resolved_by: string | null;
+  opened_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+interface BillingReviewActionRow {
+  id: string;
+  review_id: string;
+  idempotency_key: string;
+  decision: BillingReviewDecision;
+  credits_reclaimed: number;
+  unrecovered_after: number;
+  operator_id: string;
+  note: string;
+  created_at: string;
 }
 
 type StripeEvent = MaintenanceStripeEvent;
@@ -201,6 +235,29 @@ function availableGenerationModel(env: Env, requestedModelId?: string): CatalogM
 
 function now() {
   return new Date().toISOString();
+}
+
+export function refundCreditsAtRisk(
+  creditsGranted: number,
+  paymentAmountCents: number,
+  amountRefunded: unknown,
+) {
+  if (!Number.isSafeInteger(creditsGranted) || creditsGranted <= 0
+    || !Number.isSafeInteger(paymentAmountCents) || paymentAmountCents <= 0) {
+    throw new Error("Refund exposure requires a positive local payment contract.");
+  }
+  const refundedCents = typeof amountRefunded === "number"
+    && Number.isSafeInteger(amountRefunded)
+    && amountRefunded > 0
+    ? Math.min(paymentAmountCents, amountRefunded)
+    : paymentAmountCents;
+  return {
+    amountCentsAtRisk: refundedCents,
+    creditsAtRisk: Math.min(
+      creditsGranted,
+      Math.max(1, Math.ceil(creditsGranted * refundedCents / paymentAmountCents)),
+    ),
+  };
 }
 
 function publicUser(row: UserRow): User {
@@ -259,6 +316,68 @@ export function oauthStateMatches(cookieState: string | undefined, queryState: s
 
 async function readBody(c: Context<WorkerContext>) {
   return c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
+}
+
+function billingOperatorAccess(c: Context<WorkerContext>) {
+  const expected = c.env.BILLING_OPERATOR_TOKEN?.trim() || "";
+  if (expected.length < 32) return "unconfigured" as const;
+  const authorization = c.req.header("authorization") || "";
+  const provided = authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : "";
+  if (!provided || !timingSafeEqual(encoder.encode(provided), encoder.encode(expected))) {
+    return "unauthorized" as const;
+  }
+  return "authorized" as const;
+}
+
+function requireBillingOperator(c: Context<WorkerContext>) {
+  const access = billingOperatorAccess(c);
+  if (access === "unconfigured") {
+    return errorResponse(
+      c,
+      503,
+      "OPERATOR_ACCESS_UNAVAILABLE",
+      "Billing review operations are not configured.",
+    );
+  }
+  if (access === "unauthorized") {
+    return errorResponse(c, 401, "OPERATOR_UNAUTHORIZED", "Valid billing operator credentials are required.");
+  }
+  return null;
+}
+
+function billingReviewJson(row: BillingReviewRow & { available_credits?: number }) {
+  return {
+    id: row.id,
+    paymentIntentId: row.payment_intent_id,
+    userId: row.user_id,
+    latestTriggerType: row.latest_trigger_type,
+    status: row.status,
+    decision: row.decision,
+    creditsAtRisk: row.credits_at_risk,
+    creditsReclaimed: row.credits_reclaimed,
+    unrecoveredCredits: row.unrecovered_credits,
+    availableCredits: row.available_credits,
+    operatorNote: row.operator_note,
+    resolvedBy: row.resolved_by,
+    openedAt: row.opened_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
+function billingReviewActionJson(row: BillingReviewActionRow) {
+  return {
+    id: row.id,
+    reviewId: row.review_id,
+    decision: row.decision,
+    creditsReclaimed: row.credits_reclaimed,
+    unrecoveredAfter: row.unrecovered_after,
+    operatorId: row.operator_id,
+    note: row.note,
+    createdAt: row.created_at,
+  };
 }
 
 async function resolveActor(c: Context<WorkerContext>): Promise<Actor> {
@@ -955,6 +1074,134 @@ async function deletedBillingOwnerExists(
   return false;
 }
 
+function prepareBillingReview(
+  env: Env,
+  input: {
+    eventId: string;
+    paymentIntent: string;
+    userId: string;
+    triggerType: BillingReviewTrigger;
+    creditsAtRisk: number;
+    amountCentsAtRisk: number;
+    timestamp: string;
+  },
+) {
+  const reviewId = crypto.randomUUID();
+  return [
+    env.DB.prepare(`INSERT OR IGNORE INTO billing_reviews
+      (id, payment_intent_id, user_id, latest_trigger_type, status, credits_at_risk,
+        opened_at, updated_at)
+      VALUES (?, ?, ?, ?, 'open', ?, ?, ?)`)
+      .bind(
+        reviewId,
+        input.paymentIntent,
+        input.userId,
+        input.triggerType,
+        input.creditsAtRisk,
+        input.timestamp,
+        input.timestamp,
+      ),
+    env.DB.prepare(`UPDATE billing_reviews
+      SET latest_trigger_type = ?,
+        credits_at_risk = CASE
+          WHEN status = 'resolved' AND decision = 'cleared' THEN ?
+          ELSE MAX(credits_at_risk, ?)
+        END,
+        status = CASE
+          WHEN status = 'resolved' AND (
+            decision = 'cleared'
+            OR ? > credits_at_risk
+          ) THEN 'open'
+          ELSE status
+        END,
+        decision = CASE
+          WHEN status = 'resolved' AND (
+            decision = 'cleared'
+            OR ? > credits_at_risk
+          ) THEN NULL
+          ELSE decision
+        END,
+        operator_note = CASE
+          WHEN status = 'resolved' AND (
+            decision = 'cleared'
+            OR ? > credits_at_risk
+          ) THEN NULL
+          ELSE operator_note
+        END,
+        resolved_by = CASE
+          WHEN status = 'resolved' AND (
+            decision = 'cleared'
+            OR ? > credits_at_risk
+          ) THEN NULL
+          ELSE resolved_by
+        END,
+        resolved_at = CASE
+          WHEN status = 'resolved' AND (
+            decision = 'cleared'
+            OR ? > credits_at_risk
+          ) THEN NULL
+          ELSE resolved_at
+        END,
+        updated_at = ?
+      WHERE payment_intent_id = ?`)
+      .bind(
+        input.triggerType,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.creditsAtRisk,
+        input.timestamp,
+        input.paymentIntent,
+      ),
+    env.DB.prepare(`INSERT OR IGNORE INTO billing_review_events
+      (stripe_event_id, review_id, trigger_type, amount_cents_at_risk,
+        credits_at_risk, created_at)
+      SELECT ?, id, ?, ?, ?, ?
+      FROM billing_reviews WHERE payment_intent_id = ?`)
+      .bind(
+        input.eventId,
+        input.triggerType,
+        input.amountCentsAtRisk,
+        input.creditsAtRisk,
+        input.timestamp,
+        input.paymentIntent,
+      ),
+  ];
+}
+
+function refreshBillingReviewBlock(env: Env, userId: string, timestamp: string) {
+  return env.DB.prepare(`UPDATE billing_accounts
+    SET spending_blocked = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM billing_reviews
+          WHERE user_id = ? AND (
+            status = 'open'
+            OR (decision = 'confirmed_loss' AND unrecovered_credits > 0)
+          )
+        ) THEN 1
+        ELSE 0
+      END,
+      block_reason = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM billing_reviews
+          WHERE user_id = ? AND status = 'open'
+        ) THEN 'Credit spending is paused while a payment risk review is open.'
+        WHEN EXISTS (
+          SELECT 1 FROM billing_reviews
+          WHERE user_id = ?
+            AND decision = 'confirmed_loss'
+            AND unrecovered_credits > 0
+        ) THEN 'Credit spending remains paused while an unrecovered payment loss is resolved.'
+        ELSE NULL
+      END,
+      updated_at = ?
+    WHERE user_id = ?`)
+    .bind(userId, userId, userId, timestamp, userId);
+}
+
 async function resolveCheckoutOrder(env: Env, object: Record<string, unknown>) {
   const sessionId = stripeObjectId(object.id);
   let order = await env.DB.prepare("SELECT * FROM billing_orders WHERE stripe_checkout_session_id = ?")
@@ -1096,12 +1343,17 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
       throw new Error("Stripe early fraud warning is incomplete.");
     }
     const { chargeId, paymentIntent } = await stripeChargePaymentIntent(env, object.charge);
-    const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?")
+    const payment = await env.DB.prepare(`SELECT user_id, credits_granted, amount_cents
+      FROM billing_payments WHERE payment_intent_id = ?`)
       .bind(paymentIntent)
       .first<BillingPaymentOwnerRow>();
     if (!payment) {
       if (await deletedBillingOwnerExists(env, { paymentIntent })) return;
       throw new Error("Stripe early fraud warning has no local payment yet.");
+    }
+    if (!Number.isSafeInteger(payment.credits_granted) || payment.credits_granted <= 0
+      || !Number.isSafeInteger(payment.amount_cents) || payment.amount_cents <= 0) {
+      throw new Error("Stripe early fraud warning matched an invalid local payment exposure.");
     }
     const timestamp = now();
     const actionable = object.actionable;
@@ -1137,14 +1389,16 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     ];
     if (actionable) {
       statements.push(
-        env.DB.prepare(`UPDATE billing_accounts
-          SET spending_blocked = 1, block_reason = ?, updated_at = ?
-          WHERE user_id = ?`)
-          .bind(
-            "Credit spending is paused while an early fraud warning is reviewed.",
-            timestamp,
-            payment.user_id,
-          ),
+        ...prepareBillingReview(env, {
+          eventId: event.id,
+          paymentIntent,
+          userId: payment.user_id,
+          triggerType: "early_fraud_warning",
+          creditsAtRisk: payment.credits_granted,
+          amountCentsAtRisk: payment.amount_cents,
+          timestamp,
+        }),
+        refreshBillingReviewBlock(env, payment.user_id, timestamp),
       );
     }
     await env.DB.batch(statements);
@@ -1154,17 +1408,39 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
   if (event.type === "charge.refunded" || event.type === "charge.dispute.created") {
     const paymentIntent = stripeObjectId(object.payment_intent);
     if (!paymentIntent) throw new Error("Financial reversal has no PaymentIntent.");
-    const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?").bind(paymentIntent).first<{ user_id: string }>();
+    const payment = await env.DB.prepare(`SELECT user_id, credits_granted, amount_cents
+      FROM billing_payments WHERE payment_intent_id = ?`)
+      .bind(paymentIntent)
+      .first<BillingPaymentOwnerRow>();
     if (!payment) {
       if (await deletedBillingOwnerExists(env, { paymentIntent })) return;
       throw new Error("Financial reversal has no local payment.");
     }
+    if (!Number.isSafeInteger(payment.credits_granted) || payment.credits_granted <= 0
+      || !Number.isSafeInteger(payment.amount_cents) || payment.amount_cents <= 0) {
+      throw new Error("Financial reversal matched an invalid local payment exposure.");
+    }
     const status = event.type === "charge.refunded" ? "refunded" : "disputed";
+    const triggerType: BillingReviewTrigger = event.type === "charge.refunded" ? "refund" : "dispute";
+    const refundExposure = triggerType === "refund"
+      ? refundCreditsAtRisk(payment.credits_granted, payment.amount_cents, object.amount_refunded)
+      : null;
+    const amountCentsAtRisk = refundExposure?.amountCentsAtRisk ?? payment.amount_cents;
+    const creditsAtRisk = refundExposure?.creditsAtRisk ?? payment.credits_granted;
+    const timestamp = now();
     await env.DB.batch([
-      env.DB.prepare("UPDATE billing_payments SET status = ?, financial_event_id = ?, updated_at = ? WHERE payment_intent_id = ?").bind(status, event.id, now(), paymentIntent),
+      env.DB.prepare("UPDATE billing_payments SET status = ?, financial_event_id = ?, updated_at = ? WHERE payment_intent_id = ?").bind(status, event.id, timestamp, paymentIntent),
       env.DB.prepare("UPDATE billing_orders SET financial_status = ?, financial_event_id = ? WHERE payment_intent_id = ?").bind(status, event.id, paymentIntent),
-      env.DB.prepare("UPDATE billing_accounts SET spending_blocked = 1, block_reason = ?, updated_at = ? WHERE user_id = ?")
-        .bind("Credit spending is paused while a Stripe refund or dispute is reviewed.", now(), payment.user_id),
+      ...prepareBillingReview(env, {
+        eventId: event.id,
+        paymentIntent,
+        userId: payment.user_id,
+        triggerType,
+        creditsAtRisk,
+        amountCentsAtRisk,
+        timestamp,
+      }),
+      refreshBillingReviewBlock(env, payment.user_id, timestamp),
     ]);
     return;
   }
@@ -1302,6 +1578,13 @@ app.use("/api/billing/*", async (c, next) => {
   await next();
 });
 
+app.use("/api/operator/*", async (c, next) => {
+  const limited = await enforceRateLimit(c, "billing-operator", 60, 60 * 1000);
+  if (limited) return limited;
+  c.header("Cache-Control", "private, no-store");
+  await next();
+});
+
 app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
   const runtime = modelRuntime(c.env);
@@ -1320,13 +1603,26 @@ app.get("/api/health", async (c) => {
   const failedBillingEvents = Number(billingEventHealth?.failed_events || 0);
   const staleBillingEvents = Number(billingEventHealth?.stale_events || 0);
   const billingEventsHealthy = failedBillingEvents === 0 && staleBillingEvents === 0;
+  const billingReviewHealth = await c.env.DB.prepare(`SELECT
+      SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_reviews,
+      SUM(CASE
+        WHEN status = 'resolved'
+          AND decision = 'confirmed_loss'
+          AND unrecovered_credits > 0
+        THEN 1 ELSE 0
+      END) AS outstanding_loss_reviews
+    FROM billing_reviews`)
+    .first<{ open_reviews: number | null; outstanding_loss_reviews: number | null }>();
+  const openBillingReviews = Number(billingReviewHealth?.open_reviews || 0);
+  const outstandingLossReviews = Number(billingReviewHealth?.outstanding_loss_reviews || 0);
+  const billingReviewsHealthy = openBillingReviews === 0 && outstandingLossReviews === 0;
   const oauth = oauthMethods(c.env);
   const maintenanceCompletedAt = maintenance?.completed_at ? Date.parse(maintenance.completed_at) : Number.NaN;
   const maintenanceAgeSeconds = Number.isFinite(maintenanceCompletedAt)
     ? Math.max(0, Math.floor((Date.now() - maintenanceCompletedAt) / 1000))
     : null;
   return c.json({
-    status: providerConfigured && billingEventsHealthy ? "ok" : "degraded",
+    status: providerConfigured && billingEventsHealthy && billingReviewsHealthy ? "ok" : "degraded",
     runtime: "cloudflare-worker",
     revision: c.env.CF_VERSION_METADATA?.id || c.env.DEPLOY_REVISION || "unversioned",
     database: "cloudflare-d1",
@@ -1363,6 +1659,11 @@ app.get("/api/health", async (c) => {
         healthy: billingEventsHealthy,
         failedEvents: failedBillingEvents,
         staleEvents: staleBillingEvents,
+      },
+      reviewHealth: {
+        healthy: billingReviewsHealthy,
+        openReviews: openBillingReviews,
+        outstandingLossReviews,
       },
     },
     credits: "d1-ledger",
@@ -1778,6 +2079,330 @@ app.delete("/api/account", async (c) => {
   }
 });
 
+app.get("/api/operator/billing/reviews", async (c) => {
+  const denied = requireBillingOperator(c);
+  if (denied) return denied;
+  const status = c.req.query("status") || "open";
+  if (!["open", "resolved", "all"].includes(status)) {
+    return errorResponse(c, 400, "INVALID_REVIEW_STATUS", "Use open, resolved, or all.");
+  }
+  const rows = await c.env.DB.prepare(`SELECT review.*, account.available AS available_credits
+    FROM billing_reviews review
+    JOIN credit_accounts account ON account.user_id = review.user_id
+    WHERE (? = 'all' OR review.status = ?)
+    ORDER BY
+      CASE WHEN review.status = 'open' THEN 0 ELSE 1 END,
+      review.updated_at DESC
+    LIMIT 100`)
+    .bind(status, status)
+    .all<BillingReviewRow & { available_credits: number }>();
+  return c.json({ reviews: rows.results.map(billingReviewJson) });
+});
+
+app.get("/api/operator/billing/reviews/:id", async (c) => {
+  const denied = requireBillingOperator(c);
+  if (denied) return denied;
+  const review = await c.env.DB.prepare(`SELECT review.*, account.available AS available_credits
+    FROM billing_reviews review
+    JOIN credit_accounts account ON account.user_id = review.user_id
+    WHERE review.id = ?`)
+    .bind(c.req.param("id"))
+    .first<BillingReviewRow & { available_credits: number }>();
+  if (!review) return errorResponse(c, 404, "REVIEW_NOT_FOUND", "Billing review not found.");
+  const [events, actions, payment] = await Promise.all([
+    c.env.DB.prepare(`SELECT stripe_event_id, trigger_type, amount_cents_at_risk,
+        credits_at_risk, created_at
+      FROM billing_review_events WHERE review_id = ? ORDER BY created_at ASC`)
+      .bind(review.id)
+      .all<{
+        stripe_event_id: string;
+        trigger_type: BillingReviewTrigger;
+        amount_cents_at_risk: number;
+        credits_at_risk: number;
+        created_at: string;
+      }>(),
+    c.env.DB.prepare(`SELECT id, review_id, idempotency_key, decision,
+        credits_reclaimed, unrecovered_after, operator_id, note, created_at
+      FROM billing_review_actions WHERE review_id = ? ORDER BY created_at ASC`)
+      .bind(review.id)
+      .all<BillingReviewActionRow>(),
+    c.env.DB.prepare(`SELECT kind, credits_granted, amount_cents, currency, status,
+        financial_event_id, created_at, updated_at
+      FROM billing_payments WHERE payment_intent_id = ?`)
+      .bind(review.payment_intent_id)
+      .first<{
+        kind: "subscription" | "credits";
+        credits_granted: number;
+        amount_cents: number;
+        currency: string;
+        status: "paid" | "refunded" | "disputed";
+        financial_event_id: string | null;
+        created_at: string;
+        updated_at: string;
+      }>(),
+  ]);
+  return c.json({
+    review: billingReviewJson(review),
+    events: events.results.map((event) => ({
+      stripeEventId: event.stripe_event_id,
+      triggerType: event.trigger_type,
+      amountCentsAtRisk: event.amount_cents_at_risk,
+      creditsAtRisk: event.credits_at_risk,
+      createdAt: event.created_at,
+    })),
+    actions: actions.results.map(billingReviewActionJson),
+    payment: payment ? {
+      kind: payment.kind,
+      creditsGranted: payment.credits_granted,
+      amountCents: payment.amount_cents,
+      currency: payment.currency,
+      status: payment.status,
+      financialEventId: payment.financial_event_id,
+      createdAt: payment.created_at,
+      updatedAt: payment.updated_at,
+    } : null,
+  });
+});
+
+app.post("/api/operator/billing/reviews/:id/resolve", async (c) => {
+  const denied = requireBillingOperator(c);
+  if (denied) return denied;
+  const operatorId = (c.req.header("x-operator-id") || "").trim();
+  const idempotencyKey = (c.req.header("idempotency-key") || "").trim();
+  const body = await readBody(c);
+  const decision = body.decision;
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+  if (!/^[A-Za-z0-9@._+-]{3,80}$/.test(operatorId)) {
+    return errorResponse(c, 400, "INVALID_OPERATOR_ID", "Provide a stable operator ID.");
+  }
+  if (!/^[A-Za-z0-9._:-]{8,100}$/.test(idempotencyKey)) {
+    return errorResponse(c, 400, "INVALID_IDEMPOTENCY_KEY", "Provide a stable idempotency key.");
+  }
+  if (decision !== "confirmed_loss" && decision !== "cleared") {
+    return errorResponse(c, 400, "INVALID_REVIEW_DECISION", "Use confirmed_loss or cleared.");
+  }
+  if (note.length < 8 || note.length > 1000) {
+    return errorResponse(c, 400, "INVALID_REVIEW_NOTE", "Add an 8 to 1,000 character review note.");
+  }
+  const reviewId = c.req.param("id");
+  const existingAction = await c.env.DB.prepare(`SELECT id, review_id, idempotency_key,
+      decision, credits_reclaimed, unrecovered_after, operator_id, note, created_at
+    FROM billing_review_actions WHERE review_id = ? AND idempotency_key = ?`)
+    .bind(reviewId, idempotencyKey)
+    .first<BillingReviewActionRow>();
+  if (existingAction) {
+    if (existingAction.decision !== decision) {
+      return errorResponse(c, 409, "IDEMPOTENCY_CONFLICT", "This idempotency key was used for another decision.");
+    }
+    return c.json({ action: billingReviewActionJson(existingAction), replayed: true });
+  }
+  const review = await c.env.DB.prepare("SELECT * FROM billing_reviews WHERE id = ?")
+    .bind(reviewId)
+    .first<BillingReviewRow>();
+  if (!review) return errorResponse(c, 404, "REVIEW_NOT_FOUND", "Billing review not found.");
+  if (decision === "cleared") {
+    const refundTrigger = await c.env.DB.prepare(`SELECT stripe_event_id
+      FROM billing_review_events
+      WHERE review_id = ? AND trigger_type = 'refund'
+      LIMIT 1`)
+      .bind(reviewId)
+      .first();
+    if (refundTrigger) {
+      return errorResponse(c, 409, "REFUND_REQUIRES_RECOVERY", "A completed refund must be resolved as a confirmed loss.");
+    }
+  }
+  if (decision === "cleared" && review.status !== "open") {
+    return errorResponse(c, 409, "REVIEW_ALREADY_RESOLVED", "This billing review is already resolved.");
+  }
+  if (decision === "confirmed_loss"
+    && review.status === "resolved"
+    && (review.decision !== "confirmed_loss" || review.unrecovered_credits === 0)) {
+    return errorResponse(c, 409, "REVIEW_ALREADY_RESOLVED", "This billing review has no outstanding loss.");
+  }
+
+  const actionId = crypto.randomUUID();
+  const timestamp = now();
+  if (decision === "cleared") {
+    await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT OR IGNORE INTO billing_review_actions
+        (id, review_id, idempotency_key, decision, credits_reclaimed,
+          unrecovered_after, operator_id, note, created_at)
+        SELECT ?, id, ?, 'cleared', 0, 0, ?, ?, ?
+        FROM billing_reviews
+        WHERE id = ? AND status = 'open' AND NOT EXISTS (
+          SELECT 1 FROM billing_review_events
+          WHERE review_id = billing_reviews.id AND trigger_type = 'refund'
+        )`)
+        .bind(actionId, idempotencyKey, operatorId, note, timestamp, reviewId),
+      c.env.DB.prepare(`UPDATE billing_reviews
+        SET status = 'resolved', decision = 'cleared', unrecovered_credits = 0,
+          operator_note = ?, resolved_by = ?, resolved_at = ?, updated_at = ?
+        WHERE id = ? AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(note, operatorId, timestamp, timestamp, reviewId, actionId),
+      c.env.DB.prepare(`UPDATE billing_payments
+        SET status = 'paid', updated_at = ?
+        WHERE payment_intent_id = (
+          SELECT payment_intent_id FROM billing_reviews WHERE id = ?
+        ) AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(timestamp, reviewId, actionId),
+      c.env.DB.prepare(`UPDATE billing_orders
+        SET financial_status = 'normal'
+        WHERE payment_intent_id = (
+          SELECT payment_intent_id FROM billing_reviews WHERE id = ?
+        ) AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(reviewId, actionId),
+      c.env.DB.prepare(`UPDATE billing_risk_events
+        SET status = 'resolved', updated_at = ?
+        WHERE payment_intent_id = (
+          SELECT payment_intent_id FROM billing_reviews WHERE id = ?
+        ) AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(timestamp, reviewId, actionId),
+      refreshBillingReviewBlock(c.env, review.user_id, timestamp),
+    ]);
+  } else {
+    const ledgerId = crypto.randomUUID();
+    await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT OR IGNORE INTO billing_review_actions
+        (id, review_id, idempotency_key, decision, credits_reclaimed,
+          unrecovered_after, operator_id, note, created_at)
+        SELECT ?, id, ?, 'confirmed_loss', 0,
+          CASE
+            WHEN status = 'open' THEN MAX(0, credits_at_risk - credits_reclaimed)
+            ELSE unrecovered_credits
+          END,
+          ?, ?, ?
+        FROM billing_reviews
+        WHERE id = ? AND (
+          status = 'open'
+          OR (decision = 'confirmed_loss' AND unrecovered_credits > 0)
+        )`)
+        .bind(actionId, idempotencyKey, operatorId, note, timestamp, reviewId),
+      c.env.DB.prepare(`INSERT OR IGNORE INTO credit_ledger
+        (id, user_id, type, amount, balance_after, reference_id, description, created_at)
+        SELECT
+          ?,
+          account.user_id,
+          'manual_adjustment',
+          -MIN(
+            account.available,
+            CASE
+              WHEN review.status = 'open'
+                THEN MAX(0, review.credits_at_risk - review.credits_reclaimed)
+              ELSE review.unrecovered_credits
+            END
+          ),
+          account.available - MIN(
+            account.available,
+            CASE
+              WHEN review.status = 'open'
+                THEN MAX(0, review.credits_at_risk - review.credits_reclaimed)
+              ELSE review.unrecovered_credits
+            END
+          ),
+          ?,
+          'Billing loss credit recovery',
+          ?
+        FROM billing_reviews review
+        JOIN credit_accounts account ON account.user_id = review.user_id
+        WHERE review.id = ?
+          AND account.available > 0
+          AND (
+            CASE
+              WHEN review.status = 'open'
+                THEN MAX(0, review.credits_at_risk - review.credits_reclaimed)
+              ELSE review.unrecovered_credits
+            END
+          ) > 0
+          AND EXISTS (
+            SELECT 1 FROM billing_review_actions WHERE id = ?
+          )`)
+        .bind(ledgerId, actionId, timestamp, reviewId, actionId),
+      c.env.DB.prepare(`UPDATE credit_accounts
+        SET available = available + COALESCE((
+            SELECT amount FROM credit_ledger WHERE id = ?
+          ), 0),
+          updated_at = ?
+        WHERE user_id = ? AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(ledgerId, timestamp, review.user_id, actionId),
+      c.env.DB.prepare(`UPDATE billing_reviews
+        SET status = 'resolved',
+          decision = 'confirmed_loss',
+          credits_reclaimed = credits_reclaimed + COALESCE((
+            SELECT -amount FROM credit_ledger WHERE id = ?
+          ), 0),
+          unrecovered_credits = MAX(
+            0,
+            credits_at_risk - credits_reclaimed - COALESCE((
+              SELECT -amount FROM credit_ledger WHERE id = ?
+            ), 0)
+          ),
+          operator_note = ?,
+          resolved_by = ?,
+          resolved_at = COALESCE(resolved_at, ?),
+          updated_at = ?
+        WHERE id = ? AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(
+          ledgerId,
+          ledgerId,
+          note,
+          operatorId,
+          timestamp,
+          timestamp,
+          reviewId,
+          actionId,
+        ),
+      c.env.DB.prepare(`UPDATE billing_review_actions
+        SET credits_reclaimed = COALESCE((
+            SELECT -amount FROM credit_ledger WHERE id = ?
+          ), 0),
+          unrecovered_after = COALESCE((
+            SELECT unrecovered_credits FROM billing_reviews WHERE id = ?
+          ), unrecovered_after)
+        WHERE id = ?`)
+        .bind(ledgerId, reviewId, actionId),
+      c.env.DB.prepare(`UPDATE billing_risk_events
+        SET status = 'resolved', updated_at = ?
+        WHERE payment_intent_id = (
+          SELECT payment_intent_id FROM billing_reviews WHERE id = ?
+        ) AND EXISTS (
+          SELECT 1 FROM billing_review_actions WHERE id = ?
+        )`)
+        .bind(timestamp, reviewId, actionId),
+      refreshBillingReviewBlock(c.env, review.user_id, timestamp),
+    ]);
+  }
+
+  const action = await c.env.DB.prepare(`SELECT id, review_id, idempotency_key,
+      decision, credits_reclaimed, unrecovered_after, operator_id, note, created_at
+    FROM billing_review_actions WHERE id = ?`)
+    .bind(actionId)
+    .first<BillingReviewActionRow>();
+  if (!action) {
+    const replay = await c.env.DB.prepare(`SELECT id, review_id, idempotency_key,
+        decision, credits_reclaimed, unrecovered_after, operator_id, note, created_at
+      FROM billing_review_actions WHERE review_id = ? AND idempotency_key = ?`)
+      .bind(reviewId, idempotencyKey)
+      .first<BillingReviewActionRow>();
+    if (replay && replay.decision === decision) {
+      return c.json({ action: billingReviewActionJson(replay), replayed: true });
+    }
+    return errorResponse(c, 409, "REVIEW_STATE_CHANGED", "The billing review changed before this decision was applied.");
+  }
+  return c.json({ action: billingReviewActionJson(action), replayed: false });
+});
+
 app.get("/api/billing", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
@@ -1817,6 +2442,14 @@ app.post("/api/billing/checkout", async (c) => {
   if (!offer) return errorResponse(c, 400, "INVALID_OFFER", "Choose a valid billing offer.");
   if (!offer.configured) return errorResponse(c, 503, "OFFER_UNAVAILABLE", "This billing offer is not configured.");
   const account = await billingAccount(c.env, actor.userId!);
+  if (account.spending_blocked) {
+    return errorResponse(
+      c,
+      423,
+      "BILLING_REVIEW_REQUIRED",
+      account.block_reason || "Purchases and credit spending are paused during billing review.",
+    );
+  }
   if (offer.kind === "subscription" && account.plan === "creator" && ["active", "trialing"].includes(account.status)) {
     return errorResponse(c, 409, "ALREADY_SUBSCRIBED", "Manage your active subscription in the billing portal.");
   }

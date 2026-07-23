@@ -11,13 +11,13 @@ The application is locally functional and verified. This file is the authoritati
 | Evidence | Result |
 |---|---|
 | TypeScript client/server checks | Pass |
-| Automated tests | 71 passed, 0 failed, including account-required generation, exactly-once welcome credits, 4/8/16 credit charging, Starter-versus-Creator entitlements, yearly-default pricing, unsupported-model rejection, stable non-JSON edge errors, concurrent D1 credits/idempotency, asynchronous Worker Stripe replay, out-of-order Radar fraud-warning retry/quarantine, current Stripe Portal cancellation payloads, account-deletion billing tombstones, billing-event health degradation, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
+| Automated tests | 72 passed, 0 failed, including account-required generation, exactly-once welcome credits, 4/8/16 credit charging, Starter-versus-Creator entitlements, yearly-default pricing, unsupported-model rejection, stable non-JSON edge errors, concurrent D1 credits/idempotency, asynchronous Worker Stripe replay, out-of-order Radar fraud-warning retry/quarantine, authenticated and non-negative billing-review resolution, current Stripe Portal cancellation payloads, account-deletion billing tombstones, billing-event/review health degradation, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
 | Production bundle | Pass; JavaScript gzip about 94.5 KB; artifact scan rejects loopback addresses, SQLite customer copy, and development-token copy |
 | npm dependency audit | Production dependency audit passes with zero findings; full development-tool audit remains blocked by three high-severity Wrangler/Miniflare/Sharp findings |
 | Static UI quality | Strict unused checks, React Hooks rules, and baseline JSX accessibility rules pass |
 | Local health endpoint | HTTP 200 from the Wrangler Worker with local D1/R2 emulation, deterministic preview provider, and email disabled unless explicitly configured |
 | Security response headers | CSP, referrer policy, MIME protection, frame denial, permissions policy, COOP present |
-| Billing lifecycle regression | Retryable events, strict invoice validation, refund/dispute quarantine, and external-first deletion pass locally |
+| Billing lifecycle regression | Retryable events, strict invoice validation, refund/dispute/Radar quarantine, consolidated operator review, non-negative recovery, and external-first deletion pass locally |
 | Retention/recovery regression | Legacy 24-hour guest deletion, stranded account-reservation recovery, maintenance recording, and R2 deletion compensation are implemented; the first post-deploy scheduled acceptance pass completed successfully at `2026-07-23T09:30:08Z` and health reported it fresh |
 | Provider download security | Approved-host, public-DNS, redirect, MIME/signature, and size enforcement pass adapter tests |
 | Browser smoke | Desktop, 390 px mobile navigation, authentication dialog, unauthenticated Studio gate, generation failure handling, and 404 were visually verified on the previous acceptance revision; the new account-required generator gate needs a fresh browser pass |
@@ -68,13 +68,15 @@ Limitations of this evidence:
 
 **Remaining:** any future enablement of taxes, promotion codes, customer balance, or Portal plan updates requires a new Price-version policy and a fresh acceptance pass.
 
-### BIL-004: Refund/dispute/fraud-warning lifecycle — partially implemented, policy and reconciliation blocked
+### BIL-004: Refund/dispute/fraud-warning lifecycle — policy implemented locally; deployment acceptance blocked
 
-**Evidence:** PaymentIntents map to product payments; refund/dispute events update payment and order financial status and pause further credit spending with a visible Billing warning. Actionable Radar early fraud warnings resolve Charge-to-PaymentIntent using least-privilege read access, store separate risk evidence, and pause spending without changing the paid/refunded/disputed status. Fulfillment is idempotent.
+**Evidence:** PaymentIntents map to product payments; refund/dispute events update payment and order financial status and pause generation and Checkout. Actionable Radar early fraud warnings resolve Charge-to-PaymentIntent using least-privilege read access, store separate risk evidence, and pause spending without changing the paid/refunded/disputed status. All actionable events for one PaymentIntent are consolidated into one review. Authenticated operator actions require a stable operator identity, note, and idempotency key. A cleared Radar false positive or won dispute restores access only when no other review or unrecovered loss remains. A confirmed loss recovers no more than available credits, writes a ledger adjustment, never creates a negative balance, and remains blocked while any exposure is unrecovered.
 
 **Additional Sandbox evidence:** the official early-fraud-warning test card produced an actionable `made_with_stolen_card` warning. The first out-of-order delivery failed safely, the retry recorded the warning, kept the payment and order paid/normal, and blocked credit spending with HTTP 423. A full refund marked payment/order refunded and blocked spending. The dispute test marked payment/order disputed after its own safe out-of-order retry and blocked spending.
 
-**Remaining:** approve clawback/negative-balance/support and proactive-refund policy, then implement the reviewed risk-resolution/unblock operation. The current safe behavior remains: block spending immediately, preserve evidence, and never create an automatic negative balance.
+**Local resolution evidence:** one regression case clears a Radar false positive without changing credits, reopens the same review when a refund arrives, rejects clearing a completed refund, reclaims only four currently available credits from a 400-credit exposure, keeps the remaining 396 credits blocked, replays the first decision without a second mutation, later recovers exactly the remaining 396 credits, and unblocks with a non-negative balance. The review retains both Stripe triggers and every operator action.
+
+**Remaining:** deploy migration `0011`, provision `BILLING_OPERATOR_TOKEN`, and exercise authorized/unauthorized listing, cleared review, partial confirmed-loss recovery, retry, review-health degradation/recovery, and D1 reconciliation in the isolated Stripe Sandbox. Connect `billing.reviewHealth` to the selected external alert destination and approve customer-facing refund/support language. Do not apply the migration or enable public billing from unreviewed source.
 
 Public billing stays fail-closed behind `BILLING_ENABLED=false` until every remaining item above passes. This switch blocks new Checkout offers; configured webhook verification and Stripe-side cleanup continue so already-created financial state can drain safely.
 

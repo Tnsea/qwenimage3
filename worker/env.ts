@@ -9,6 +9,7 @@ export interface Env extends BillingEnvironment {
   CF_VERSION_METADATA?: WorkerVersionMetadata;
   EXTERNAL_HTTP_TIMEOUT_MS?: string;
   STRIPE_TIMEOUT_MS?: string;
+  BILLING_OPERATOR_TOKEN?: string;
   GENERATION_PROVIDER?: string;
   QWEN_MODEL_ID?: string;
   QWEN_API_BASE_URL?: string;

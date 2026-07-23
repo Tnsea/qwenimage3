@@ -18,7 +18,7 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 | Studio | Login-directed responsive workspace with aggregate overview, creation, projects, history, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings |
 | Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
 | Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
-| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated Creator invoices, refund/dispute quarantine, and external cleanup before account deletion |
+| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, and external cleanup before account deletion |
 | Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio adapter for `qwen-image-2.0-pro` |
 | Storage | D1 records and private R2 generation assets in both Wrangler development and the Cloudflare acceptance runtime |
 
@@ -124,7 +124,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Stripe
 
-Stripe is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance environment. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewal success, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, and account-deletion races. Checkout exposes only synchronous `card` and `link`; delayed methods are not enabled. Public billing remains blocked on the approved risk/credit policy, external alert routing, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
+Stripe is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance environment. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewal success, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, and account-deletion races. Checkout exposes only synchronous `card` and `link`; delayed methods are not enabled. The reviewed local risk policy freezes spending, consolidates Stripe evidence per PaymentIntent, and exposes an authenticated, idempotent operator decision path that never creates a negative credit balance. Public billing remains blocked on deployment acceptance of that path, external alert routing, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
 
 The configured offer contract is:
 
@@ -133,7 +133,7 @@ The configured offer contract is:
 - Professional: USD 59.90/month for 5,000 credits or USD 599/year for 60,000 credits.
 - One-time packs: USD 12/400 credits, USD 30/1,200 credits, or USD 60/3,000 credits.
 
-Standard, High, and Ultra generations cost 4, 8, and 16 product credits. Yearly subscriptions grant the full annual allowance after the yearly invoice is paid. Each offer requires its own immutable Stripe Price ID. Signed webhook events are idempotently stored in D1, and payment data is mapped to recoverable local orders and payment records before credits or subscription entitlements are granted. Actionable Stripe Radar early fraud warnings resolve the Charge to a known local PaymentIntent, record a risk case, and pause further credit spending without automatically refunding or misclassifying the payment.
+Standard, High, and Ultra generations cost 4, 8, and 16 product credits. Yearly subscriptions grant the full annual allowance after the yearly invoice is paid. Each offer requires its own immutable Stripe Price ID. Signed webhook events are idempotently stored in D1, and payment data is mapped to recoverable local orders and payment records before credits or subscription entitlements are granted. Refunds, disputes, and actionable Radar warnings pause generation and Checkout and enter one review per PaymentIntent. A cleared false positive unblocks only after all exposure is resolved; a confirmed loss reclaims no more than available credits and keeps the account blocked if any amount remains unrecovered.
 
 ## Developer API
 

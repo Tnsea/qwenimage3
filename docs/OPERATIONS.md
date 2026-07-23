@@ -21,6 +21,7 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Implemented model contract | Other values are rejected until a separate adapter and release gate are reviewed |
 | `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
 | `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
+| `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases | Managed secret of at least 32 characters; grants access only to `/api/operator/billing/reviews*` |
 | `STRIPE_TIMEOUT_MS` | `15000` | Stripe API calls | Minimum effective value is one second |
 | `STRIPE_SECRET_KEY` | Empty | Stripe API, Portal, and external cleanup | Use a restricted managed key; never commit it |
 | `STRIPE_WEBHOOK_SECRET` | Empty | Billing webhook | Rotate and store as a managed secret |
@@ -34,7 +35,7 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `STRIPE_PRICE_CREDITS_1200` | Live Price ID configured | USD 30 one time, 1,200 credits | Match the D1 version exactly |
 | `STRIPE_PRICE_CREDITS_3000` | Live Price ID configured | USD 60 one time, 3,000 credits | Match the D1 version exactly |
 
-`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables.
+`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, the billing operator token, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables.
 
 The dedicated Live webhook destination is `https://qwen-image-3.net/api/billing/webhook`. It subscribes only to the Checkout, invoice, subscription, reversal, dispute, and `radar.early_fraud_warning.created` events handled by the Worker. The restricted runtime key needs read-only `Charges and Refunds` access so a Radar warning's Charge can be resolved to its PaymentIntent; it must not receive product/Price administration access after catalog setup.
 
@@ -75,7 +76,7 @@ Expected local health characteristics:
 - Stripe `configured: false` without the required credentials and one active database Price version per offer;
 - `database: cloudflare-d1`, `objectStorage: cloudflare-r2`, a revision label, and maintenance freshness.
 
-The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request. Its `billing.eventHealth` object reports failed and stale webhook counts and changes the overall status to `degraded` when either count is non-zero. It does not replace Stripe-to-D1 financial reconciliation.
+The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request. Its `billing.eventHealth` object reports failed and stale webhook counts. Its `billing.reviewHealth` object reports open reviews and confirmed losses with unrecovered credits. Either condition changes the overall status to `degraded`; these aggregate signals do not replace Stripe-to-D1 financial reconciliation.
 
 HTML responses use `Cache-Control: public, max-age=0, must-revalidate, no-transform`. The `no-transform` directive prevents Cloudflare zone-level Web Analytics from injecting an unreviewed beacon into the application shell; the strict CSP remains an independent fail-closed control.
 
@@ -174,6 +175,45 @@ VALUES
 ```
 
 Do not update the amount or credits on an existing row and do not delete retired rows while Stripe subscriptions or financial records may reference them. Before applying the migration, export D1, confirm the new Stripe Price in Sandbox, keep `BILLING_ENABLED=false`, migrate, deploy, verify `/api/health` reports `priceCatalogConfigured: true`, exercise Checkout and invoice replay, then explicitly decide whether to enable sales.
+
+## Billing Risk Review
+
+Refunds, disputes, and actionable Radar early fraud warnings are consolidated into one review per PaymentIntent. The first unresolved trigger immediately blocks generation and Checkout. Additional Stripe events for the same payment are retained as evidence without creating a second credit exposure.
+
+Provision operator access as a managed secret:
+
+```bash
+npx wrangler secret put BILLING_OPERATOR_TOKEN --config wrangler.worker.jsonc
+```
+
+Use a unique, stable `Idempotency-Key` for every human decision and a stable operator identity in `X-Operator-Id`. Do not put card data, access tokens, or other secrets in review notes.
+
+```bash
+curl -fsS 'https://qwen-image-3.net/api/operator/billing/reviews?status=open' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN"
+
+curl -fsS 'https://qwen-image-3.net/api/operator/billing/reviews/REVIEW_ID' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN"
+
+curl -fsS -X POST \
+  'https://qwen-image-3.net/api/operator/billing/reviews/REVIEW_ID/resolve' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'X-Operator-Id: operator@example.com' \
+  -H 'Idempotency-Key: REVIEW_ID-decision-001' \
+  --data '{"decision":"confirmed_loss","note":"Refund confirmed in Stripe; recover remaining available credits."}'
+```
+
+Decision rules:
+
+- `cleared` is only for a false-positive Radar warning or a dispute that was won. It restores the payment/order financial state, resolves the review, and unblocks the account only when no other review or unrecovered loss remains. A completed refund cannot be cleared.
+- `confirmed_loss` deducts at most the account's currently available credits, writes a `manual_adjustment` ledger entry, and never creates a negative balance. If the full credit exposure cannot be recovered, the account remains blocked.
+- A partial refund maps the cumulative refunded amount to credits proportionally and rounds the exposure up to the next whole credit. A later larger refund reopens the same review only for the increased exposure.
+- When support later establishes repayment or recoverable credits become available, submit another `confirmed_loss` action with a new idempotency key. Only the outstanding amount is recovered.
+- A replay with the same review and idempotency key returns the original action. Reusing that key for a different decision is rejected.
+- Every trigger and decision remains in `billing_review_events` and `billing_review_actions`. Never bypass the operation by directly editing `credit_accounts`, `billing_accounts`, or `credit_ledger`.
+
+Before unblocking a dispute, verify the Stripe dispute outcome and supporting evidence. Before confirming a refund loss, verify the refund amount and that the PaymentIntent belongs to the local payment. Escalate legal threats, suspected account takeover, or ambiguous partial-refund cases instead of guessing.
 
 ## Legacy Container
 
@@ -291,7 +331,7 @@ Production acceptance requires at minimum:
 
 - request rate, latency, and error code dashboards;
 - generation success, timeout, moderation, and stranded-reservation alerts;
-- poll `/api/health` and alert when `status != "ok"` or `billing.eventHealth.healthy != true`;
+- poll `/api/health` and alert when `status != "ok"`, `billing.eventHealth.healthy != true`, or `billing.reviewHealth.healthy != true`;
 - credit and Stripe reconciliation alarms beyond the aggregate event-health signal;
 - D1 capacity, R2 cleanup backlog, backup, and restore monitoring;
 - provider health and cost alerts;
