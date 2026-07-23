@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, FileQuestion } from "lucide-react";
 import { api } from "./api";
+import { initializeAnalytics, trackPageView } from "./analytics";
 import { parseCatalog } from "./catalog";
+import { AnalyticsConsent } from "./components/AnalyticsConsent";
 import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
@@ -38,6 +40,7 @@ export default function App() {
   }
 
   useEffect(() => {
+    initializeAnalytics();
     void api<SessionState>("/api/session")
       .then(async (nextSession) => ({ nextSession, nextCatalog: parseCatalog(await api<unknown>("/api/catalog")) }))
       .then(({ nextSession, nextCatalog }) => { setSession(nextSession); setCatalog(nextCatalog); })
@@ -91,6 +94,7 @@ export default function App() {
     const canonicalUrl = publicCanonicalUrl(path) ?? `${CANONICAL_SITE_ORIGIN}/`;
     document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", canonicalUrl);
     document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.setAttribute("content", canonicalUrl);
+    trackPageView(path);
   }, [path]);
 
   useLayoutEffect(() => {
@@ -166,6 +170,7 @@ export default function App() {
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
       {!path.startsWith("/studio") && <SiteFooter onNavigate={navigate} />}
+      <AnalyticsConsent path={path} />
       <AuthDialog open={authOpen} initialMode={authMode} resetToken={resetToken} onClose={() => setAuthOpen(false)} onResetComplete={() => {
         window.history.replaceState({}, "", "/");
         setPath("/");

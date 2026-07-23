@@ -40,6 +40,7 @@ This record covers product-copy approval, not legal advice or a launch-region le
 - Approved policy version: **2026-07-23**
 - Approved at: **2026-07-23T15:53:01Z**
 - Requested changes: **none recorded**
-- External alert delivery evidence: **pending**
+- External alert delivery evidence: **accepted on Worker `7bfce1bd-6785-4e60-a30e-610ea5346ba1`; D1 recorded delivered test `alert-acceptance-20260723-b95303e` at `2026-07-23T15:57:38.199Z`, and Cloudflare Activity Log reported Delivered**
+- Canonical copy acceptance: **`/terms` and `/refund-policy` returned the approved version on the deployed origin**
 
 After approval, replace the pending fields with the exact approver decision and evidence reference. Any later material copy change must increment `BILLING_TERMS_VERSION` so existing customers are asked to accept the new version.

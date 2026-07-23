@@ -50,10 +50,10 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
-| Welcome credits | **Implemented locally** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | External redeploy and reconciliation monitoring |
-| Credits | **Verified locally and in the isolated Sandbox** for generation reserve/settle/refund and non-negative billing-loss recovery | Reconciliation monitoring and externally received alert evidence |
+| Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
+| Credits | **Verified locally and in the isolated Sandbox** for generation reserve/settle/refund and non-negative billing-loss recovery; aggregate billing-health alert delivery passed externally | Reconciliation monitoring |
 | Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
-| Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Externally received alert evidence and legal/commercial approval |
+| Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
 | Content library | **Prototype**: twelve prompt records, eight unique example cards, and eleven homepage FAQs | 60/80-item editorial inventory and content review workflow |
@@ -194,7 +194,7 @@ Implemented adapter flow:
 13. The 15-minute schedule deduplicates aggregate billing-health alerts, sends reminders and recovery messages, and audits every delivery.
 14. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. The external alert route and user-visible policy flow are locally verified; [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on receiving the real alert email and recording product-owner/legal-commercial approval.
+Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. Policy version `2026-07-23` has product-owner approval and is deployed; Cloudflare accepted and logged a real test alert to the verified destination. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the other legal, provider, reconciliation, and release gates.
 
 ### 5.6 Developer API
 
@@ -318,11 +318,12 @@ The current production bundle passes the JavaScript size target locally. No publ
 - Stripe adapter and signed webhook tests.
 - Alibaba Cloud Qwen 2.0 adapter mapping and binary persistence tests.
 - Recoverable Stripe events, validated invoices, consolidated refund/dispute/Radar review, authenticated non-negative recovery, and external-first account deletion.
+- Versioned billing-policy acceptance, approved renewal/refund copy, and externally delivered aggregate billing-health alerts.
 - Forward-only migrations, scheduled retention/recovery maintenance, D1-backed rate limits, complete API result logs, R2 cleanup compensation, exact-host provider protection, explicit failed states, and 404 routes.
 
 ### Release-blocking work
 
-- Connect billing event and review health to external monitoring.
+- Add broader financial reconciliation and availability supervision beyond the accepted billing-health email path.
 - Prove account retention against backup deletion and production telemetry.
 - Review and merge the current hardening branch, then deploy from the reviewed immutable revision.
 - Complete real provider, email, GitHub OAuth, and Google denial/failure acceptance.
@@ -387,7 +388,7 @@ Closed decisions:
 - [x] Invoice grants validate customer, subscription, expected Price, amount, currency, and billing reason for every configured monthly/yearly offer.
 - [x] Refunds, disputes, Radar, synchronous payment failure, payment recovery, and a seven-check D1 reconciliation passed. Delayed payment methods are disabled; asynchronous success retains signed-event coverage.
 - [x] Stripe Sandbox Checkout, webhook replay, Customer Portal, renewal, cancellation, and deletion pass end to end.
-- [ ] Terms, taxes, renewal, refund, and expiry copy is approved and visible before purchase.
+- [x] Policy version `2026-07-23` covers taxes, renewal, cancellation, refunds, and credit lifetime; product-owner approval is recorded and the canonical terms/refund pages are deployed.
 
 ### Required before production deployment
 

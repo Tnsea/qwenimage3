@@ -1,4 +1,5 @@
 import type { MouseEvent } from "react";
+import { openAnalyticsPreferences } from "../analytics";
 
 interface SiteFooterProps {
   onNavigate: (path: string) => void;
@@ -69,6 +70,11 @@ export function SiteFooter({ onNavigate }: SiteFooterProps) {
               {group.links.map(([label, href]) => (
                 <a className="link link-hover" href={href} key={label} onClick={(event) => followLink(event, href)}>{label}</a>
               ))}
+              {group.title === "Trust" && (
+                <button className="link link-hover site-footer-link-button" type="button" onClick={openAnalyticsPreferences}>
+                  Analytics choices
+                </button>
+              )}
             </nav>
           ))}
         </div>
