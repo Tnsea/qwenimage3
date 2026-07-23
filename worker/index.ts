@@ -2,7 +2,9 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { renderGeneration } from "../server/generator.js";
+import { BILLING_TERMS_VERSION } from "../src/billing-policy.js";
 import { createCatalogCore, createModelCatalog, SUPPORTED_QWEN_MODEL_ID } from "../src/catalog.js";
+import { publicCanonicalUrl, rewritePublicCanonicalMetadata } from "../src/seo.js";
 import type {
   AccountSession,
   ApiKeyCreated,
@@ -41,6 +43,13 @@ import {
   stripeAccessConfigured,
   stripeWebhookConfigured,
 } from "./offers.js";
+import {
+  collectOperationalHealth,
+  operationalAlertConfigured,
+  readOperationalAlertState,
+  runOperationalAlerting,
+  sendOperationalAlertTest,
+} from "./alerting.js";
 import {
   creditMutationApplied,
   grantCredits,
@@ -1594,35 +1603,27 @@ app.get("/api/health", async (c) => {
   const maintenance = await c.env.DB.prepare(`SELECT status, started_at, completed_at
     FROM maintenance_runs ORDER BY started_at DESC LIMIT 1`)
     .first<{ status: string; started_at: string; completed_at: string | null }>();
-  const billingEventHealth = await c.env.DB.prepare(`SELECT
-      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_events,
-      SUM(CASE WHEN status = 'processing' AND processing_started_at < ? THEN 1 ELSE 0 END) AS stale_events
-    FROM billing_events`)
-    .bind(new Date(Date.now() - 15 * 60 * 1000).toISOString())
-    .first<{ failed_events: number | null; stale_events: number | null }>();
-  const failedBillingEvents = Number(billingEventHealth?.failed_events || 0);
-  const staleBillingEvents = Number(billingEventHealth?.stale_events || 0);
-  const billingEventsHealthy = failedBillingEvents === 0 && staleBillingEvents === 0;
-  const billingReviewHealth = await c.env.DB.prepare(`SELECT
-      SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_reviews,
-      SUM(CASE
-        WHEN status = 'resolved'
-          AND decision = 'confirmed_loss'
-          AND unrecovered_credits > 0
-        THEN 1 ELSE 0
-      END) AS outstanding_loss_reviews
-    FROM billing_reviews`)
-    .first<{ open_reviews: number | null; outstanding_loss_reviews: number | null }>();
-  const openBillingReviews = Number(billingReviewHealth?.open_reviews || 0);
-  const outstandingLossReviews = Number(billingReviewHealth?.outstanding_loss_reviews || 0);
-  const billingReviewsHealthy = openBillingReviews === 0 && outstandingLossReviews === 0;
+  const operationalHealth = await collectOperationalHealth(c.env);
+  const billingEventsHealthy = operationalHealth.failedBillingEvents === 0
+    && operationalHealth.staleBillingEvents === 0;
+  const billingReviewsHealthy = operationalHealth.openBillingReviews === 0
+    && operationalHealth.outstandingLossReviews === 0;
+  const alertState = await readOperationalAlertState(c.env);
+  const alertingConfigured = operationalAlertConfigured(c.env);
+  const alertingRequired = billingEnabled(c.env);
+  const alertingHealthy = alertingConfigured && !alertState?.lastError;
   const oauth = oauthMethods(c.env);
   const maintenanceCompletedAt = maintenance?.completed_at ? Date.parse(maintenance.completed_at) : Number.NaN;
   const maintenanceAgeSeconds = Number.isFinite(maintenanceCompletedAt)
     ? Math.max(0, Math.floor((Date.now() - maintenanceCompletedAt) / 1000))
     : null;
   return c.json({
-    status: providerConfigured && billingEventsHealthy && billingReviewsHealthy ? "ok" : "degraded",
+    status: providerConfigured
+      && billingEventsHealthy
+      && billingReviewsHealthy
+      && (!alertingRequired || alertingHealthy)
+      ? "ok"
+      : "degraded",
     runtime: "cloudflare-worker",
     revision: c.env.CF_VERSION_METADATA?.id || c.env.DEPLOY_REVISION || "unversioned",
     database: "cloudflare-d1",
@@ -1657,13 +1658,23 @@ app.get("/api/health", async (c) => {
       priceCatalogConfigured,
       eventHealth: {
         healthy: billingEventsHealthy,
-        failedEvents: failedBillingEvents,
-        staleEvents: staleBillingEvents,
+        failedEvents: operationalHealth.failedBillingEvents,
+        staleEvents: operationalHealth.staleBillingEvents,
       },
       reviewHealth: {
         healthy: billingReviewsHealthy,
-        openReviews: openBillingReviews,
-        outstandingLossReviews,
+        openReviews: operationalHealth.openBillingReviews,
+        outstandingLossReviews: operationalHealth.outstandingLossReviews,
+      },
+      alerting: {
+        configured: alertingConfigured,
+        required: alertingRequired,
+        healthy: alertingHealthy,
+        state: alertState?.status ?? "pending-first-run",
+        lastCheckedAt: alertState?.lastCheckedAt ?? null,
+        lastSentAt: alertState?.lastSentAt ?? null,
+        lastRecoveredAt: alertState?.lastRecoveredAt ?? null,
+        lastError: alertState?.lastError ?? null,
       },
     },
     credits: "d1-ledger",
@@ -2099,6 +2110,35 @@ app.get("/api/operator/billing/reviews", async (c) => {
   return c.json({ reviews: rows.results.map(billingReviewJson) });
 });
 
+app.post("/api/operator/alerts/test", async (c) => {
+  const denied = requireBillingOperator(c);
+  if (denied) return denied;
+  const operatorId = (c.req.header("x-operator-id") || "").trim();
+  const idempotencyKey = (c.req.header("idempotency-key") || "").trim();
+  if (!/^[A-Za-z0-9@._+-]{3,80}$/.test(operatorId)) {
+    return errorResponse(c, 400, "INVALID_OPERATOR_ID", "Provide a stable operator ID.");
+  }
+  if (!/^[A-Za-z0-9._:-]{8,100}$/.test(idempotencyKey)) {
+    return errorResponse(c, 400, "INVALID_IDEMPOTENCY_KEY", "Provide a stable idempotency key.");
+  }
+  const result = await sendOperationalAlertTest(c.env, { operatorId, idempotencyKey });
+  if (!result.configured) {
+    return errorResponse(c, 503, "ALERTING_UNAVAILABLE", "Operational alert delivery is not configured.");
+  }
+  if (result.inProgress) {
+    return c.json({ delivered: false, replayed: true, status: "sending" }, 202);
+  }
+  if (!result.delivered) {
+    return errorResponse(c, 502, "ALERT_DELIVERY_FAILED", "The operational alert test could not be delivered.");
+  }
+  return c.json({
+    delivered: true,
+    replayed: result.replayed,
+    status: "delivered",
+    health: result.health,
+  });
+});
+
 app.get("/api/operator/billing/reviews/:id", async (c) => {
   const denied = requireBillingOperator(c);
   if (denied) return denied;
@@ -2408,10 +2448,19 @@ app.get("/api/billing", async (c) => {
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   const account = await billingAccount(c.env, actor.userId!);
   const ordersResult = await c.env.DB.prepare("SELECT * FROM billing_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 30").bind(actor.userId).all<BillingOrderRow>();
+  const termsAcceptance = await c.env.DB.prepare(`SELECT accepted_at
+    FROM billing_terms_acceptances WHERE user_id = ? AND terms_version = ?`)
+    .bind(actor.userId, BILLING_TERMS_VERSION)
+    .first<{ accepted_at: string }>();
   const offers = await versionedBillingOffers(c.env);
   const response: BillingSummary = {
     configured: await billingRuntimeConfigured(c.env),
     promotion: null,
+    terms: {
+      version: BILLING_TERMS_VERSION,
+      accepted: Boolean(termsAcceptance),
+      acceptedAt: termsAcceptance?.accepted_at ?? null,
+    },
     account: {
       plan: account.plan,
       planTier: account.plan_tier,
@@ -2430,6 +2479,41 @@ app.get("/api/billing", async (c) => {
     })),
   };
   return c.json(response);
+});
+
+app.post("/api/billing/terms/accept", async (c) => {
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
+  const body = await readBody(c);
+  if (body.confirmed !== true || body.version !== BILLING_TERMS_VERSION) {
+    return errorResponse(
+      c,
+      400,
+      "TERMS_CONFIRMATION_REQUIRED",
+      "Review and accept the current Billing Terms and Refund Policy before purchasing.",
+    );
+  }
+  const timestamp = now();
+  await c.env.DB.prepare(`INSERT OR IGNORE INTO billing_terms_acceptances
+    (user_id, terms_version, accepted_at, ip_hint, user_agent)
+    VALUES (?, ?, ?, ?, ?)`)
+    .bind(
+      actor.userId,
+      BILLING_TERMS_VERSION,
+      timestamp,
+      ipHint(c),
+      (c.req.header("user-agent") || "Unknown device").slice(0, 180),
+    )
+    .run();
+  const acceptance = await c.env.DB.prepare(`SELECT accepted_at
+    FROM billing_terms_acceptances WHERE user_id = ? AND terms_version = ?`)
+    .bind(actor.userId, BILLING_TERMS_VERSION)
+    .first<{ accepted_at: string }>();
+  return c.json({
+    version: BILLING_TERMS_VERSION,
+    accepted: true,
+    acceptedAt: acceptance?.accepted_at ?? timestamp,
+  });
 });
 
 app.post("/api/billing/checkout", async (c) => {
@@ -2453,14 +2537,27 @@ app.post("/api/billing/checkout", async (c) => {
   if (offer.kind === "subscription" && account.plan === "creator" && ["active", "trialing"].includes(account.status)) {
     return errorResponse(c, 409, "ALREADY_SUBSCRIBED", "Manage your active subscription in the billing portal.");
   }
+  const termsAcceptance = await c.env.DB.prepare(`SELECT accepted_at
+    FROM billing_terms_acceptances WHERE user_id = ? AND terms_version = ?`)
+    .bind(actor.userId, BILLING_TERMS_VERSION)
+    .first<{ accepted_at: string }>();
+  if (!termsAcceptance) {
+    return errorResponse(
+      c,
+      409,
+      "BILLING_TERMS_REQUIRED",
+      "Review and accept the current Billing Terms and Refund Policy before purchasing.",
+    );
+  }
   let customerId = account.stripe_customer_id;
   const priceVersion = await activeBillingPriceVersion(c.env, offer.id);
   if (!priceVersion) return errorResponse(c, 503, "OFFER_UNAVAILABLE", "This billing offer has no active price version.");
   const attemptId = crypto.randomUUID();
   const timestamp = now();
   await c.env.DB.prepare(`INSERT INTO billing_checkout_attempts
-    (id, user_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?)`)
+    (id, user_id, offer_id, kind, credits, amount_cents, currency, stripe_price_id,
+      status, terms_version, terms_accepted_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?, ?)`)
     .bind(
       attemptId,
       actor.userId,
@@ -2470,6 +2567,8 @@ app.post("/api/billing/checkout", async (c) => {
       offer.amountCents,
       offer.currency,
       priceVersion.stripe_price_id,
+      BILLING_TERMS_VERSION,
+      termsAcceptance.accepted_at,
       timestamp,
       timestamp,
     )
@@ -2508,15 +2607,18 @@ app.post("/api/billing/checkout", async (c) => {
       "metadata[offer_id]": offer.id,
       "metadata[kind]": offer.kind,
       "metadata[order_id]": attemptId,
+      "metadata[terms_version]": BILLING_TERMS_VERSION,
     });
     if (offer.kind === "subscription") {
       params.set("subscription_data[metadata][user_id]", actor.userId!);
       params.set("subscription_data[metadata][offer_id]", offer.id);
       params.set("subscription_data[metadata][order_id]", attemptId);
+      params.set("subscription_data[metadata][terms_version]", BILLING_TERMS_VERSION);
     } else {
       params.set("payment_intent_data[metadata][user_id]", actor.userId!);
       params.set("payment_intent_data[metadata][offer_id]", offer.id);
       params.set("payment_intent_data[metadata][order_id]", attemptId);
+      params.set("payment_intent_data[metadata][terms_version]", BILLING_TERMS_VERSION);
     }
     const checkout = await stripeRequest<{ id?: string; url?: string }>(
       c.env,
@@ -3343,7 +3445,13 @@ app.notFound(async (c) => {
   // Zone-level Web Analytics is independent of Worker code. no-transform keeps
   // the reviewed HTML immutable at the edge and prevents automatic beacon injection.
   headers.set("Cache-Control", "public, max-age=0, must-revalidate, no-transform");
-  return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+  const canonicalUrl = publicCanonicalUrl(c.req.path, c.env.APP_BASE_URL);
+  if (!canonicalUrl) return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+
+  const html = rewritePublicCanonicalMetadata(await asset.text(), canonicalUrl);
+  headers.delete("Content-Length");
+  headers.delete("ETag");
+  return new Response(html, { status: asset.status, statusText: asset.statusText, headers });
 });
 
 export default {
@@ -3351,6 +3459,21 @@ export default {
     return app.fetch(request, env, executionContext);
   },
   scheduled(_controller: ScheduledController, env: Env, executionContext: ExecutionContext) {
-    executionContext.waitUntil(runMaintenance(env, handleStripeEvent));
+    executionContext.waitUntil((async () => {
+      try {
+        await runMaintenance(env, handleStripeEvent);
+      } catch (reason) {
+        console.error("scheduled-maintenance-failed", {
+          reason: reason instanceof Error ? reason.message : "unknown",
+        });
+      }
+      try {
+        await runOperationalAlerting(env);
+      } catch (reason) {
+        console.error("scheduled-alerting-failed", {
+          reason: reason instanceof Error ? reason.message : "unknown",
+        });
+      }
+    })());
   },
 } satisfies ExportedHandler<Env>;

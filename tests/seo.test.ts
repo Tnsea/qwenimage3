@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import {
+  CANONICAL_SITE_ORIGIN,
+  PUBLIC_INDEXABLE_PATHS,
+  publicCanonicalUrl,
+  rewritePublicCanonicalMetadata,
+} from "../src/seo.js";
 
 test("homepage build injects the real semantic page into the first-response document", () => {
   const viteConfig = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
@@ -42,4 +48,26 @@ test("entry document and discovery files expose complete crawl metadata", () => 
   assert.match(index, /<script type="application\/ld\+json">/);
   assert.match(robots, /Sitemap: https:\/\/qwen-image-3\.net\/sitemap\.xml/);
   assert.match(sitemap, /<loc>https:\/\/qwen-image-3\.net\/<\/loc>/);
+});
+
+test("every sitemap route resolves to its own public canonical", () => {
+  const sitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
+  const sitemapUrls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
+  const expectedUrls = PUBLIC_INDEXABLE_PATHS.map((path) => publicCanonicalUrl(path));
+
+  assert.deepEqual(sitemapUrls, expectedUrls);
+  assert.equal(publicCanonicalUrl("/pricing/"), `${CANONICAL_SITE_ORIGIN}/pricing`);
+  assert.equal(publicCanonicalUrl("/studio"), null);
+  assert.equal(publicCanonicalUrl("/verify-email"), null);
+  assert.equal(publicCanonicalUrl("/not-a-route"), null);
+});
+
+test("public canonical rewriting keeps raw HTML and social metadata aligned", () => {
+  const shell = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const pricingUrl = `${CANONICAL_SITE_ORIGIN}/pricing`;
+  const rewritten = rewritePublicCanonicalMetadata(shell, pricingUrl);
+
+  assert.match(rewritten, /<link rel="canonical" href="https:\/\/qwen-image-3\.net\/pricing" \/>/);
+  assert.match(rewritten, /<meta property="og:url" content="https:\/\/qwen-image-3\.net\/pricing" \/>/);
+  assert.doesNotMatch(rewritten, /<link rel="canonical" href="https:\/\/qwen-image-3\.net\/" \/>/);
 });

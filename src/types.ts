@@ -209,6 +209,11 @@ export interface Catalog {
 export interface BillingSummary {
   configured: boolean;
   promotion: PricingPromotion | null;
+  terms: {
+    version: string;
+    accepted: boolean;
+    acceptedAt: string | null;
+  };
   account: {
     plan: "free" | "creator";
     planTier?: "free" | BillingPlanTier;

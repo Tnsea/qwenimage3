@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PUBLIC_INDEXABLE_PATHS, publicCanonicalUrl } from "../src/seo.js";
 import worker, { browserWriteOriginAllowed } from "../worker/index.js";
 
 const environment = {
@@ -16,8 +17,12 @@ const environment = {
   },
   ASSETS: {
     fetch() {
-      return Promise.resolve(new Response("<!doctype html><main>Application shell</main>", {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+      return Promise.resolve(new Response("<!doctype html><head><link rel=\"canonical\" href=\"https://qwen-image-3.net/\" /><meta property=\"og:url\" content=\"https://qwen-image-3.net/\" /></head><body><main>Application shell</main></body>", {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Length": "1000",
+          "ETag": "\"shared-shell\"",
+        },
       }));
     },
   },
@@ -53,6 +58,25 @@ test("Worker HTML is immutable to edge transforms so Cloudflare cannot inject an
   assert.equal(response.headers.get("cache-control"), "public, max-age=0, must-revalidate, no-transform");
   assert.doesNotMatch(await response.text(), /cloudflareinsights|beacon\.min\.js/);
 });
+
+for (const path of PUBLIC_INDEXABLE_PATHS) {
+  test(`Worker emits a self-referencing canonical for ${path}`, async () => {
+    const response = await worker.fetch(
+      new Request(`https://qwen-image-3.net${path}`),
+      environment as never,
+      executionContext as never,
+    );
+    const canonicalUrl = publicCanonicalUrl(path);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.ok(canonicalUrl);
+    assert.match(body, new RegExp(`<link rel="canonical" href="${canonicalUrl}"`));
+    assert.match(body, new RegExp(`<meta property="og:url" content="${canonicalUrl}"`));
+    assert.equal(response.headers.get("content-length"), null);
+    assert.equal(response.headers.get("etag"), null);
+  });
+}
 
 for (const path of ["/api/workspace/overview", "/api/projects", "/api/credits", "/api/account/export", "/api/api-keys", "/api/support/tickets", "/api/generations"]) {
   test(`Cloudflare protected route ${path} returns structured 401 without a session`, async () => {

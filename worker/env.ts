@@ -10,6 +10,9 @@ export interface Env extends BillingEnvironment {
   EXTERNAL_HTTP_TIMEOUT_MS?: string;
   STRIPE_TIMEOUT_MS?: string;
   BILLING_OPERATOR_TOKEN?: string;
+  OPS_ALERT_EMAIL?: SendEmail;
+  OPS_ALERT_TO?: string;
+  OPS_ALERT_FROM?: string;
   GENERATION_PROVIDER?: string;
   QWEN_MODEL_ID?: string;
   QWEN_API_BASE_URL?: string;

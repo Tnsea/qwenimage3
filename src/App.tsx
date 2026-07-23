@@ -6,9 +6,10 @@ import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
-import { ApiPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, PromptsPage, type Catalog } from "./components/Marketing";
+import { ApiPage, BillingTermsPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, PromptsPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
 import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
+import { CANONICAL_SITE_ORIGIN, publicCanonicalUrl } from "./seo";
 import type { SessionState } from "./types";
 
 const emptySession: SessionState = {
@@ -86,6 +87,12 @@ export default function App() {
     }
   }, [path]);
 
+  useEffect(() => {
+    const canonicalUrl = publicCanonicalUrl(path) ?? `${CANONICAL_SITE_ORIGIN}/`;
+    document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", canonicalUrl);
+    document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.setAttribute("content", canonicalUrl);
+  }, [path]);
+
   useLayoutEffect(() => {
     const themeName = theme === "dark" ? "qwen" : "qwen-light";
     window.localStorage.setItem("qwen-theme", theme);
@@ -136,6 +143,10 @@ export default function App() {
     page = <GuidesPage onNavigate={navigate} />;
   } else if (path === "/api") {
     page = <ApiPage models={catalog.models} onNavigate={navigate} />;
+  } else if (path === "/terms") {
+    page = <BillingTermsPage />;
+  } else if (path === "/refund-policy") {
+    page = <RefundPolicyPage />;
   } else if (path === "/" || path === "/verify-email" || path === "/reset-password") {
     page = (
       <main className="home-main">

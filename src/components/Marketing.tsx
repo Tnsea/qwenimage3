@@ -1,5 +1,12 @@
 import { ArrowRight, ArrowUpRight, BookOpen, Check, Code2, Coins, Copy, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
 import { useState } from "react";
+import {
+  BILLING_TERMS_EFFECTIVE_DATE,
+  BILLING_TERMS_VERSION,
+  billingPolicySummary,
+  refundPolicySections,
+  termsSections,
+} from "../billing-policy";
 import { exampleMedia } from "../exampleMedia";
 import { promptMedia } from "../promptMedia";
 import type { Catalog } from "../types";
@@ -472,7 +479,83 @@ export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegis
         </div>
       )}
 
+      <section className="alert alert-info alert-soft items-start" aria-labelledby="pricing-policy-title">
+        <ShieldCheck size={18} />
+        <div>
+          <h2 id="pricing-policy-title" className="font-semibold">Know the billing terms before you buy</h2>
+          <p>{billingPolicySummary[0]} {billingPolicySummary[2]}</p>
+          <p>
+            <a className="link" href="/terms">Read the Billing Terms</a>
+            {" · "}
+            <a className="link" href="/refund-policy">Read the Refund Policy</a>
+          </p>
+        </div>
+      </section>
+
       <section className="credit-explainer"><h2>One transparent credit rule</h2><p>Standard uses 4 credits, High uses 8, and Ultra uses 16. Every request follows the same server-authoritative settlement flow.</p><div className="credit-flow"><span><b>1</b>Estimate</span><ArrowRight /><span><b>2</b>Reserve</span><ArrowRight /><span><b>3</b>Generate</span><ArrowRight /><span><b>4</b>Settle or refund</span></div></section>
+    </main>
+  );
+}
+
+function PolicySections({ sections }: { sections: ReadonlyArray<{ title: string; paragraphs: readonly string[] }> }) {
+  return (
+    <div className="grid gap-4">
+      {sections.map((section) => (
+        <section className="card card-border" key={section.title}>
+          <div className="card-body">
+            <h2 className="card-title">{section.title}</h2>
+            {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function BillingTermsPage() {
+  return (
+    <main className="content-page">
+      <PageIntro
+        eyebrow="Billing policy"
+        title="Billing Terms"
+        copy="The recurring-payment, credit, cancellation, and payment-review rules that apply before a Stripe purchase."
+      />
+      <div role="alert" className="alert alert-info alert-soft">
+        <ShieldCheck size={18} />
+        <span>Version {BILLING_TERMS_VERSION} · Effective <time dateTime={BILLING_TERMS_VERSION}>{BILLING_TERMS_EFFECTIVE_DATE}</time></span>
+      </div>
+      <PolicySections sections={termsSections} />
+      <div className="card card-border">
+        <div className="card-body">
+          <h2 className="card-title">Related policy</h2>
+          <p>The detailed eligibility and account-handling rules for cash refunds are in the Refund Policy.</p>
+          <div className="card-actions"><a className="btn btn-outline" href="/refund-policy">Read Refund Policy <ArrowRight size={14} /></a></div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export function RefundPolicyPage() {
+  return (
+    <main className="content-page">
+      <PageIntro
+        eyebrow="Billing policy"
+        title="Refund Policy"
+        copy="How to request a refund, what cancellation changes, and how refunded or disputed credits are handled."
+      />
+      <div role="alert" className="alert alert-info alert-soft">
+        <ShieldCheck size={18} />
+        <span>Version {BILLING_TERMS_VERSION} · Effective <time dateTime={BILLING_TERMS_VERSION}>{BILLING_TERMS_EFFECTIVE_DATE}</time></span>
+      </div>
+      <PolicySections sections={refundPolicySections} />
+      <div className="card card-border">
+        <div className="card-body">
+          <h2 className="card-title">Subscription terms</h2>
+          <p>Automatic renewal, annual credit grants, taxes, and account-deletion billing cleanup are covered in the Billing Terms.</p>
+          <div className="card-actions"><a className="btn btn-outline" href="/terms">Read Billing Terms <ArrowRight size={14} /></a></div>
+        </div>
+      </div>
     </main>
   );
 }

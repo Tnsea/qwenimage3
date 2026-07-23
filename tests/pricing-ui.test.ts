@@ -18,4 +18,20 @@ test("pricing defaults to yearly and exposes three account-based plans safely", 
   assert.match(pricingPage, /Best unit price/);
   assert.doesNotMatch(pricingPage, /Generate as guest|No account needed|Everything in Guest/);
   assert.match(pricingPage, /20 welcome credits/);
+  assert.match(pricingPage, /Know the billing terms before you buy/);
+  assert.match(pricingPage, /href="\/terms"/);
+  assert.match(pricingPage, /href="\/refund-policy"/);
+});
+
+test("Studio requires explicit current-version billing policy acceptance before Checkout", () => {
+  const studio = readFileSync(new URL("../src/components/Studio.tsx", import.meta.url), "utf8");
+  const policy = readFileSync(new URL("../src/billing-policy.ts", import.meta.url), "utf8");
+
+  assert.match(studio, /Purchase confirmation/);
+  assert.match(studio, /\/api\/billing\/terms\/accept/);
+  assert.match(studio, /disabled=\{!offer\.configured \|\| !billingTermsConfirmed/);
+  assert.match(studio, /automatic renewal and credit recovery after refunds or disputes/);
+  assert.match(policy, /Subscriptions renew automatically/);
+  assert.match(policy, /Contact Support within 7 days/);
+  assert.match(policy, /non-waivable consumer rights/);
 });

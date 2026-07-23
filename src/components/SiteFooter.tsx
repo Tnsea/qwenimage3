@@ -26,7 +26,8 @@ const footerGroups = [
     title: "Trust",
     links: [
       ["Privacy & data", "/#faq-privacy"],
-      ["Billing & refunds", "/#faq-billing-refunds"],
+      ["Billing terms", "/terms"],
+      ["Refund policy", "/refund-policy"],
       ["Independent status", "/#faq-independent-product"],
       ["Contact support", "/studio/support"],
     ],

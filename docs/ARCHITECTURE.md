@@ -25,7 +25,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | Component | Source | Responsibility |
 |---|---|---|
 | React application | `src/App.tsx` | Client routing, session bootstrap, theme, page composition, verification/reset callbacks |
-| Search entry document | `vite.config.ts`, `src/prerender.tsx`, `index.html` | Build-time homepage prerender plus canonical, social, and structured metadata for first-response crawler access |
+| Search entry document | `vite.config.ts`, `src/prerender.tsx`, `src/seo.ts`, `worker/index.ts`, `index.html` | Build-time homepage prerender plus a shared public-route registry; the Worker rewrites canonical and `og:url` metadata to each requested sitemap URL before the first response |
 | Navigation | `src/components/Header.tsx` | Desktop/mobile public routes and signed-in account actions |
 | Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, result/history actions |
 | Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, recovery, and dynamically configured OAuth entry |
@@ -84,13 +84,16 @@ The canonical Worker uses D1 for relational records and a private R2 bucket for 
 | `billing_accounts` | Stripe identifiers, local subscription state, and financial-review block |
 | `billing_price_versions` | Immutable Stripe Price-to-offer/amount/credits versions; one active checkout version per offer |
 | `billing_orders` | Checkout session, price-version snapshot, amount, credits, fulfillment, and financial state |
-| `billing_checkout_attempts` | Pre-Stripe recoverable order intent and Checkout association |
+| `billing_checkout_attempts` | Pre-Stripe recoverable order intent, accepted policy version/time, and Checkout association |
+| `billing_terms_acceptances` | Account, policy version, acceptance time, coarse IP hint, and user-agent evidence |
 | `billing_events` | Retryable processing/completed/failed Stripe event state and attempts |
 | `billing_payments` | PaymentIntent-to-user/order/invoice/Price-version mapping for refunds, disputes, and recurring grants |
 | `billing_risk_events` | Local-payment Stripe Radar warning evidence and operator-review state |
 | `billing_reviews` | One consolidated refund/dispute/Radar review and cumulative credit exposure per PaymentIntent |
 | `billing_review_events` | Every Stripe trigger associated with the consolidated review |
 | `billing_review_actions` | Idempotent operator decisions, notes, identities, and per-action credit recovery |
+| `operational_alert_state` | Billing-health fingerprint, delivery timestamps, recovery state, and last external-delivery error |
+| `operational_alert_deliveries` | Audited alert, reminder, recovery, and idempotent operator-test deliveries |
 | `rate_limit_buckets` | Persistent request window counters |
 | `maintenance_runs` | Last retention/recovery result |
 | `r2_deletion_queue` | Retriable compensation for failed or post-account-deletion object cleanup |
@@ -125,16 +128,18 @@ The 15-minute maintenance pass marks stale processing generations failed, settle
 
 ### Billing
 
-1. The Worker stores a recoverable checkout attempt with a local order ID.
-2. Stripe Checkout uses that order ID as its Stripe idempotency key and metadata; the returned session is associated with the attempt.
-3. A signed Stripe event atomically claims a retryable processing state; missing local dependencies return a retryable HTTP response.
-4. Credit packs map the PaymentIntent to the order; subscription invoices validate Customer, subscription, immutable configured Price version, exact amount/currency, paid state, billing reason, and PaymentIntent before granting the monthly or annual allowance.
-5. Refund/dispute events mark financial records and quarantine further credit spending for review.
-6. An actionable Radar early fraud warning resolves its Charge to a known local PaymentIntent, records the warning separately from refund/dispute state, and quarantines spending. Warnings for other integrations sharing the Stripe account are ignored after signature verification.
-7. Every actionable trigger for one PaymentIntent joins one review. An authenticated operator can clear a false positive or confirm a loss with a required idempotency key, identity, and note. Confirmed-loss recovery subtracts only available credits, records a ledger adjustment, and leaves spending blocked while any exposure remains.
-8. Account deletion checkpoints subscription cancellation and Customer deletion, atomically queues owned R2 keys before removing D1 identity state, and retains a deletion audit. Failed object cleanup is retried by maintenance.
+1. The customer reviews the versioned Billing Terms and Refund Policy and explicitly accepts them; the Worker records the account, version, time, coarse IP hint, and user agent.
+2. Checkout verifies that current acceptance and stores a recoverable attempt with the accepted version/time and a local order ID.
+3. Stripe Checkout uses that order ID as its Stripe idempotency key and carries the accepted policy version in metadata; the returned session is associated with the attempt.
+4. A signed Stripe event atomically claims a retryable processing state; missing local dependencies return a retryable HTTP response.
+5. Credit packs map the PaymentIntent to the order; subscription invoices validate Customer, subscription, immutable configured Price version, exact amount/currency, paid state, billing reason, and PaymentIntent before granting the monthly or annual allowance.
+6. Refund/dispute events mark financial records and quarantine further credit spending for review.
+7. An actionable Radar early fraud warning resolves its Charge to a known local PaymentIntent, records the warning separately from refund/dispute state, and quarantines spending. Warnings for other integrations sharing the Stripe account are ignored after signature verification.
+8. Every actionable trigger for one PaymentIntent joins one review. An authenticated operator can clear a false positive or confirm a loss with a required idempotency key, identity, and note. Confirmed-loss recovery subtracts only available credits, records a ledger adjustment, and leaves spending blocked while any exposure remains.
+9. The 15-minute schedule evaluates aggregate failed/stale event and review counters, sends deduplicated alert/reminder/recovery email, and audits delivery without exposing customer data in the message.
+10. Account deletion checkpoints subscription cancellation and Customer deletion, atomically queues owned R2 keys before removing D1 identity state, and retains a deletion audit. Failed object cleanup is retried by maintenance.
 
-`BILLING_ENABLED` gates new Checkout creation, not settlement or cleanup. `BILLING_OPERATOR_TOKEN` independently protects the review queue and resolution routes. When Stripe credentials remain configured, signed webhooks continue to drain existing financial events and account deletion can still remove external customer state. These paths are locally regression-tested and restricted-key/signed-webhook smoke-tested, but remain blocked for public billing until operator-path deployment acceptance, reconciliation, monitoring, and legal evidence passes [Release Readiness](./RELEASE_READINESS.md).
+`BILLING_ENABLED` gates new Checkout creation, not settlement or cleanup. `BILLING_OPERATOR_TOKEN` independently protects the review queue, resolution routes, and idempotent external-alert test. When Stripe credentials remain configured, signed webhooks continue to drain existing financial events and account deletion can still remove external customer state. These paths are locally regression-tested and restricted-key/signed-webhook smoke-tested, but remain blocked for public billing until alert-delivery acceptance, reconciliation, and commercial/legal evidence pass [Release Readiness](./RELEASE_READINESS.md).
 
 ## Current Deployment Shape
 

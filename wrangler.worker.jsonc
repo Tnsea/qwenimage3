@@ -28,6 +28,11 @@
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
   },
+  "send_email": [
+    {
+      "name": "OPS_ALERT_EMAIL"
+    }
+  ],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist",
@@ -54,6 +59,7 @@
     "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
     "STRIPE_TIMEOUT_MS": "15000",
     "BILLING_ENABLED": "false",
+    "OPS_ALERT_FROM": "alerts@qwen-image-3.net",
     "GENERATION_PROVIDER": "local",
     "QWEN_MODEL_ID": "local-qwen-preview",
     "STRIPE_PRICE_STARTER_MONTHLY": "price_1TwMSWHyVvkt92TEJXyOtAjU",

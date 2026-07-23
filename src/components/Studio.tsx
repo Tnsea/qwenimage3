@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Plus, ReceiptText, Send, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
 import { api } from "../api";
+import { BILLING_TERMS_VERSION, billingPolicySummary } from "../billing-policy";
 import type {
   AccountSession,
   ApiKeyCreated,
@@ -102,6 +103,7 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [billingPeriod, setBillingPeriod] = useState<"month" | "year">("year");
+  const [billingTermsConfirmed, setBillingTermsConfirmed] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [studioLoading, setStudioLoading] = useState(true);
@@ -128,6 +130,7 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
     setApiRequests(requestPayload.requests);
     setAccountSessions(sessionPayload.sessions);
     setBilling(billingPayload);
+    setBillingTermsConfirmed(billingPayload.terms.accepted);
     setSupportTickets(supportPayload.tickets);
   }, [session.user]);
 
@@ -327,12 +330,43 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
   }
 
   async function startCheckout(offerId: string) {
+    if (!billingTermsConfirmed) {
+      setError("Review and accept the current Billing Terms and Refund Policy before purchasing.");
+      return;
+    }
     setBusyAction(offerId);
     setError("");
     try {
       const payload = await api<{ url: string }>("/api/billing/checkout", { method: "POST", body: JSON.stringify({ offerId }) });
       window.location.assign(payload.url);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not start checkout."); setBusyAction(""); }
+  }
+
+  async function setBillingTermsConsent(confirmed: boolean) {
+    if (!confirmed) {
+      setBillingTermsConfirmed(false);
+      return;
+    }
+    if (billing?.terms.accepted) {
+      setBillingTermsConfirmed(true);
+      return;
+    }
+    setBusyAction("billing-terms");
+    setError("");
+    try {
+      const terms = await api<BillingSummary["terms"]>("/api/billing/terms/accept", {
+        method: "POST",
+        body: JSON.stringify({ version: BILLING_TERMS_VERSION, confirmed: true }),
+      });
+      setBilling((current) => current ? { ...current, terms } : current);
+      setBillingTermsConfirmed(true);
+      setMessage("Billing Terms and Refund Policy accepted.");
+    } catch (reason) {
+      setBillingTermsConfirmed(false);
+      setError(reason instanceof Error ? reason.message : "Could not record billing policy acceptance.");
+    } finally {
+      setBusyAction("");
+    }
   }
 
   async function openBillingPortal() {
@@ -461,17 +495,47 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
     return <div className="studio-content">
       <header className="studio-heading"><div><span>Payments and plans</span><h1>Billing</h1><p>Stripe-hosted checkout, signed fulfillment, and self-service subscription management.</p></div>{billing?.account.hasCustomer && <button className="btn btn-outline" type="button" disabled={busyAction === "portal"} onClick={() => void openBillingPortal()}><CreditCard size={15} />Manage in Stripe</button>}</header>
       {billing?.account.spendingBlocked && <div role="alert" className="alert alert-error alert-soft billing-config-alert"><TriangleAlert size={19} /><div><strong>Credit spending is paused</strong><span>{billing.account.blockReason ?? "A refund or dispute needs billing review before more credits can be spent."}</span></div></div>}
-      {!billing?.configured && <div role="alert" className="alert alert-info alert-soft billing-config-alert"><ShieldCheck size={19} /><div><strong>Billing is safely disabled</strong><span>Approved Stripe Price IDs still need to be added before real purchases can start. No simulated payment buttons are shown.</span></div></div>}
+      {!billing?.configured && <div role="alert" className="alert alert-info alert-soft billing-config-alert"><ShieldCheck size={19} /><div><strong>Billing is safely disabled</strong><span>New purchases remain paused while release checks are completed. No simulated payment buttons are shown and no charge can start.</span></div></div>}
       <section className="studio-panel billing-plan-panel"><div><span className="settings-card-icon"><CreditCard size={18} /></span><div><span>Current plan</span><h2>{planTier}</h2><p>{billing?.account.plan === "creator" ? `${billing.account.billingInterval === "year" ? "Yearly" : "Monthly"} subscription status: ${billing.account.status.replaceAll("_", " ")}.` : "20 welcome credits, private history, projects, and API access."}</p></div></div><div><span className={`badge ${billing?.account.status === "active" ? "badge-success" : "badge-outline"}`}>{billing?.account.status ?? "inactive"}</span>{billing?.account.currentPeriodEnd && <small>{billing.account.cancelAtPeriodEnd ? "Ends" : "Renews"} {formatDate(billing.account.currentPeriodEnd)}</small>}</div></section>
+
+      <fieldset className="fieldset card card-border">
+        <legend className="fieldset-legend">Purchase confirmation</legend>
+        <div role="alert" className="alert alert-info alert-soft items-start" id="billing-policy-summary">
+          <ShieldCheck size={18} />
+          <div>
+            <strong>Automatic renewal and refund rules</strong>
+            <span>{billingPolicySummary[0]} {billingPolicySummary[1]}</span>
+            <span>{billingPolicySummary[3]}</span>
+          </div>
+        </div>
+        <label className="label cursor-pointer items-start gap-3">
+          <input
+            className="checkbox checkbox-sm"
+            type="checkbox"
+            checked={billingTermsConfirmed}
+            disabled={!billing || busyAction === "billing-terms"}
+            aria-describedby="billing-policy-summary"
+            onChange={(event) => void setBillingTermsConsent(event.target.checked)}
+          />
+          <span>
+            I have read and agree to the current <a className="link" href="/terms">Billing Terms</a> and{" "}
+            <a className="link" href="/refund-policy">Refund Policy</a>, including automatic renewal and credit recovery after refunds or disputes.
+          </span>
+        </label>
+        <p className="label">
+          Version {billing?.terms.version ?? BILLING_TERMS_VERSION}
+          {billing?.terms.acceptedAt ? ` accepted ${formatDate(billing.terms.acceptedAt)}` : " must be accepted before Checkout."}
+        </p>
+      </fieldset>
 
       <section className="billing-choice-section">
         <div className="studio-panel-heading billing-choice-heading"><div><span>Subscriptions</span><h2>Choose recurring capacity</h2><p>Yearly plans are selected by default and issue the full annual allowance after payment.</p></div><div role="tablist" className="tabs tabs-box billing-cycle-tabs" aria-label="Studio billing period"><button role="tab" type="button" className={`tab ${billingPeriod === "month" ? "tab-active" : ""}`} aria-selected={billingPeriod === "month"} onClick={() => setBillingPeriod("month")}>Monthly</button><button role="tab" type="button" className={`tab ${billingPeriod === "year" ? "tab-active" : ""}`} aria-selected={billingPeriod === "year"} onClick={() => setBillingPeriod("year")}>Yearly <span className="badge badge-sm">Save 2 months</span></button></div></div>
-        <div className="billing-offers">{subscriptionOffers.map((offer) => <article className={`card card-border billing-offer ${offer.planTier === "creator" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.planTier === "creator" ? "Most popular" : offer.planTier === "professional" ? "Best unit price" : "Starter plan"}</span><h2 className="card-title">{offer.name.replace(` ${billingPeriod === "year" ? "yearly" : "monthly"}`, "")}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? `Choose ${offer.planTier}` : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
+        <div className="billing-offers">{subscriptionOffers.map((offer) => <article className={`card card-border billing-offer ${offer.planTier === "creator" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.planTier === "creator" ? "Most popular" : offer.planTier === "professional" ? "Best unit price" : "Starter plan"}</span><h2 className="card-title">{offer.name.replace(` ${billingPeriod === "year" ? "yearly" : "monthly"}`, "")}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || !billingTermsConfirmed || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? `Choose ${offer.planTier}` : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
       </section>
 
       <section className="billing-choice-section">
         <div className="studio-panel-heading"><div><span>One-time credits</span><h2>Top up without a subscription</h2><p>Credit packs do not renew and remain available until used.</p></div></div>
-        <div className="billing-offers">{creditPacks.map((offer) => <article className={`card card-border billing-offer ${offer.id === "credits_3000" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.id === "credits_3000" ? "Best one-time value" : "One-time pack"}</span><h2 className="card-title">{offer.name}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? "Buy credit pack" : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
+        <div className="billing-offers">{creditPacks.map((offer) => <article className={`card card-border billing-offer ${offer.id === "credits_3000" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.id === "credits_3000" ? "Best one-time value" : "One-time pack"}</span><h2 className="card-title">{offer.name}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || !billingTermsConfirmed || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? "Buy credit pack" : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
       </section>
 
       <section className="studio-panel"><div className="studio-panel-heading"><div><span>Reconciled purchases</span><h2>Billing history</h2></div></div>{billing && billing.orders.length > 0 ? <div className="overflow-x-auto"><table className="table billing-table"><thead><tr><th>Offer</th><th>Type</th><th>Credits</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{billing.orders.map((order) => <tr key={order.id}><td>{order.offerId.replaceAll("_", " ")}</td><td>{order.kind}</td><td>{order.credits}</td><td>{formatCurrency(order.amountCents, order.currency)}</td><td><span className={`badge badge-outline ${order.financialStatus !== "normal" ? "badge-error" : order.status === "paid" ? "badge-success" : ""}`}>{order.financialStatus === "normal" ? order.status : order.financialStatus}</span></td><td>{formatDate(order.completedAt ?? order.createdAt)}</td></tr>)}</tbody></table></div> : <div className="studio-empty billing-empty"><CreditCard /><h3>No purchases yet</h3><p>Completed Stripe checkouts appear here after a signed webhook is reconciled.</p></div>}</section>

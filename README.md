@@ -11,18 +11,18 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 | Area | Current status |
 |---|---|
 | Public UI | English homepage, sticky navigation, responsive generator, Examples, Prompts, Models, Pricing, Guides, and API pages |
-| Search discovery | Homepage content is prerendered into the initial HTML; canonical, social metadata, JSON-LD, robots.txt, and sitemap.xml are emitted with the web build |
+| Search discovery | Homepage content is prerendered into the initial HTML; the Worker emits self-referencing canonical and `og:url` metadata for every public sitemap route, while JSON-LD, robots.txt, and sitemap.xml ship with the web build |
 | Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
 | Accounts | Email/password registration and login, one-time email verification, password recovery, session management, export, and fail-safe account deletion that cleans Stripe first when linked |
 | Social login | Google and GitHub authorization-code adapters with browser-bound state and PKCE; Google completed one real acceptance sign-in and its OAuth publishing status is Production, while GitHub remains unverified |
 | Studio | Login-directed responsive workspace with aggregate overview, creation, projects, history, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings |
 | Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
 | Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
-| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, and external cleanup before account deletion |
+| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, versioned policy acceptance, scheduled external-alert delivery, and external cleanup before account deletion |
 | Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio adapter for `qwen-image-2.0-pro` |
 | Storage | D1 records and private R2 generation assets in both Wrangler development and the Cloudflare acceptance runtime |
 
-The application does **not** currently provide a durable asynchronous generation queue, approved retention/backup lifecycle, production monitoring/alerting, verified Qwen Image 3 integration, or externally accepted public billing.
+The application does **not** currently provide a durable asynchronous generation queue, approved retention/backup lifecycle, complete production monitoring, verified Qwen Image 3 integration, or externally accepted public billing. Billing-health email alerting and customer policy acceptance are implemented and locally verified, but remain pending external delivery and owner-copy acceptance.
 
 ## Local Quick Start
 
@@ -124,7 +124,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Stripe
 
-Stripe is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance environment. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewal success, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and the authenticated risk-resolution workflow. Checkout exposes only synchronous `card` and `link`; delayed methods are not enabled. The accepted risk policy freezes spending, consolidates Stripe evidence per PaymentIntent, and uses an authenticated, idempotent operator decision path that never creates a negative credit balance. Public billing remains blocked on external alert routing and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
+Stripe is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance environment. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewal success, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and the authenticated risk-resolution workflow. Checkout exposes only synchronous `card` and `link`; delayed methods are not enabled. The accepted risk policy freezes spending, consolidates Stripe evidence per PaymentIntent, and uses an authenticated, idempotent operator decision path that never creates a negative credit balance. The current source also requires server-recorded acceptance of the versioned Billing Terms and Refund Policy before Checkout and includes a 15-minute aggregate email-alert path with deduplication, reminders, recovery, and an idempotent operator delivery test. Public billing remains blocked until the real alert email and customer copy are accepted in [Release Readiness](./docs/RELEASE_READINESS.md).
 
 The configured offer contract is:
 

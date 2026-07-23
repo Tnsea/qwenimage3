@@ -21,7 +21,10 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Implemented model contract | Other values are rejected until a separate adapter and release gate are reviewed |
 | `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
 | `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
-| `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases | Managed secret of at least 32 characters; grants access only to `/api/operator/billing/reviews*` |
+| `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases; send an alert-delivery acceptance test | Managed secret of at least 32 characters; grants access only to `/api/operator/*` |
+| `OPS_ALERT_EMAIL` | Empty | Cloudflare Email Routing Worker binding for operational alerts | Checked-in binding name only; requires Email Routing and a verified destination before deployment |
+| `OPS_ALERT_TO` | Empty | External destination for billing-health alerts | Managed secret containing one verified Email Routing destination |
+| `OPS_ALERT_FROM` | `alerts@qwen-image-3.net` | Sender for billing-health alerts | Non-secret address on the configured Email Routing domain |
 | `STRIPE_TIMEOUT_MS` | `15000` | Stripe API calls | Minimum effective value is one second |
 | `STRIPE_SECRET_KEY` | Empty | Stripe API, Portal, and external cleanup | Use a restricted managed key; never commit it |
 | `STRIPE_WEBHOOK_SECRET` | Empty | Billing webhook | Rotate and store as a managed secret |
@@ -35,7 +38,7 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `STRIPE_PRICE_CREDITS_1200` | Live Price ID configured | USD 30 one time, 1,200 credits | Match the D1 version exactly |
 | `STRIPE_PRICE_CREDITS_3000` | Live Price ID configured | USD 60 one time, 3,000 credits | Match the D1 version exactly |
 
-`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, the billing operator token, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables.
+`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, the billing operator token, `OPS_ALERT_TO`, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables and the `OPS_ALERT_EMAIL` binding name.
 
 The dedicated Live webhook destination is `https://qwen-image-3.net/api/billing/webhook`. It subscribes only to the Checkout, invoice, subscription, reversal, dispute, and `radar.early_fraud_warning.created` events handled by the Worker. The restricted runtime key needs read-only `Charges and Refunds` access so a Radar warning's Charge can be resolved to its PaymentIntent; it must not receive product/Price administration access after catalog setup.
 
@@ -214,6 +217,36 @@ Decision rules:
 - Every trigger and decision remains in `billing_review_events` and `billing_review_actions`. Never bypass the operation by directly editing `credit_accounts`, `billing_accounts`, or `credit_ledger`.
 
 Before unblocking a dispute, verify the Stripe dispute outcome and supporting evidence. Before confirming a refund loss, verify the refund amount and that the PaymentIntent belongs to the local payment. Escalate legal threats, suspected account takeover, or ambiguous partial-refund cases instead of guessing.
+
+## External Billing Alerts
+
+The 15-minute Worker schedule evaluates four aggregate conditions without putting customer identity or payment details into email:
+
+- failed Stripe webhook events;
+- Stripe events left in `processing` for more than 15 minutes;
+- open refund, dispute, or actionable Radar reviews;
+- confirmed payment losses with unrecovered credits.
+
+The first degraded observation sends an action-required email. A changed incident fingerprint or six elapsed hours sends a reminder. Returning all counters to zero sends one recovery email. Every attempt is audited in D1, while the health endpoint reports only aggregate configuration, state, and delivery error status.
+
+Enable Cloudflare Email Routing for `qwen-image-3.net`, verify the intended destination, and then provision the destination and operator credentials as managed secrets:
+
+```bash
+npx wrangler secret put OPS_ALERT_TO --config wrangler.worker.jsonc
+npx wrangler secret put BILLING_OPERATOR_TOKEN --config wrangler.worker.jsonc
+```
+
+After the reviewed revision is deployed, send one idempotent delivery test. Repeating the same key returns the recorded result without sending another email:
+
+```bash
+curl -fsS -X POST \
+  'https://qwen-image-3.net/api/operator/alerts/test' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN" \
+  -H 'X-Operator-Id: acceptance@example.com' \
+  -H 'Idempotency-Key: alert-acceptance-YYYYMMDD'
+```
+
+Verify the recipient mailbox, the `operational_alert_deliveries` audit row, and `/api/health`. A successful local binding mock is not external acceptance. Do not enable `BILLING_ENABLED` until a real test email is received and the customer-facing policy approval is recorded.
 
 ## Legacy Container
 
