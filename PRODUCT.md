@@ -51,9 +51,9 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
 | Welcome credits | **Implemented locally** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | External redeploy and reconciliation monitoring |
-| Credits | **Verified locally** for generation reserve/settle/refund and non-negative billing-loss recovery | Reconciliation monitoring and external operator acceptance |
+| Credits | **Verified locally and in the isolated Sandbox** for generation reserve/settle/refund and non-negative billing-loss recovery | Reconciliation monitoring and external alerting |
 | Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
-| Stripe adapter | **Implemented, locally verified, and partially accepted in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Operator-resolution deployment acceptance, reconciliation monitoring, external alerting, and legal/commercial approval |
+| Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Reconciliation monitoring, external alerting, and legal/commercial approval |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
 | Content library | **Prototype**: twelve prompt records, eight unique example cards, and eleven homepage FAQs | 60/80-item editorial inventory and content review workflow |
@@ -192,7 +192,7 @@ Implemented adapter flow:
 11. All actionable triggers for one PaymentIntent are consolidated into one review. A cleared false positive restores access; a confirmed loss reclaims at most currently available credits, never creates a negative balance, and keeps the account blocked while loss remains.
 12. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, and account-deletion races. The approved risk-resolution policy and authenticated operator path are locally implemented; [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on deploying and accepting that path, external alert routing, and commercial/legal evidence.
+Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on external alert routing and commercial/legal evidence.
 
 ### 5.6 Developer API
 
@@ -320,7 +320,7 @@ The current production bundle passes the JavaScript size target locally. No publ
 
 ### Release-blocking work
 
-- Deploy and accept the authenticated refund/dispute/Radar resolution path, then connect billing event and review health to external monitoring.
+- Connect billing event and review health to external monitoring.
 - Prove account retention against backup deletion and production telemetry.
 - Review and merge the current hardening branch, then deploy from the reviewed immutable revision.
 - Complete real provider, email, GitHub OAuth, and Google denial/failure acceptance.
