@@ -222,7 +222,7 @@ test("maintenance is repeatable and drains stranded settlements and R2 cleanup o
   }
 });
 
-test("Worker Stripe webhook replay grants a paid credit pack exactly once", async () => {
+test("Worker asynchronous Checkout replay grants a paid credit pack exactly once", async () => {
   const { miniflare, database } = await createDatabase();
   try {
     const timestamp = new Date().toISOString();
@@ -234,8 +234,8 @@ test("Worker Stripe webhook replay grants a paid credit pack exactly once", asyn
       .bind(timestamp)
       .run();
     const event = {
-      id: "evt_worker_replay",
-      type: "checkout.session.completed",
+      id: "evt_worker_async_replay",
+      type: "checkout.session.async_payment_succeeded",
       data: {
         object: {
           id: "cs_worker_replay",
@@ -602,6 +602,44 @@ test("account deletion tolerates already-missing Stripe objects and tombstones l
     assert.equal(events?.count, 4);
   } finally {
     globalThis.fetch = originalFetch;
+    await miniflare.dispose();
+  }
+});
+
+test("health degrades when a Stripe event needs operator attention", async () => {
+  const { miniflare, database } = await createDatabase();
+  try {
+    const timestamp = new Date().toISOString();
+    await database.prepare(`INSERT INTO billing_events
+      (stripe_event_id, type, status, attempts, payload_json, last_error,
+        processing_started_at, updated_at)
+      VALUES ('evt_health_failed', 'invoice.payment_failed', 'failed', 3, '{}',
+        'Acceptance failure', ?, ?)`)
+      .bind(timestamp, timestamp)
+      .run();
+    const response = await worker.fetch(new Request("https://qwen-image-3.net/api/health"), {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      DB: database,
+      ASSETS_BUCKET: { delete: async () => undefined },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    } as never, { passThroughOnException() {}, waitUntil() {} } as never);
+    assert.equal(response.status, 200);
+    const health = await response.json() as {
+      status: string;
+      billing: {
+        eventHealth: { healthy: boolean; failedEvents: number; staleEvents: number };
+      };
+    };
+    assert.equal(health.status, "degraded");
+    assert.deepEqual(health.billing.eventHealth, {
+      healthy: false,
+      failedEvents: 1,
+      staleEvents: 0,
+    });
+  } finally {
     await miniflare.dispose();
   }
 });

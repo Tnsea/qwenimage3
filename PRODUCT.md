@@ -191,7 +191,7 @@ Implemented adapter flow:
 10. Actionable Radar early fraud warnings resolve to a known local PaymentIntent, create a separate risk record, and pause credit spending without being treated as a refund or dispute.
 11. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted a current-catalog credit pack, Starter monthly/yearly subscriptions, first invoices, Portal scheduled cancellation, refund, dispute, and Radar warning; [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the remaining asynchronous/renewal/deletion and Creator/Professional cases, policy, monitoring, and commercial/legal evidence.
+Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, and account-deletion races. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the approved clawback/risk-resolution policy, external alert routing, and commercial/legal evidence.
 
 ### 5.6 Developer API
 
@@ -319,10 +319,10 @@ The current production bundle passes the JavaScript size target locally. No publ
 
 ### Release-blocking work
 
-- Complete Stripe test-mode lifecycle acceptance, approved refund/dispute policy, and reconciliation monitoring.
+- Approve the refund/dispute/risk-resolution policy and connect the verified billing health signal to external monitoring.
 - Prove account retention against backup deletion and production telemetry.
 - Review and merge the current hardening branch, then deploy from the reviewed immutable revision.
-- Complete real provider, email, GitHub OAuth, Google denial/failure, and remaining Stripe test-mode acceptance.
+- Complete real provider, email, GitHub OAuth, and Google denial/failure acceptance.
 - Complete accessibility, browser, mobile, security, and container acceptance.
 - Approve legal, privacy, commercial-use, pricing, tax, and launch-region decisions.
 
@@ -379,11 +379,11 @@ Closed decisions:
 
 ### Required before public billing
 
-- [ ] Account deletion safely cancels or deliberately transfers every external subscription before local identity removal.
-- [ ] Webhook processing is recoverable when local order/account state is missing or events arrive out of order.
-- [ ] Invoice grants validate customer, subscription, expected Price, amount, currency, and billing reason.
-- [ ] Refunds, disputes, asynchronous payment failure, and reconciliation are tested.
-- [ ] Stripe test-mode checkout, webhook replay, Customer Portal, cancellation, and deletion pass end to end.
+- [x] Account deletion cancels external subscriptions/customers first and passed active, trialing, past-due, already-canceled, cancel-at-period-end, and late-webhook Sandbox cases.
+- [x] Webhook processing recovers missing orders, out-of-order financial events, failed renewals, and deleted-account races.
+- [x] Invoice grants validate customer, subscription, expected Price, amount, currency, and billing reason for every configured monthly/yearly offer.
+- [x] Refunds, disputes, Radar, synchronous payment failure, payment recovery, and a seven-check D1 reconciliation passed. Delayed payment methods are disabled; asynchronous success retains signed-event coverage.
+- [x] Stripe Sandbox Checkout, webhook replay, Customer Portal, renewal, cancellation, and deletion pass end to end.
 - [ ] Terms, taxes, renewal, refund, and expiry copy is approved and visible before purchase.
 
 ### Required before production deployment

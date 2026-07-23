@@ -75,7 +75,7 @@ Expected local health characteristics:
 - Stripe `configured: false` without the required credentials and one active database Price version per offer;
 - `database: cloudflare-d1`, `objectStorage: cloudflare-r2`, a revision label, and maintenance freshness.
 
-The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request or billing reconciliation probe.
+The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request. Its `billing.eventHealth` object reports failed and stale webhook counts and changes the overall status to `degraded` when either count is non-zero. It does not replace Stripe-to-D1 financial reconciliation.
 
 HTML responses use `Cache-Control: public, max-age=0, must-revalidate, no-transform`. The `no-transform` directive prevents Cloudflare zone-level Web Analytics from injecting an unreviewed beacon into the application shell; the strict CSP remains an independent fail-closed control.
 
@@ -117,7 +117,7 @@ curl -fsS -c cookies.txt -b cookies.txt https://qwen-image-3.net/api/catalog
 curl -fsSI https://www.qwen-image-3.net/pricing
 ```
 
-Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`provider`/`available`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance created a guest generation on the previous guest-enabled revision, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. That result is historical only; the current revision requires an account and needs a fresh post-deploy smoke test. Stripe Sandbox acceptance created and expired an API-only Checkout Session, deleted that temporary Customer, delivered a signed no-op subscription update through the canonical webhook, and confirmed idempotent replay. A separate application-created USD 7/100-credit Checkout then completed with Stripe's test card: the Stripe-origin `checkout.session.completed` event completed once in D1, the order and payment became paid, and one ledger row granted exactly 100 credits. New Checkout was disabled again before the payment was submitted.
+Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, zero failed/stale billing events, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`provider`/`available`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance created a guest generation on the previous guest-enabled revision, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. That result is historical only; the current revision requires an account and needs a fresh post-deploy smoke test. Stripe Sandbox acceptance completed all configured monthly/yearly offers, credit-pack fulfillment, renewal success, renewal failure and recovery, Portal cancellation, terminal cancellation, refund, dispute, Radar, missing-order reconstruction, and active/trialing/past-due/already-canceled/cancel-at-period-end account deletion. Checkout currently advertises only synchronous `card` and `link`; delayed methods require a new acceptance pass before enablement.
 
 Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. OAuth callbacks are `/api/auth/oauth/google/callback` and `/api/auth/oauth/github/callback` under `APP_BASE_URL`. `BILLING_ENABLED=false` blocks new Checkout while allowing configured signed webhooks and Stripe-side account cleanup to finish. Enabling new purchases requires updating that switch and redeploying only after test-mode acceptance passes.
 
@@ -246,7 +246,7 @@ Restore must target a separate D1 database first, run consistency and applicatio
 
 - Keep `BILLING_ENABLED=false` in any public environment until every public-billing acceptance gate is closed.
 - Use the dedicated restricted Sandbox key for the application. Stripe's default Sandbox standard secret was rotated after setup and is not an application dependency.
-- Test signed delivery, out-of-order events, missing local records, replay, refunds, disputes, asynchronous payment, subscription updates, cancellation, account deletion, and reconciliation.
+- Test signed delivery, out-of-order events, missing local records, replay, refunds, disputes, subscription updates, cancellation, account deletion, and reconciliation. If delayed payment methods are enabled later, add real asynchronous success and failure acceptance before deployment.
 - The Worker validates the subscription Customer, stored subscription, immutable Price version, exact amount/currency, paid state, allowed billing reason, and PaymentIntent; test-mode must prove every current offer contract against real Stripe payloads.
 - Confirm external subscription state before deleting local identity data.
 
@@ -285,13 +285,14 @@ Required before external beta:
 
 ## Monitoring and Incidents
 
-Current logging is Cloudflare invocation output plus request IDs. Every `/v1/generations` attempt is recorded with status, duration, and request ID; valid keys also retain user/key association. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, and failed object cleanup in `r2_deletion_queue`. No production metrics, traces, dashboards, reconciliation alarms, or on-call alerts are configured.
+Current logging is Cloudflare invocation output plus request IDs. Every `/v1/generations` attempt is recorded with status, duration, and request ID; valid keys also retain user/key association. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, deleted PaymentIntent evidence in `billing_deleted_payment_tombstones`, and failed object cleanup in `r2_deletion_queue`. `/api/health` exposes aggregate failed/stale Stripe-event counts without customer data. No external production metrics, traces, dashboard, or on-call destination is configured.
 
 Production acceptance requires at minimum:
 
 - request rate, latency, and error code dashboards;
 - generation success, timeout, moderation, and stranded-reservation alerts;
-- credit and Stripe reconciliation alarms;
+- poll `/api/health` and alert when `status != "ok"` or `billing.eventHealth.healthy != true`;
+- credit and Stripe reconciliation alarms beyond the aggregate event-health signal;
 - D1 capacity, R2 cleanup backlog, backup, and restore monitoring;
 - provider health and cost alerts;
 - deploy revision and rollback marker.

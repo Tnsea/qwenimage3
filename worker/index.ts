@@ -1311,13 +1311,22 @@ app.get("/api/health", async (c) => {
   const maintenance = await c.env.DB.prepare(`SELECT status, started_at, completed_at
     FROM maintenance_runs ORDER BY started_at DESC LIMIT 1`)
     .first<{ status: string; started_at: string; completed_at: string | null }>();
+  const billingEventHealth = await c.env.DB.prepare(`SELECT
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_events,
+      SUM(CASE WHEN status = 'processing' AND processing_started_at < ? THEN 1 ELSE 0 END) AS stale_events
+    FROM billing_events`)
+    .bind(new Date(Date.now() - 15 * 60 * 1000).toISOString())
+    .first<{ failed_events: number | null; stale_events: number | null }>();
+  const failedBillingEvents = Number(billingEventHealth?.failed_events || 0);
+  const staleBillingEvents = Number(billingEventHealth?.stale_events || 0);
+  const billingEventsHealthy = failedBillingEvents === 0 && staleBillingEvents === 0;
   const oauth = oauthMethods(c.env);
   const maintenanceCompletedAt = maintenance?.completed_at ? Date.parse(maintenance.completed_at) : Number.NaN;
   const maintenanceAgeSeconds = Number.isFinite(maintenanceCompletedAt)
     ? Math.max(0, Math.floor((Date.now() - maintenanceCompletedAt) / 1000))
     : null;
   return c.json({
-    status: providerConfigured ? "ok" : "degraded",
+    status: providerConfigured && billingEventsHealthy ? "ok" : "degraded",
     runtime: "cloudflare-worker",
     revision: c.env.CF_VERSION_METADATA?.id || c.env.DEPLOY_REVISION || "unversioned",
     database: "cloudflare-d1",
@@ -1350,6 +1359,11 @@ app.get("/api/health", async (c) => {
       credentialsConfigured: billingCredentialsConfigured(c.env),
       webhookConfigured: stripeWebhookConfigured(c.env),
       priceCatalogConfigured,
+      eventHealth: {
+        healthy: billingEventsHealthy,
+        failedEvents: failedBillingEvents,
+        staleEvents: staleBillingEvents,
+      },
     },
     credits: "d1-ledger",
   });
