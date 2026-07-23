@@ -6,8 +6,11 @@ export const PUBLIC_INDEXABLE_PATHS = [
   "/prompts",
   "/models",
   "/pricing",
+  "/privacy",
   "/terms",
   "/refund-policy",
+  "/status",
+  "/support",
   "/guides",
   "/api",
 ] as const;

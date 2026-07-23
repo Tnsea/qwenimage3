@@ -9,6 +9,7 @@
 @import "./styles/creation-workspace.css";
 @import "./styles/decision-sections.css";
 @import "./styles/site-footer.css";
+@import "./styles/trust-pages.css";
 
 @plugin "daisyui" {
   themes: qwen --default, qwen-light;

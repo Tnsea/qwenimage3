@@ -19,7 +19,96 @@ interface NavigateProps {
   onRegister?: () => void;
 }
 
-export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: { catalog: Catalog } & NavigateProps) {
+type BillingPeriod = "monthly" | "yearly";
+
+const formatUsd = (amountCents: number, minimumFractionDigits = 0) => new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits,
+  maximumFractionDigits: 2,
+}).format(amountCents / 100);
+
+function PricingPlanGrid({
+  catalog,
+  billingPeriod,
+  billingNoteId,
+  disableUnavailable,
+  onAction,
+}: {
+  catalog: Catalog;
+  billingPeriod: BillingPeriod;
+  billingNoteId: string;
+  disableUnavailable: boolean;
+  onAction: (planId: Catalog["plans"][number]["id"]) => void;
+}) {
+  const isYearly = billingPeriod === "yearly";
+
+  return (
+    <div className="pricing-plan-grid" data-billing-period={billingPeriod}>
+      {catalog.plans.map((plan) => {
+        const amountCents = isYearly ? plan.yearlyAmountCents : plan.monthlyAmountCents;
+        const credits = isYearly ? plan.yearlyCredits : plan.monthlyCredits;
+        const standardImages = credits / 4;
+        const configured = isYearly ? plan.yearlyConfigured : plan.monthlyConfigured;
+        const effectiveMonthly = isYearly ? plan.yearlyAmountCents / 12 : plan.monthlyAmountCents;
+        const costPerCredit = amountCents / credits / 100;
+        const actionDisabled = disableUnavailable && !configured;
+
+        return (
+          <article
+            className={`card pricing-plan-card pricing-plan-card-${plan.id} ${plan.recommended ? "is-recommended" : ""} ${configured ? "" : "is-unavailable"}`}
+            key={plan.id}
+          >
+            {plan.recommended && <span className="badge pricing-popular-badge">Most popular</span>}
+            {plan.valuePick && <span className="badge badge-outline pricing-value-badge">Best unit price</span>}
+            <div className="card-body">
+              <div className="pricing-plan-card-header">
+                <span className="plan-eyebrow">
+                  {plan.id === "starter" ? "For getting started" : plan.id === "creator" ? <><Crown size={14} /> For creators</> : "For production"}
+                </span>
+                <h2>{plan.name}</h2>
+                <p>{plan.description}</p>
+              </div>
+              <div className="pricing-price-block" aria-live="polite">
+                <strong>{formatUsd(amountCents, amountCents % 100 === 0 ? 0 : 2)}</strong>
+                <span>/ {isYearly ? "year" : "month"}</span>
+              </div>
+              <small className="pricing-price-support">
+                {isYearly
+                  ? `${formatUsd(effectiveMonthly, 2)} monthly equivalent · billed yearly`
+                  : "Billed monthly · manage or cancel through Stripe"}
+              </small>
+              <div className="pricing-capacity-summary">
+                <strong>{credits.toLocaleString("en-US")} credits</strong>
+                <span>Up to {standardImages.toLocaleString("en-US")} Standard images {isYearly ? "per year" : "per month"}</span>
+                <small>${costPerCredit.toFixed(3)} per credit</small>
+              </div>
+              <button
+                className={`btn pricing-plan-action ${plan.recommended ? "plan-primary-action" : "btn-outline"}`}
+                type="button"
+                disabled={actionDisabled}
+                aria-describedby={billingNoteId}
+                onClick={() => onAction(plan.id)}
+              >
+                {disableUnavailable
+                  ? configured ? `Choose ${plan.name}` : "Checkout not enabled"
+                  : `View ${plan.name}`}
+                {!actionDisabled && <ArrowRight size={14} />}
+              </button>
+              <div className="pricing-feature-heading">Included</div>
+              <ul className="plan-feature-list">
+                {plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}
+              </ul>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Catalog } & NavigateProps) {
+  const [homeBillingPeriod, setHomeBillingPeriod] = useState<BillingPeriod>("yearly");
   const faqs = [
     ["account-access", "Can I generate without signing in?", "No. Image generation requires an account so every request is charged against a server-authoritative credit balance."],
     ["starter-credits", "Do new accounts receive starter credits?", "Yes. A new account receives 20 welcome credits once—enough for five Standard images. Generation requires signing in."],
@@ -34,9 +123,6 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: {
     ["api-audit", "Can I audit API use?", "Yes. Scoped API keys and recent request status, latency, and request IDs are available inside Studio."],
     ["independent-product", "Is this an official Qwen product?", "No. This is an independent third-party product and is not affiliated with or endorsed by Alibaba or the Qwen team."],
   ];
-  const starterPlan = catalog.plans.find((plan) => plan.id === "starter");
-  const creatorPlan = catalog.plans.find((plan) => plan.id === "creator");
-  const creatorAvailable = Boolean(creatorPlan?.monthlyConfigured || creatorPlan?.yearlyConfigured);
 
   return (
     <>
@@ -206,43 +292,46 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt, onRegister }: {
         <div className="pricing-preview-header">
           <div>
             <div className="section-kicker">Account-based pricing</div>
-            <h2>Start small, then scale with clear image capacity.</h2>
-            <p>Every account receives 20 welcome credits. Paid plans begin at 500 credits per month.</p>
+            <h2>Three plans, one clear image allowance.</h2>
+            <p>Compare the current Starter, Creator, and Professional plans. Every new account receives 20 welcome credits before any purchase.</p>
           </div>
           <button className="btn btn-ghost" type="button" onClick={() => onNavigate("/pricing")}>See full pricing <ArrowRight size={15} /></button>
         </div>
-        <div className="plan-decision-grid">
-          <article className="card plan-decision plan-decision-primary">
-            <div className="card-body">
-              <div className="plan-decision-top">
-                <span className="plan-eyebrow">Entry subscription</span>
-                <span className="plan-price">{starterPlan?.price ?? "$9.90 / month"}</span>
-              </div>
-              <h3>{starterPlan?.name ?? "Starter"}</h3>
-              <p>{starterPlan?.description ?? "A practical entry plan for an account-based image workflow."}</p>
-              <ul className="plan-feature-list">{(starterPlan?.features ?? []).slice(0, 4).map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>
-              <div className="plan-actions">
-                <button className="btn plan-primary-action" type="button" onClick={() => onNavigate("/pricing")}>Compare plans <ArrowRight size={15} /></button>
-              </div>
-              <small className="plan-footnote">20 welcome credits after sign-in · Five Standard images</small>
-            </div>
-          </article>
-
-          <article className={`card plan-decision plan-decision-secondary ${creatorAvailable ? "" : "is-unavailable"}`}>
-            <div className="card-body">
-              <div className="plan-decision-top">
-                <span className="plan-eyebrow">For frequent creation</span>
-                <span className={`plan-status ${creatorAvailable ? "is-available" : ""}`}>{creatorAvailable ? "Available" : "Not available yet"}</span>
-              </div>
-              <h3>{creatorPlan?.name ?? "Creator"}</h3>
-              <p>{creatorPlan?.description ?? "Priority generation with clean original exports."}</p>
-              <ul className="plan-feature-list">{(creatorPlan?.features ?? []).slice(0, 4).map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>
-              {creatorAvailable
-                ? <button className="btn plan-primary-action" type="button" onClick={() => onRegister?.()}>Choose Creator <ArrowRight size={15} /></button>
-                : <div className="plan-availability" role="status">Paid checkout is not enabled in this environment.</div>}
-            </div>
-          </article>
+        <div className="pricing-cycle-row pricing-preview-cycle">
+          <div role="tablist" className="tabs tabs-box pricing-cycle-tabs" aria-label="Homepage billing period">
+            <button
+              role="tab"
+              type="button"
+              className={`tab ${homeBillingPeriod === "monthly" ? "tab-active" : ""}`}
+              aria-selected={homeBillingPeriod === "monthly"}
+              onClick={() => setHomeBillingPeriod("monthly")}
+            >
+              Monthly
+            </button>
+            <button
+              role="tab"
+              type="button"
+              className={`tab ${homeBillingPeriod === "yearly" ? "tab-active" : ""}`}
+              aria-selected={homeBillingPeriod === "yearly"}
+              onClick={() => setHomeBillingPeriod("yearly")}
+            >
+              Yearly
+              <span className="badge badge-sm">Save 2 months</span>
+            </button>
+          </div>
+          <p id="pricing-preview-billing-note">
+            {homeBillingPeriod === "yearly"
+              ? "Yearly pricing is shown. The full annual credit allowance is issued after payment."
+              : "Monthly credits are issued after each successful monthly invoice."}
+          </p>
         </div>
+        <PricingPlanGrid
+          catalog={catalog}
+          billingPeriod={homeBillingPeriod}
+          billingNoteId="pricing-preview-billing-note"
+          disableUnavailable={false}
+          onAction={() => onNavigate("/pricing")}
+        />
       </section>
 
       <section className="marketing-section faq-section" id="faq">
@@ -364,14 +453,8 @@ export function ModelsPage({ catalog, onNavigate }: { catalog: Catalog; onNaviga
 
 export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegister: () => void }) {
   const [billingView, setBillingView] = useState<"plans" | "credits">("plans");
-  const [billingPeriod, setBillingPeriod] = useState<"monthly" | "yearly">("yearly");
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>("yearly");
   const isYearly = billingPeriod === "yearly";
-  const formatUsd = (amountCents: number, minimumFractionDigits = 0) => new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits,
-    maximumFractionDigits: 2,
-  }).format(amountCents / 100);
 
   return (
     <main className="content-page pricing-page">
@@ -414,62 +497,13 @@ export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegis
             </p>
           </div>
 
-          <div className="pricing-plan-grid" data-billing-period={billingPeriod}>
-            {catalog.plans.map((plan) => {
-              const amountCents = isYearly ? plan.yearlyAmountCents : plan.monthlyAmountCents;
-              const credits = isYearly ? plan.yearlyCredits : plan.monthlyCredits;
-              const standardImages = credits / 4;
-              const configured = isYearly ? plan.yearlyConfigured : plan.monthlyConfigured;
-              const effectiveMonthly = isYearly ? plan.yearlyAmountCents / 12 : plan.monthlyAmountCents;
-              const costPerCredit = amountCents / credits / 100;
-              return (
-                <article
-                  className={`card pricing-plan-card pricing-plan-card-${plan.id} ${plan.recommended ? "is-recommended" : ""} ${configured ? "" : "is-unavailable"}`}
-                  key={plan.id}
-                >
-                  {plan.recommended && <span className="badge pricing-popular-badge">Most popular</span>}
-                  {plan.valuePick && <span className="badge badge-outline pricing-value-badge">Best unit price</span>}
-                  <div className="card-body">
-                    <div className="pricing-plan-card-header">
-                      <span className="plan-eyebrow">
-                        {plan.id === "starter" ? "For getting started" : plan.id === "creator" ? <><Crown size={14} /> For creators</> : "For production"}
-                      </span>
-                      <h2>{plan.name}</h2>
-                      <p>{plan.description}</p>
-                    </div>
-                    <div className="pricing-price-block" aria-live="polite">
-                      <strong>{formatUsd(amountCents, amountCents % 100 === 0 ? 0 : 2)}</strong>
-                      <span>/ {isYearly ? "year" : "month"}</span>
-                    </div>
-                    <small className="pricing-price-support">
-                      {isYearly
-                        ? `${formatUsd(effectiveMonthly, 2)} monthly equivalent · billed yearly`
-                        : "Billed monthly · manage or cancel through Stripe"}
-                    </small>
-                    <div className="pricing-capacity-summary">
-                      <strong>{credits.toLocaleString("en-US")} credits</strong>
-                      <span>Up to {standardImages.toLocaleString("en-US")} Standard images {isYearly ? "per year" : "per month"}</span>
-                      <small>${costPerCredit.toFixed(3)} per credit</small>
-                    </div>
-                    <button
-                      className={`btn pricing-plan-action ${plan.recommended ? "plan-primary-action" : "btn-outline"}`}
-                      type="button"
-                      disabled={!configured}
-                      aria-describedby="billing-period-note"
-                      onClick={onRegister}
-                    >
-                      {configured ? `Choose ${plan.name}` : "Checkout not enabled"}
-                      {configured && <ArrowRight size={14} />}
-                    </button>
-                    <div className="pricing-feature-heading">Included</div>
-                    <ul className="plan-feature-list">
-                      {plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}
-                    </ul>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+          <PricingPlanGrid
+            catalog={catalog}
+            billingPeriod={billingPeriod}
+            billingNoteId="billing-period-note"
+            disableUnavailable
+            onAction={onRegister}
+          />
 
           <div className="pricing-trust-note">
             <ShieldCheck size={16} />

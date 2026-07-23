@@ -4,18 +4,27 @@ import test from "node:test";
 
 test("pricing defaults to yearly and exposes three account-based plans safely", () => {
   const marketing = readFileSync(new URL("../src/components/Marketing.tsx", import.meta.url), "utf8");
+  const homeSections = marketing.slice(marketing.indexOf("export function HomeSections"), marketing.indexOf("function PageIntro"));
   const pricingPage = marketing.slice(marketing.indexOf("export function PricingPage"), marketing.indexOf("export function GuidesPage"));
 
-  assert.match(pricingPage, /useState<"monthly" \| "yearly">\("yearly"\)/);
+  assert.match(marketing, /function PricingPlanGrid/);
+  assert.match(marketing, /catalog\.plans\.map/);
+  assert.match(marketing, /disabled=\{actionDisabled\}/);
+  assert.match(marketing, /Checkout not enabled/);
+  assert.match(homeSections, /useState<BillingPeriod>\("yearly"\)/);
+  assert.match(homeSections, /aria-label="Homepage billing period"/);
+  assert.match(homeSections, /<PricingPlanGrid/);
+  assert.match(homeSections, /Three plans, one clear image allowance\./);
+  assert.doesNotMatch(homeSections, /starterPlan|creatorPlan|plan-decision-grid/);
+  assert.match(pricingPage, /useState<BillingPeriod>\("yearly"\)/);
   assert.match(pricingPage, /aria-label="Billing period"/);
   assert.match(pricingPage, /Save 2 months/);
-  assert.match(pricingPage, /data-billing-period=\{billingPeriod\}/);
-  assert.match(pricingPage, /catalog\.plans\.map/);
-  assert.match(pricingPage, /disabled=\{!configured\}/);
+  assert.match(pricingPage, /billingPeriod=\{billingPeriod\}/);
+  assert.match(pricingPage, /disableUnavailable/);
   assert.match(pricingPage, /full annual credit allowance is issued after the yearly invoice is paid/);
   assert.match(pricingPage, /Standard uses 4 credits, High uses 8, and Ultra uses 16/);
-  assert.match(pricingPage, /Most popular/);
-  assert.match(pricingPage, /Best unit price/);
+  assert.match(marketing, /Most popular/);
+  assert.match(marketing, /Best unit price/);
   assert.doesNotMatch(pricingPage, /Generate as guest|No account needed|Everything in Guest/);
   assert.match(pricingPage, /20 welcome credits/);
   assert.match(pricingPage, /Know the billing terms before you buy/);

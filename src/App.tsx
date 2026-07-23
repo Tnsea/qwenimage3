@@ -10,6 +10,7 @@ import { HomeHero } from "./components/HomeHero";
 import { ApiPage, BillingTermsPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, PromptsPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
 import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
+import { IndependentStatusPage, PrivacyDataPage, SupportPage } from "./components/TrustPages";
 import { CANONICAL_SITE_ORIGIN, publicCanonicalUrl } from "./seo";
 import type { SessionState } from "./types";
 
@@ -150,6 +151,12 @@ export default function App() {
     page = <BillingTermsPage />;
   } else if (path === "/refund-policy") {
     page = <RefundPolicyPage />;
+  } else if (path === "/privacy") {
+    page = <PrivacyDataPage onNavigate={navigate} />;
+  } else if (path === "/status") {
+    page = <IndependentStatusPage onNavigate={navigate} />;
+  } else if (path === "/support") {
+    page = <SupportPage onNavigate={navigate} />;
   } else if (path === "/" || path === "/verify-email" || path === "/reset-password") {
     page = (
       <main className="home-main">

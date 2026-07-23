@@ -69,6 +69,11 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 | `/prompts` | Twelve reusable English prompt records |
 | `/models` | Local preview and configured Qwen 2.0 adapter status |
 | `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default, and each checkout is enabled only when the Stripe gate, matching environment Price ID, and active D1 Price version all pass |
+| `/privacy` | Pre-release privacy and data notice covering account, creative, billing, support, analytics, provider, retention, export, and deletion boundaries without claiming launch-region legal approval |
+| `/terms` | Approved versioned Billing Terms for subscriptions, credits, renewal, cancellation, payment review, and account deletion |
+| `/refund-policy` | Approved versioned Refund Policy covering eligibility, subscriptions, credit packs, disputes, and private support requests |
+| `/status` | Independent product, runtime, deployment, billing-gate, and verification status with explicit pre-release boundaries |
+| `/support` | Public support orientation and security guidance leading to private signed-in tickets in Studio |
 | `/guides` | English guide overview |
 | `/api` | Developer API overview and request example |
 | `/verify-email` | Consumes a one-time verification token, then returns home |

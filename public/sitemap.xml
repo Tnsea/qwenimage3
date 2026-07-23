@@ -26,6 +26,11 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://qwen-image-3.net/privacy</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://qwen-image-3.net/terms</loc>
     <changefreq>yearly</changefreq>
     <priority>0.5</priority>
@@ -33,6 +38,16 @@
   <url>
     <loc>https://qwen-image-3.net/refund-policy</loc>
     <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://qwen-image-3.net/status</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://qwen-image-3.net/support</loc>
+    <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>

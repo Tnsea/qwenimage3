@@ -38,6 +38,15 @@
   color: var(--color-base-content);
 }
 
+.pricing-preview-cycle {
+  min-height: 0;
+  margin-bottom: 6px;
+}
+
+.pricing-preview .pricing-plan-grid {
+  max-width: none;
+}
+
 .plan-decision-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.92fr);

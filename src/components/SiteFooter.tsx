@@ -25,11 +25,11 @@ const footerGroups = [
   {
     title: "Trust",
     links: [
-      ["Privacy & data", "/#faq-privacy"],
+      ["Privacy & data", "/privacy"],
       ["Billing terms", "/terms"],
       ["Refund policy", "/refund-policy"],
-      ["Independent status", "/#faq-independent-product"],
-      ["Contact support", "/studio/support"],
+      ["Independent status", "/status"],
+      ["Contact support", "/support"],
     ],
   },
 ] as const;
