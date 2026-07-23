@@ -1,7 +1,7 @@
 # Qwen Image Generator Hub — Product Requirements
 
 > - Document status: Implementation-aligned draft v1.3
-> - Last verified: July 23, 2026
+> - Last verified: July 24, 2026
 > - Release status: Cloudflare custom-domain acceptance environment deployed and smoke-tested; production launch and public billing blocked
 > - Scope: English web MVP, accounts, Studio, credits, billing adapter, and developer API
 > - Positioning: Independent third-party product; not affiliated with or endorsed by Alibaba or the Qwen team
@@ -46,7 +46,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
 | Account-gated generation | **Implemented locally** with a signed-in requirement and server-authoritative credit reservation | External redeploy, real provider acceptance, and backup-deletion telemetry |
-| Real image provider | **Implemented, external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image` | Approved provider contract, license, cost model, paid live smoke, returned-host review, timeout behavior, and rollback |
+| Real image provider | **Kie.ai Worker path externally verified; signed-in lifecycle pending** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Signed-in credit/private-R2/browser acceptance, approved provider contract, license, cost model, timeout behavior, and rollback |
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |

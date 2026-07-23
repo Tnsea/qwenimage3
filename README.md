@@ -2,7 +2,7 @@
 
 An independent, English-only image-generation web application. Its canonical business runtime is a Cloudflare Worker backed by D1 and private R2 storage, with a React interface, account and credit flows, a deterministic preview provider, and optional external adapters. The former Express/SQLite implementation remains only as a legacy comparison adapter.
 
-> **Release status — canonical acceptance environment deployed; production and public billing blocked.** The Cloudflare environment is live at [qwen-image-3.net](https://qwen-image-3.net) for acceptance testing. Google sign-in is published for external Google accounts; billing, production email, GitHub sign-in, and the real Qwen provider remain disabled. See [Release Readiness](./docs/RELEASE_READINESS.md) before treating any acceptance result as production approval.
+> **Release status — canonical acceptance environment deployed; production and public billing blocked.** The Cloudflare environment is live at [qwen-image-3.net](https://qwen-image-3.net) for acceptance testing. Google sign-in is published for external Google accounts, and the Kie.ai Qwen Image 2 Worker path has completed one paid external task; the signed-in product-credit/private-R2/browser lifecycle remains unaccepted. Public billing, production email, and GitHub sign-in remain disabled. See [Release Readiness](./docs/RELEASE_READINESS.md) before treating any acceptance result as production approval.
 
 This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 
@@ -124,7 +124,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Kie.ai Qwen Image 2
 
-The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, polls its status within a bounded request, then immediately downloads the expiring result into private R2. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. It is locally verified with mocked provider responses but must not be treated as externally accepted until one paid generation, returned-host review, timeout behavior, and rollback have passed in the acceptance environment.
+The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, polls its status within a bounded request, then immediately downloads the expiring result into private R2. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. The Worker-side provider path completed one paid acceptance task, including polling, approved-host download, and PNG validation. That evidence does not yet accept the signed-in D1 reservation/settlement, private R2 copy, browser rendering, timeout recovery, output quality, or provider commercial terms.
 
 ```bash
 GENERATION_PROVIDER=kie
