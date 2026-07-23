@@ -734,6 +734,61 @@ async function stripeRequest<T>(
   return payload;
 }
 
+async function stripeDeleteObject(
+  env: Env,
+  path: string,
+  expectedId: string,
+  kind: "customer" | "subscription",
+) {
+  if (!stripeAccessConfigured(env) || !env.STRIPE_SECRET_KEY) {
+    throw new ExternalRequestError("BILLING_UNAVAILABLE", "Billing services are unavailable.");
+  }
+  const response = await fetchWithTimeout(`https://api.stripe.com${path}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+  }, timeoutMs(env.STRIPE_TIMEOUT_MS), "Billing provider");
+  const payload = await response.json() as {
+    id?: unknown;
+    deleted?: unknown;
+    status?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  };
+  if (response.status === 404 && payload.error?.code === "resource_missing") {
+    return { id: expectedId, alreadyMissing: true };
+  }
+  if (!response.ok) {
+    throw new ExternalRequestError(
+      "BILLING_PROVIDER_FAILED",
+      "Billing services could not complete this request.",
+      typeof payload.error?.message === "string"
+        ? payload.error.message
+        : `Stripe request failed with status ${response.status}.`,
+    );
+  }
+  if (payload.id !== expectedId) {
+    throw new ExternalRequestError(
+      "BILLING_CLEANUP_FAILED",
+      `Billing services did not confirm ${kind} deletion.`,
+    );
+  }
+  if (kind === "subscription" && payload.status !== "canceled") {
+    throw new ExternalRequestError(
+      "BILLING_CLEANUP_FAILED",
+      "Billing services did not confirm subscription cancellation.",
+    );
+  }
+  if (kind === "customer" && payload.deleted !== true) {
+    throw new ExternalRequestError(
+      "BILLING_CLEANUP_FAILED",
+      "Billing services did not confirm customer deletion.",
+    );
+  }
+  return { id: expectedId, alreadyMissing: false };
+}
+
 function stripeObjectId(value: unknown) {
   if (typeof value === "string") return value;
   if (value && typeof value === "object" && "id" in value && typeof value.id === "string") return value.id;
@@ -872,6 +927,34 @@ function stripeMetadata(object: Record<string, unknown>) {
     : {};
 }
 
+async function deletedBillingOwnerExists(
+  env: Env,
+  input: { userId?: string; customerId?: string; paymentIntent?: string },
+) {
+  if (input.paymentIntent) {
+    const payment = await env.DB.prepare(`SELECT payment_intent_id
+      FROM billing_deleted_payment_tombstones WHERE payment_intent_id = ?`)
+      .bind(input.paymentIntent)
+      .first();
+    if (payment) return true;
+  }
+  if (input.customerId) {
+    const customer = await env.DB.prepare(`SELECT id FROM account_deletion_audit
+      WHERE stripe_customer_id = ? LIMIT 1`)
+      .bind(input.customerId)
+      .first();
+    if (customer) return true;
+  }
+  if (input.userId) {
+    const user = await env.DB.prepare(`SELECT id FROM account_deletion_audit
+      WHERE former_user_id = ? LIMIT 1`)
+      .bind(input.userId)
+      .first();
+    if (user) return true;
+  }
+  return false;
+}
+
 async function resolveCheckoutOrder(env: Env, object: Record<string, unknown>) {
   const sessionId = stripeObjectId(object.id);
   let order = await env.DB.prepare("SELECT * FROM billing_orders WHERE stripe_checkout_session_id = ?")
@@ -926,7 +1009,11 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
   const object = event.data.object;
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     const order = await resolveCheckoutOrder(env, object);
-    if (!order) throw new Error("Stripe checkout does not match a local order.");
+    if (!order) {
+      const metadataUserId = String(stripeMetadata(object).user_id || "");
+      if (metadataUserId && await deletedBillingOwnerExists(env, { userId: metadataUserId })) return;
+      throw new Error("Stripe checkout does not match a local order.");
+    }
     if (order.status === "paid") return;
     if (order.kind === "credits") {
       const paymentIntent = stripeObjectId(object.payment_intent);
@@ -977,7 +1064,11 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     if (!customerId || !subscriptionId || !invoiceId || !paymentIntent || object.status !== "paid" || object.currency !== "usd"
       || !allowedReasons.has(String(object.billing_reason)) || !priceVersion) throw new Error("Paid invoice failed the known subscription price-version contract.");
     const account = await env.DB.prepare("SELECT user_id, stripe_subscription_id FROM billing_accounts WHERE stripe_customer_id = ?").bind(customerId).first<{ user_id: string; stripe_subscription_id: string | null }>();
-    if (!account || (account.stripe_subscription_id && account.stripe_subscription_id !== subscriptionId)) throw new Error("Paid invoice does not match a local subscription.");
+    if (!account) {
+      if (await deletedBillingOwnerExists(env, { customerId })) return;
+      throw new Error("Paid invoice does not match a local subscription.");
+    }
+    if (account.stripe_subscription_id && account.stripe_subscription_id !== subscriptionId) throw new Error("Paid invoice does not match a local subscription.");
     const existing = await env.DB.prepare("SELECT payment_intent_id FROM billing_payments WHERE payment_intent_id = ? OR invoice_id = ?").bind(paymentIntent, invoiceId).first();
     if (!existing) {
       const subscription = subscriptionDescriptor(priceVersion.offer_id);
@@ -1007,7 +1098,10 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?")
       .bind(paymentIntent)
       .first<BillingPaymentOwnerRow>();
-    if (!payment) throw new Error("Stripe early fraud warning has no local payment yet.");
+    if (!payment) {
+      if (await deletedBillingOwnerExists(env, { paymentIntent })) return;
+      throw new Error("Stripe early fraud warning has no local payment yet.");
+    }
     const timestamp = now();
     const actionable = object.actionable;
     const fraudType = typeof object.fraud_type === "string" && object.fraud_type
@@ -1060,7 +1154,10 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const paymentIntent = stripeObjectId(object.payment_intent);
     if (!paymentIntent) throw new Error("Financial reversal has no PaymentIntent.");
     const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?").bind(paymentIntent).first<{ user_id: string }>();
-    if (!payment) throw new Error("Financial reversal has no local payment.");
+    if (!payment) {
+      if (await deletedBillingOwnerExists(env, { paymentIntent })) return;
+      throw new Error("Financial reversal has no local payment.");
+    }
     const status = event.type === "charge.refunded" ? "refunded" : "disputed";
     await env.DB.batch([
       env.DB.prepare("UPDATE billing_payments SET status = ?, financial_event_id = ?, updated_at = ? WHERE payment_intent_id = ?").bind(status, event.id, now(), paymentIntent),
@@ -1570,15 +1667,12 @@ app.delete("/api/account", async (c) => {
       }
     }
     if (account.stripe_subscription_id) {
-      const canceled = await stripeRequest<{ id?: string; status?: string }>(
+      await stripeDeleteObject(
         c.env,
         `/v1/subscriptions/${encodeURIComponent(account.stripe_subscription_id)}`,
-        undefined,
-        "DELETE",
+        account.stripe_subscription_id,
+        "subscription",
       );
-      if (canceled.id !== account.stripe_subscription_id || canceled.status !== "canceled") {
-        throw new ExternalRequestError("BILLING_CLEANUP_FAILED", "Billing services did not confirm subscription cancellation.");
-      }
       await c.env.DB.batch([
         c.env.DB.prepare("UPDATE account_deletion_jobs SET status = 'subscription_canceled', updated_at = ? WHERE user_id = ?")
           .bind(now(), actor.userId),
@@ -1588,15 +1682,12 @@ app.delete("/api/account", async (c) => {
       ]);
     }
     if (account.stripe_customer_id) {
-      const deleted = await stripeRequest<{ id?: string; deleted?: boolean }>(
+      await stripeDeleteObject(
         c.env,
         `/v1/customers/${encodeURIComponent(account.stripe_customer_id)}`,
-        undefined,
-        "DELETE",
+        account.stripe_customer_id,
+        "customer",
       );
-      if (deleted.id !== account.stripe_customer_id || deleted.deleted !== true) {
-        throw new ExternalRequestError("BILLING_CLEANUP_FAILED", "Billing services did not confirm customer deletion.");
-      }
       await c.env.DB.batch([
         c.env.DB.prepare("UPDATE account_deletion_jobs SET status = 'customer_deleted', updated_at = ? WHERE user_id = ?")
           .bind(now(), actor.userId),
@@ -1615,9 +1706,23 @@ app.delete("/api/account", async (c) => {
         FROM generations WHERE owner_user_id = ? AND r2_key IS NOT NULL`)
         .bind(deletionId, now(), now(), actor.userId),
       c.env.DB.prepare(`INSERT INTO account_deletion_audit
-        (id, former_user_id, status, assets_queued, created_at, completed_at)
-        VALUES (?, ?, 'completed', ?, ?, ?)`)
-        .bind(deletionId, actor.userId, assets.results.length, timestamp, now()),
+        (id, former_user_id, status, assets_queued, created_at, completed_at,
+          stripe_customer_id, stripe_subscription_id)
+        VALUES (?, ?, 'completed', ?, ?, ?, ?, ?)`)
+        .bind(
+          deletionId,
+          actor.userId,
+          assets.results.length,
+          timestamp,
+          now(),
+          account.stripe_customer_id,
+          account.stripe_subscription_id,
+        ),
+      c.env.DB.prepare(`INSERT OR IGNORE INTO billing_deleted_payment_tombstones
+        (payment_intent_id, former_user_id, deleted_at)
+        SELECT payment_intent_id, user_id, ?
+        FROM billing_payments WHERE user_id = ?`)
+        .bind(now(), actor.userId),
       c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(actor.userId),
     ]);
     await Promise.allSettled(assets.results.map(async (asset) => {
