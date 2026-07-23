@@ -11,19 +11,20 @@ The application is locally functional and verified. This file is the authoritati
 | Evidence | Result |
 |---|---|
 | TypeScript client/server checks | Pass |
-| Automated tests | 56 passed, 0 failed, including concurrent D1 credits/idempotency, Worker Stripe replay, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
-| Production bundle | Pass; JavaScript gzip about 92.6 KB; artifact scan rejects loopback addresses, SQLite customer copy, and development-token copy |
+| Automated tests | 68 passed, 0 failed, including account-required generation, exactly-once welcome credits, 4/8/16 credit charging, Starter-versus-Creator entitlements, yearly-default pricing, unsupported-model rejection, stable non-JSON edge errors, concurrent D1 credits/idempotency, Worker Stripe replay and Radar fraud-warning quarantine, maintenance repeatability, origin isolation, HTML transformation prevention, and external-policy contracts |
+| Production bundle | Pass; JavaScript gzip about 94.5 KB; artifact scan rejects loopback addresses, SQLite customer copy, and development-token copy |
 | npm dependency audit | Production dependency audit passes with zero findings; full development-tool audit remains blocked by three high-severity Wrangler/Miniflare/Sharp findings |
 | Static UI quality | Strict unused checks, React Hooks rules, and baseline JSX accessibility rules pass |
 | Local health endpoint | HTTP 200 from the Wrangler Worker with local D1/R2 emulation, deterministic preview provider, and email disabled unless explicitly configured |
 | Security response headers | CSP, referrer policy, MIME protection, frame denial, permissions policy, COOP present |
 | Billing lifecycle regression | Retryable events, strict invoice validation, refund/dispute quarantine, and external-first deletion pass locally |
-| Retention/recovery regression | 24-hour guest deletion, stranded-reservation recovery, maintenance recording, and R2 deletion compensation are implemented; the first post-deploy scheduled acceptance pass completed successfully at `2026-07-23T09:30:08Z` and health reported it fresh |
+| Retention/recovery regression | Legacy 24-hour guest deletion, stranded account-reservation recovery, maintenance recording, and R2 deletion compensation are implemented; the first post-deploy scheduled acceptance pass completed successfully at `2026-07-23T09:30:08Z` and health reported it fresh |
 | Provider download security | Approved-host, public-DNS, redirect, MIME/signature, and size enforcement pass adapter tests |
-| Browser smoke | Desktop, 390 px mobile navigation, authentication dialog, unauthenticated Studio gate, deterministic guest generation, watermarked result, generation failure handling, and 404 visually verified locally; the canonical domain mounts successfully with no browser console errors |
+| Browser smoke | Desktop, 390 px mobile navigation, authentication dialog, unauthenticated Studio gate, generation failure handling, and 404 were visually verified on the previous acceptance revision; the new account-required generator gate needs a fresh browser pass |
+| Google OAuth acceptance | Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` completed a real Google authorization-code and PKCE callback, created one identity mapping and browser session, granted starter credits once, entered the private Workspace, consumed the OAuth state, and was subsequently published for external Google accounts |
 | Secret-pattern check | No real credential detected in the working-tree scan; placeholders only |
 | Cloudflare acceptance environment | Worker custom domains `qwen-image-3.net` and `www.qwen-image-3.net`, D1 database, private R2 bucket, and the 15-minute maintenance trigger are deployed. Forward migrations `0004`–`0006` are applied. TLS, canonical redirect/metadata, health/session/promotion/generation/asset/watermark smoke passed on Worker version `4dcd71ed-466d-4fa1-afb8-03d5bc575f6e`. A live browser regression confirmed the React root, rendered homepage, strict CSP, no Cloudflare analytics beacon, no local network request, zero application resource failures, and zero runtime exceptions. |
-| Stripe sandbox integration | Creator VIP USD 8/month launch and USD 10/month standard Prices plus USD 7/100-credit and USD 18/300-credit Prices created; a dedicated restricted key and webhook signing secret are stored as Worker secrets; an application-created USD 7/100-credit Checkout completed with Stripe's test card, Stripe delivered `checkout.session.completed`, D1 completed the event once, mapped the PaymentIntent, marked the order/payment paid, and granted exactly 100 credits through one ledger row; billing was disabled again before payment completion |
+| Stripe integration | Historical Sandbox evidence: the retired USD 7/100-credit catalog completed one application-created Checkout and exactly-once webhook grant. The replacement Starter/Creator/Professional monthly/yearly and 400/1,200/3,000-credit pack Prices now exist in Live mode, a dedicated restricted key and 10-event Live webhook destination are configured, and matching D1 migrations are staged. The replacement catalog is not yet deployed or accepted end to end; billing remains disabled |
 
 Source-control evidence:
 
@@ -33,7 +34,7 @@ Source-control evidence:
 
 Limitations of this evidence:
 
-- real Resend, Google, GitHub, and Qwen credentials were not exercised; Stripe Sandbox credit-pack Checkout and Stripe-origin webhook fulfillment passed once, but no subscription, recurring invoice, asynchronous payment, refund, dispute, Portal, cancellation, or account-deletion lifecycle has passed end to end;
+- real Resend, GitHub, and Qwen credentials were not exercised; Google completed one successful acceptance sign-in but its denial/failure paths remain open; Stripe Sandbox credit-pack Checkout and Stripe-origin webhook fulfillment passed once, but no subscription, recurring invoice, asynchronous payment, refund, dispute, Portal, cancellation, or account-deletion lifecycle has passed end to end;
 - Docker/Compose execution was unavailable;
 - the deployed Worker is an acceptance revision, not a production approval or a reviewed release marker;
 - no formal accessibility, browser-matrix, load, recovery, or external security review exists.
@@ -59,19 +60,19 @@ Limitations of this evidence:
 
 **Remaining:** confirm real Stripe API-version payload shapes and approve how discounts, taxes, credits, and prorations map to the versioned entitlement contract.
 
-### BIL-004: Refund/dispute lifecycle — partially implemented, policy and reconciliation blocked
+### BIL-004: Refund/dispute/fraud-warning lifecycle — partially implemented, policy and reconciliation blocked
 
-**Evidence:** PaymentIntents map to product payments; refund/dispute events update payment and order financial status and pause further credit spending with a visible Billing warning. Fulfillment is idempotent.
+**Evidence:** PaymentIntents map to product payments; refund/dispute events update payment and order financial status and pause further credit spending with a visible Billing warning. Actionable Radar early fraud warnings resolve Charge-to-PaymentIntent using least-privilege read access, store separate risk evidence, and pause spending without changing the paid/refunded/disputed status. Fulfillment is idempotent.
 
-**Remaining:** approve clawback/negative-balance/support policy, handle every asynchronous failure variant, build reconciliation and alerts, and pass Stripe test-mode end to end.
+**Remaining:** approve clawback/negative-balance/support and proactive-refund policy, implement reviewed risk-resolution/unblock operations, handle every asynchronous failure variant, build reconciliation and alerts, and pass Stripe test-mode end to end.
 
 Public billing stays fail-closed behind `BILLING_ENABLED=false` until every remaining item above passes. This switch blocks new Checkout offers; configured webhook verification and Stripe-side cleanup continue so already-created financial state can drain safely.
 
 ## P1 — External Beta Blockers
 
-### DATA-001: 24-hour guest retention — local and scheduled Cloudflare implementation, lifecycle evidence pending
+### DATA-001: Legacy guest cleanup — local and scheduled Cloudflare implementation, lifecycle evidence pending
 
-**Evidence:** guest list/asset access excludes generations older than 24 hours locally. Local startup/15-minute maintenance and a deployed Worker cron delete old guest rows/assets and recover stale reservations; automated local recovery/retention tests pass. The first post-deploy cron pass completed at `2026-07-23T09:30:08Z`, and the live health response reported `completed` and fresh.
+**Evidence:** new anonymous generation is disabled in the current code. Local startup/15-minute maintenance and the deployed Worker cron retain the old 24-hour deletion path so previously created guest rows/assets can drain safely; automated recovery/retention tests pass. The first post-deploy cron pass completed at `2026-07-23T09:30:08Z`, and the live health response reported `completed` and fresh.
 
 **Remaining:** observe an actual expired-object deletion in Cloudflare, approve policy, instrument overdue D1/R2 storage, and prove backup deletion.
 
@@ -89,13 +90,13 @@ Public billing stays fail-closed behind `BILLING_ENABLED=false` until every rema
 
 **Acceptance:** successful required CI on the reviewed hardening revision and recorded deployment provenance.
 
-### AUTH-001: External identity and email flows are unverified
+### AUTH-001: Google success path verified; remaining external identity and email flows are unverified
 
-**Evidence:** current health reports Google, GitHub, and external email disabled. Adapter tests mock provider responses, and the Worker owns the OAuth start/callback routes and one-time state records.
+**Evidence:** current health reports Google configured while GitHub and external email remain disabled. Adapter tests exercise Google's authorization URL, PKCE token exchange, verified-profile mapping, exact callback, Cloudflare-compatible redirect handling, and browser-bound state. A real Google account completed the callback on Worker `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`; D1 recorded one identity mapping and an active browser session, the private Workspace loaded with the one-time starter grant, and no OAuth state remained. Google Auth Platform now reports publishing status `Production` for the external user type, so accounts outside the tester list may authorize.
 
-**Impact:** callback, consent, sender reputation, delivery, and recovery behavior remain unknown.
+**Impact:** Google denial/failure behavior, GitHub callback behavior, sender reputation, delivery, and recovery remain unknown.
 
-**Acceptance:** complete Resend plus Google/GitHub test accounts against the canonical HTTPS origin, including denial and failure paths, without exposing tokens.
+**Acceptance:** complete Resend and GitHub test accounts plus Google denial/failure paths against the canonical HTTPS origin without exposing tokens.
 
 ### UX-001: Critical accessibility and browser acceptance is incomplete
 
@@ -107,7 +108,7 @@ Public billing stays fail-closed behind `BILLING_ENABLED=false` until every rema
 
 ### CONTENT-001: Content inventory is improved but below the stated MVP
 
-**Evidence:** twelve unique prompt records feed eight unique example cards, and the homepage has ten FAQ answers. The 60-example/80-template editorial target is not met and provenance/review metadata is absent.
+**Evidence:** twelve unique prompt records feed eight unique example cards, and the homepage has eleven FAQ answers. The 60-example/80-template editorial target is not met and provenance/review metadata is absent.
 
 **Impact:** discovery pages appear complete but do not meet the editorial depth promised by the product contract.
 
@@ -124,9 +125,9 @@ Public billing stays fail-closed behind `BILLING_ENABLED=false` until every rema
 | `SEC-002` | Rate limits persist in D1 in Wrangler development and acceptance but remain IP-only | Load acceptance and per-account/API-key budgets |
 | `API-001` | Keys have `generations:write` scope; every API attempt records status, duration, and request ID, with valid user/key association | Per-key budgets, alerts, log retention, and documented limits |
 | `OPS-001` | No metrics, tracing, durable logs, alerts, or reconciliation job | Production observability and on-call actions |
-| `OPS-002` | Cloudflare custom-domain acceptance runtime is deployed from immutable Worker version `4dcd71ed-466d-4fa1-afb8-03d5bc575f6e`; pre-change D1 export and prior Worker identifier are recorded, but restore/rollback execution remains unverified | Health supervision, backup/restore, and rollback drill |
+| `OPS-002` | Cloudflare custom-domain acceptance runtime currently serves OAuth hotfix Worker `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`; pre-change D1 export and prior Worker identifiers are recorded, but reviewed release provenance and restore/rollback execution remain unverified | Reviewed deployment, health supervision, backup/restore, and rollback drill |
 | `UI-001` | Explicit failed generation states and retry/remove actions are implemented | Accessibility acceptance for failure announcements and focus |
-| `WEB-001` | Client/API routing and the primary guest flow passed live smoke; the canonical domain passed a post-deploy browser render with zero runtime exceptions, no local endpoint request, and no analytics beacon injection | Browser matrix, signed-in Studio, error routes, and rollback acceptance |
+| `WEB-001` | Client/API routing and the previous guest-enabled revision passed live smoke; the canonical domain rendered with zero runtime exceptions, no local endpoint request, and no analytics beacon injection | Deploy and smoke the account-required flow, then complete the browser matrix, signed-in Studio, error routes, and rollback acceptance |
 
 ## Launch Decision Rules
 
@@ -150,13 +151,13 @@ Before changing this file to Ready, record:
 
 ## Current Acceptance Deployment Record
 
-- Source revision and CI: `61cf65e`; GitHub Actions run `29995895346` passed for draft pull request 1
-- Worker version: `4dcd71ed-466d-4fa1-afb8-03d5bc575f6e`
+- Source revision and CI: base revision `7f65571` plus the acceptance-only OAuth redirect/state patch; GitHub Actions run `29995895346` passed for the preceding hardening revision, while the hotfix still needs committed review provenance
+- Worker version: `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3`
 - Environment and URL: Cloudflare acceptance, `https://qwen-image-3.net`
-- Enabled providers: deterministic local preview only; billing, Qwen, Google, GitHub, and external email remain disabled
+- Enabled providers: deterministic local preview and Google OAuth published for external Google accounts; billing, Qwen, GitHub, and external email remain disabled
 - Applied migrations: `0001`–`0006`; pre-change D1 export retained under ignored `backups/`
 - Rollback identifiers: pre-remediation Worker `69a1034f-31ac-45fa-b8e5-e2a9f13e3577`; D1 restore has not been exercised
-- Live smoke: July 23, 2026, Asia/Shanghai; health, root mount, catalog, guest session/generation, private R2 asset, watermark, 404, strict headers, no local request, no analytics beacon, and a successful scheduled maintenance pass
+- Live smoke: July 23, 2026, Asia/Shanghai; historical evidence for the previous guest-enabled revision covers health, root mount, catalog, guest session/generation, private R2 asset, watermark, 404, strict headers, no local request, no analytics beacon, and scheduled maintenance. The current OAuth hotfix additionally passed a real Google sign-in, identity mapping, browser session, one-time starter grant, private Workspace load, and single-use state consumption; Google Auth Platform was then published for external accounts.
 - Operator: repository owner with Codex implementation assistance
 - Deferred blockers: all P0/P1 and applicable P2 items above remain blocking
 

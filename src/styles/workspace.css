@@ -986,6 +986,53 @@
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.billing-choice-section {
+  display: grid;
+  gap: 16px;
+}
+
+.billing-choice-heading {
+  align-items: end;
+}
+
+.billing-choice-heading p {
+  margin: 5px 0 0;
+  color: var(--workspace-text-muted);
+  font-size: 10px;
+}
+
+.billing-cycle-tabs.tabs {
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 8px;
+  background: var(--workspace-surface);
+}
+
+.billing-cycle-tabs .tab {
+  min-width: 96px;
+  height: 32px;
+  gap: 5px;
+  border-radius: 6px;
+  color: var(--workspace-text-muted);
+  font-size: 9px;
+}
+
+.billing-cycle-tabs .tab.tab-active {
+  background: var(--workspace-text);
+  color: var(--workspace-background);
+  font-weight: 680;
+}
+
+.billing-cycle-tabs .badge {
+  min-height: 16px;
+  height: 16px;
+  border: 0;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  color: inherit;
+  font-size: 7px;
+}
+
 .billing-offer-featured.card {
   border-color: #4e456c;
   background: #121116;

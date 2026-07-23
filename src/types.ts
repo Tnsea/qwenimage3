@@ -27,6 +27,7 @@ export interface Generation {
 
 export interface GenerationRequest {
   prompt: string;
+  modelId?: string;
   aspectRatio: AspectRatio;
   style: ImageStyle;
   quality: ImageQuality;
@@ -117,8 +118,24 @@ export interface AuthMethods {
   github: boolean;
 }
 
+export type BillingPlanTier = "starter" | "creator" | "professional";
+export type BillingInterval = "month" | "year";
+export type BillingOfferId =
+  | "starter_monthly"
+  | "starter_yearly"
+  | "creator_intro"
+  | "creator_monthly"
+  | "creator_yearly"
+  | "professional_monthly"
+  | "professional_yearly"
+  | "credits_100"
+  | "credits_300"
+  | "credits_400"
+  | "credits_1200"
+  | "credits_3000";
+
 export interface BillingOffer {
-  id: "creator_intro" | "creator_monthly" | "credits_100" | "credits_300";
+  id: BillingOfferId;
   name: string;
   description: string;
   priceLabel: string;
@@ -128,6 +145,10 @@ export interface BillingOffer {
   kind: "subscription" | "credits";
   configured: boolean;
   features: string[];
+  planTier?: BillingPlanTier;
+  billingInterval?: BillingInterval;
+  monthlyEquivalentCredits?: number;
+  standardImages?: number;
 }
 
 export interface PricingPromotion {
@@ -143,11 +164,19 @@ export interface PricingPromotion {
 }
 
 export interface CatalogPlan {
-  id: "guest" | "free" | "creator";
+  id: BillingPlanTier;
   name: string;
   price: string;
   description: string;
   features: string[];
+  monthlyAmountCents: number;
+  yearlyAmountCents: number;
+  monthlyCredits: number;
+  yearlyCredits: number;
+  monthlyConfigured: boolean;
+  yearlyConfigured: boolean;
+  recommended?: boolean;
+  valuePick?: boolean;
   planned?: boolean;
 }
 
@@ -161,6 +190,8 @@ export interface CatalogPrompt {
 export interface CatalogModel {
   id: string;
   name: string;
+  provider: "local-preview" | "alibaba-model-studio" | "unassigned";
+  available: boolean;
   status: string;
   speed: string;
   cost: string;
@@ -180,6 +211,8 @@ export interface BillingSummary {
   promotion: PricingPromotion | null;
   account: {
     plan: "free" | "creator";
+    planTier?: "free" | BillingPlanTier;
+    billingInterval?: BillingInterval | null;
     status: "inactive" | "active" | "trialing" | "past_due" | "canceled";
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
@@ -244,7 +277,7 @@ export interface WorkspaceActivity {
 
 export interface WorkspaceOverview {
   plan: {
-    name: "Free" | "Creator";
+    name: "Free" | "Account" | "Starter" | "Creator" | "Professional";
     status: BillingSummary["account"]["status"];
   };
   credits: {

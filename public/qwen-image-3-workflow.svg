@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
-  <title id="title">Qwen Image 3 prompt workflow</title>
-  <desc id="description">A dark editorial diagram connecting a prompt, provider status, and private image result.</desc>
+  <title id="title">Qwen Image 3 private image creation workflow</title>
+  <desc id="description">A dark editorial diagram showing account-based image creation, model selection, and a private result.</desc>
   <defs>
     <radialGradient id="glow" cx="50%" cy="20%" r="80%">
       <stop offset="0" stop-color="#34245f"/>
@@ -22,28 +22,28 @@
     <path d="M11 19h15M19 11v16" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
     <text x="54" y="26" fill="#f4f4f1" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="700">Qwen Image 3 Generator Hub</text>
   </g>
-  <text x="74" y="184" fill="#f3f3f0" font-family="Georgia,serif" font-size="66">Prompt with clarity.</text>
-  <text x="74" y="253" fill="#f3f3f0" font-family="Georgia,serif" font-size="66">Verify the provider.</text>
-  <text x="76" y="305" fill="#9a9b99" font-family="Inter,Arial,sans-serif" font-size="22">Independent prompt guidance and a private, provider-aware image workflow.</text>
+  <text x="74" y="184" fill="#f3f3f0" font-family="Georgia,serif" font-size="66">Create with confidence.</text>
+  <text x="74" y="253" fill="#f3f3f0" font-family="Georgia,serif" font-size="66">Keep every image private.</text>
+  <text x="76" y="305" fill="#9a9b99" font-family="Inter,Arial,sans-serif" font-size="22">Account-based image generation with clear model status and credit costs.</text>
   <g transform="translate(74 370)">
     <rect width="300" height="128" rx="22" fill="#101213" stroke="#343638"/>
-    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">01 · PROMPT</text>
-    <text x="26" y="76" fill="#f2f2ef" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600">Subject + scene</text>
-    <text x="26" y="103" fill="#858684" font-family="Inter,Arial,sans-serif" font-size="16">Light, style, constraints</text>
+    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">01 · DESCRIBE</text>
+    <text x="26" y="76" fill="#f2f2ef" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600">Shape the image</text>
+    <text x="26" y="103" fill="#858684" font-family="Inter,Arial,sans-serif" font-size="16">Subject, scene, and style</text>
     <path d="M316 64h42" stroke="#6d28d9" stroke-width="3" stroke-linecap="round"/>
     <path d="m350 57 8 7-8 7" fill="none" stroke="#6d28d9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <g transform="translate(432 370)">
     <rect width="300" height="128" rx="22" fill="#101213" stroke="#343638"/>
-    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">02 · STATUS</text>
-    <text x="26" y="76" fill="#f2f2ef" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600">Check the model</text>
-    <text x="26" y="103" fill="#858684" font-family="Inter,Arial,sans-serif" font-size="16">No unverified claims</text>
+    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">02 · CHOOSE</text>
+    <text x="26" y="76" fill="#f2f2ef" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600">Select the model</text>
+    <text x="26" y="103" fill="#858684" font-family="Inter,Arial,sans-serif" font-size="16">Format, quality, and cost</text>
     <path d="M316 64h42" stroke="#6d28d9" stroke-width="3" stroke-linecap="round"/>
     <path d="m350 57 8 7-8 7" fill="none" stroke="#6d28d9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <g transform="translate(790 370)">
     <rect width="336" height="128" rx="22" fill="#101213" stroke="#5c488f"/>
-    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">03 · CREATE</text>
+    <text x="26" y="35" fill="#a78bfa" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="2">03 · GENERATE</text>
     <text x="26" y="76" fill="#f2f2ef" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600">Generate privately</text>
     <text x="26" y="103" fill="#858684" font-family="Inter,Arial,sans-serif" font-size="16">Refine, save, or export</text>
   </g>

@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { SUPPORTED_QWEN_MODEL_ID } from "../../src/catalog.js";
 import type { AspectRatio, GenerationRequest, ImageQuality } from "../../src/types.js";
 import { ProviderError, type GenerationProvider } from "./types.js";
 
@@ -96,7 +97,10 @@ export class QwenImageProvider implements GenerationProvider {
   constructor(options: QwenProviderOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.model = options.model ?? "qwen-image-2.0-pro";
+    this.model = options.model ?? SUPPORTED_QWEN_MODEL_ID;
+    if (this.model !== SUPPORTED_QWEN_MODEL_ID) {
+      throw new Error(`Unsupported Qwen model: ${this.model}.`);
+    }
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.allowedImageHosts = options.allowedImageHosts ?? (process.env.QWEN_IMAGE_ALLOWED_HOSTS ?? "aliyuncs.com").split(",").map((value) => value.trim()).filter(Boolean);
@@ -177,5 +181,6 @@ export class QwenImageProvider implements GenerationProvider {
 export function qwenConfiguration() {
   const apiKey = process.env.DASHSCOPE_API_KEY?.trim() ?? "";
   const baseUrl = process.env.QWEN_API_BASE_URL?.trim() ?? "";
-  return { configured: Boolean(apiKey && baseUrl), apiKey, baseUrl, model: process.env.QWEN_MODEL_ID?.trim() || "qwen-image-2.0-pro" };
+  const model = process.env.QWEN_MODEL_ID?.trim() || SUPPORTED_QWEN_MODEL_ID;
+  return { configured: Boolean(apiKey && baseUrl && model === SUPPORTED_QWEN_MODEL_ID), apiKey, baseUrl, model };
 }

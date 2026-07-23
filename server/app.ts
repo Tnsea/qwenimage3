@@ -90,7 +90,7 @@ import { ProviderError } from "./providers/types.js";
 import { freeQueueDelayMs, generationQueue, type GenerationQueueTier } from "./generation-queue.js";
 import { createToken, hashPassword, hashToken, verifyPassword } from "./security.js";
 import { originalExport, watermarkedExport } from "./watermark.js";
-import { createCatalogCore } from "../src/catalog.js";
+import { createCatalogCore, createModelCatalog } from "../src/catalog.js";
 import type {
   AspectRatio,
   GenerationRequest,
@@ -398,6 +398,7 @@ function validateGeneration(body: Partial<GenerationRequest>) {
   return {
     input: {
       prompt,
+      modelId: typeof body.modelId === "string" ? body.modelId : undefined,
       aspectRatio: body.aspectRatio as AspectRatio,
       style: body.style as ImageStyle,
       quality: body.quality as ImageQuality,
@@ -972,12 +973,24 @@ export function createApp() {
     }
     const normalizedBody = apiOnly ? {
       prompt: request.body?.prompt,
+      modelId: request.body?.model,
       aspectRatio: request.body?.aspect_ratio,
       style: request.body?.style ? String(request.body.style).replace(/^./, (value: string) => value.toUpperCase()) : "Photorealistic",
       quality: request.body?.quality ? String(request.body.quality).replace(/^./, (value: string) => value.toUpperCase()) : "High",
       projectId: request.body?.project_id,
     } : request.body;
-    const validation = validateGeneration(normalizedBody);
+    const activeProvider = providerInfo();
+    const availableModels = createModelCatalog({
+      providerId: activeProvider.id === "alibaba-model-studio" ? "alibaba-model-studio" : "local-preview",
+      providerModel: activeProvider.model,
+      providerConfigured: activeProvider.configured,
+    }).filter((model) => model.available);
+    const requestedModelId = typeof normalizedBody?.modelId === "string" ? normalizedBody.modelId.trim() : "";
+    const selectedModel = requestedModelId
+      ? availableModels.find((model) => model.id === requestedModelId)
+      : availableModels[0];
+    if (!selectedModel) return sendError(response, 400, "MODEL_UNAVAILABLE", "Choose an available image model.");
+    const validation = validateGeneration({ ...normalizedBody, modelId: selectedModel.id });
     if ("error" in validation) return sendError(response, 400, "INVALID_REQUEST", validation.error ?? "Invalid generation request.");
     const input = validation.input;
     if (input.projectId && (!actor.user || !projectBelongsToUser(input.projectId, actor.user.id))) {

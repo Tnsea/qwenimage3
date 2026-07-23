@@ -9,11 +9,11 @@ interface AuthDialogProps {
   resetToken?: string;
   onClose: () => void;
   onResetComplete?: () => void;
-  onSuccess: (session: SessionState, migrated: number, verifiedNow?: boolean) => void;
+  onSuccess: (session: SessionState) => void;
 }
 
 type AuthMode = "login" | "register" | "forgot" | "reset";
-type AuthResponse = SessionState & { migratedGenerations: number };
+type AuthResponse = SessionState;
 
 const defaultMethods: AuthMethods = { password: true, google: false, github: false };
 
@@ -55,6 +55,11 @@ export function AuthDialog({ open, initialMode, resetToken, onClose, onResetComp
     setPassword("");
   }
 
+  function moveAuthTab(next: "login" | "register") {
+    chooseMode(next);
+    window.requestAnimationFrame(() => document.getElementById(`auth-${next}-tab`)?.focus());
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
@@ -88,7 +93,7 @@ export function AuthDialog({ open, initialMode, resetToken, onClose, onResetComp
         body: JSON.stringify(mode === "register" ? { name, email, password } : { email, password }),
       });
       setPassword("");
-      onSuccess({ user: payload.user, entitlements: payload.entitlements }, payload.migratedGenerations ?? 0);
+      onSuccess({ user: payload.user, entitlements: payload.entitlements });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Authentication failed.");
     } finally {
@@ -100,7 +105,7 @@ export function AuthDialog({ open, initialMode, resetToken, onClose, onResetComp
     : mode === "forgot" ? "Recover your account"
       : mode === "reset" ? "Choose a new password"
         : "Welcome back";
-  const description = mode === "register" ? "Create an account, preserve guest work, and unlock 20 credits after email verification."
+  const description = mode === "register" ? "Create an account and receive 20 welcome credits. Email verification protects recovery and developer access."
     : mode === "forgot" ? "We will send a one-time link without revealing whether the address is registered."
       : mode === "reset" ? "Use the one-time token from your email to replace the password on every device."
         : "Sign in to access projects, credits, favorites, and developer keys.";
@@ -114,13 +119,19 @@ export function AuthDialog({ open, initialMode, resetToken, onClose, onResetComp
         <p>{description}</p>
 
         {(mode === "login" || mode === "register") && (
-          <div role="tablist" className="tabs tabs-box auth-tabs">
-            <button role="tab" className={`tab ${mode === "login" ? "tab-active" : ""}`} type="button" onClick={() => chooseMode("login")}>Sign in</button>
-            <button role="tab" className={`tab ${mode === "register" ? "tab-active" : ""}`} type="button" onClick={() => chooseMode("register")}>Create account</button>
+          <div role="tablist" className="tabs tabs-box auth-tabs" aria-label="Authentication mode">
+            <button id="auth-login-tab" role="tab" aria-controls="auth-form-panel" aria-selected={mode === "login"} tabIndex={mode === "login" ? 0 : -1} className={`tab ${mode === "login" ? "tab-active" : ""}`} type="button" onClick={() => chooseMode("login")} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "End") { event.preventDefault(); moveAuthTab("register"); } }}>Sign in</button>
+            <button id="auth-register-tab" role="tab" aria-controls="auth-form-panel" aria-selected={mode === "register"} tabIndex={mode === "register" ? 0 : -1} className={`tab ${mode === "register" ? "tab-active" : ""}`} type="button" onClick={() => chooseMode("register")} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "Home") { event.preventDefault(); moveAuthTab("login"); } }}>Create account</button>
           </div>
         )}
 
-        <form className="auth-form" onSubmit={submit}>
+        <form
+          id="auth-form-panel"
+          className="auth-form"
+          role={mode === "login" || mode === "register" ? "tabpanel" : undefined}
+          aria-labelledby={mode === "login" || mode === "register" ? `auth-${mode}-tab` : undefined}
+          onSubmit={submit}
+        >
           {mode === "register" && <label><span>Name</span><input className="input" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Alex Morgan" required minLength={2} maxLength={60} /></label>}
           {mode !== "reset" && <label><span>Email</span><input className="input" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></label>}
           {(mode === "login" || mode === "register" || mode === "reset") && <label><span>{mode === "reset" ? "New password" : "Password"}</span><input className="input" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" required minLength={8} maxLength={128} /></label>}

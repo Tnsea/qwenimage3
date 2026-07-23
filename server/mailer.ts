@@ -14,14 +14,14 @@ function applicationBaseUrl() {
 }
 
 function localTokenAllowed() {
-  return process.env.ALLOW_DEV_AUTH_TOKENS === "true" || process.env.NODE_ENV !== "production";
+  return process.env.NODE_ENV !== "production" && process.env.ALLOW_DEV_AUTH_TOKENS === "true";
 }
 
-async function deliver(input: { to: string; subject: string; text: string; token: string; link: string }): Promise<MailDelivery> {
+async function deliver(input: { to: string; subject: string; text: string; token: string }): Promise<MailDelivery> {
   const provider = (process.env.EMAIL_PROVIDER ?? "console").toLowerCase();
   if (provider === "console") {
     if (!localTokenAllowed()) return { delivered: false, delivery: "none" };
-    console.info(`[auth-mail] ${input.subject} for ${input.to}: ${input.link}`);
+    console.info(`[auth-mail] ${input.subject} queued for ${input.to}; development token omitted from logs.`);
     return {
       delivered: true,
       delivery: "console",
@@ -54,7 +54,7 @@ export function sendAuthenticationEmail(input: { purpose: MailPurpose; to: strin
   const subject = isVerification ? "Verify your Qwen Image Generator Hub email" : "Reset your Qwen Image Generator Hub password";
   const action = isVerification ? "verify your email and unlock your 20 welcome credits" : "choose a new password";
   const text = `Hello ${input.name},\n\nUse this secure link to ${action}:\n${link}\n\nThis link expires soon and can only be used once. If you did not request it, you can ignore this email.`;
-  return deliver({ to: input.to, subject, text, token: input.token, link });
+  return deliver({ to: input.to, subject, text, token: input.token });
 }
 
 export function emailProviderInfo() {

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { renderGeneration } from "../server/generator.js";
-import { createCatalogCore } from "../src/catalog.js";
+import { createCatalogCore, createModelCatalog, SUPPORTED_QWEN_MODEL_ID } from "../src/catalog.js";
 import type {
   AccountSession,
   ApiKeyCreated,
@@ -11,12 +11,14 @@ import type {
   AspectRatio,
   BillingOffer,
   BillingSummary,
+  BillingInterval,
+  BillingPlanTier,
+  CatalogModel,
   CreditEntry,
   Generation,
   GenerationRequest,
   ImageQuality,
   ImageStyle,
-  PricingPromotion,
   Project,
   SessionState,
   SupportMessage,
@@ -31,9 +33,11 @@ import type {
 } from "../src/types.js";
 import {
   allOffers,
+  activeBillingOfferIds,
   billingConfigured,
   billingCredentialsConfigured,
   billingEnabled,
+  priceIdFor,
   stripeAccessConfigured,
   stripeWebhookConfigured,
 } from "./offers.js";
@@ -82,8 +86,6 @@ interface Actor {
   user: User | null;
   userRow: UserRow | null;
   userId: string | null;
-  anonymousSessionId: string | null;
-  guestUsedCount: number;
   sessionId: string | null;
   apiKeyId: string | null;
   scopes: string[];
@@ -118,6 +120,9 @@ interface BillingAccountRow {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   plan: "free" | "creator";
+  plan_tier: "free" | BillingPlanTier;
+  billing_interval: BillingInterval | null;
+  active_offer_id: string | null;
   status: "inactive" | "active" | "trialing" | "past_due" | "canceled";
   current_period_end: string | null;
   cancel_at_period_end: number;
@@ -142,6 +147,10 @@ interface BillingOrderRow {
   completed_at: string | null;
 }
 
+interface BillingPaymentOwnerRow {
+  user_id: string;
+}
+
 interface BillingPriceVersionRow {
   stripe_price_id: string;
   offer_id: BillingOffer["id"];
@@ -158,17 +167,37 @@ type StripeEvent = MaintenanceStripeEvent;
 
 const app = new Hono<WorkerContext>();
 const encoder = new TextEncoder();
-const GUEST_LIMIT = 3;
 const SESSION_DAYS = 30;
-const GUEST_DAYS = 30;
-const PROMOTION_MINUTES = 10;
-const billingOfferIds = ["creator_intro", "creator_monthly", "credits_100", "credits_300"] as const;
+const OAUTH_STATE_SECONDS = 10 * 60;
+const billingOfferIds = activeBillingOfferIds;
 const validRatios: AspectRatio[] = ["1:1", "3:2", "16:9", "4:3", "9:16"];
 const validStyles: ImageStyle[] = ["Photorealistic", "Editorial", "Cinematic", "Illustration"];
 const validQualities: ImageQuality[] = ["Standard", "High", "Ultra"];
 const validSupportCategories: SupportTicketCategory[] = ["generation", "billing", "api", "account", "other"];
 const validSupportPriorities: SupportTicketPriority[] = ["normal", "high"];
-const qualityCosts: Record<ImageQuality, number> = { Standard: 1, High: 2, Ultra: 4 };
+const qualityCosts: Record<ImageQuality, number> = { Standard: 4, High: 8, Ultra: 16 };
+
+function modelRuntime(env: Env) {
+  const providerId = env.GENERATION_PROVIDER?.trim().toLowerCase() === "qwen" ? "alibaba-model-studio" as const : "local-preview" as const;
+  const providerModel = env.QWEN_MODEL_ID?.trim() || (providerId === "alibaba-model-studio" ? SUPPORTED_QWEN_MODEL_ID : "local-qwen-preview");
+  return {
+    providerId,
+    providerModel,
+    providerConfigured: providerId === "local-preview" || Boolean(
+      providerModel === SUPPORTED_QWEN_MODEL_ID
+        && env.DASHSCOPE_API_KEY?.trim()
+        && env.QWEN_API_BASE_URL?.trim()
+        && env.QWEN_API_ALLOWED_HOST?.trim()
+        && env.QWEN_IMAGE_ALLOWED_HOSTS?.trim(),
+    ),
+  };
+}
+
+function availableGenerationModel(env: Env, requestedModelId?: string): CatalogModel | null {
+  const models = createModelCatalog(modelRuntime(env)).filter((model) => model.available);
+  if (!requestedModelId) return models[0] ?? null;
+  return models.find((model) => model.id === requestedModelId) ?? null;
+}
 
 function now() {
   return new Date().toISOString();
@@ -182,17 +211,6 @@ function publicUser(row: UserRow): User {
     emailVerified: Boolean(row.email_verified_at),
     createdAt: row.created_at,
   };
-}
-
-function nextGuestReset() {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() + 1);
-  date.setUTCHours(0, 0, 0, 0);
-  return date.toISOString();
-}
-
-function quotaDate() {
-  return now().slice(0, 10);
 }
 
 function passwordIsStrong(password: string) {
@@ -220,11 +238,30 @@ function setPrivateCookie(c: Context<WorkerContext>, name: string, value: string
   });
 }
 
+function oauthStateCookieName(provider: OAuthProvider) {
+  return `qwen_oauth_${provider}_state`;
+}
+
+function setOAuthStateCookie(c: Context<WorkerContext>, provider: OAuthProvider, state: string) {
+  setCookie(c, oauthStateCookieName(provider), state, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: OAUTH_STATE_SECONDS,
+  });
+}
+
+export function oauthStateMatches(cookieState: string | undefined, queryState: string) {
+  if (!cookieState || cookieState.length !== queryState.length) return false;
+  return timingSafeEqual(encoder.encode(cookieState), encoder.encode(queryState));
+}
+
 async function readBody(c: Context<WorkerContext>) {
   return c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
 }
 
-async function resolveActor(c: Context<WorkerContext>, ensureGuest = true): Promise<Actor> {
+async function resolveActor(c: Context<WorkerContext>): Promise<Actor> {
   const authorization = c.req.header("authorization");
   if (authorization?.startsWith("Bearer ")) {
     const secretHash = await hashToken(authorization.slice("Bearer ".length).trim());
@@ -239,8 +276,6 @@ async function resolveActor(c: Context<WorkerContext>, ensureGuest = true): Prom
         user: publicUser(row),
         userRow: row,
         userId: row.id,
-        anonymousSessionId: null,
-        guestUsedCount: 0,
         sessionId: null,
         apiKeyId: row.api_key_id,
         scopes: row.scopes.split(","),
@@ -262,8 +297,6 @@ async function resolveActor(c: Context<WorkerContext>, ensureGuest = true): Prom
         user: publicUser(row),
         userRow: row,
         userId: row.id,
-        anonymousSessionId: null,
-        guestUsedCount: 0,
         sessionId: row.session_id,
         apiKeyId: null,
         scopes: [],
@@ -272,35 +305,12 @@ async function resolveActor(c: Context<WorkerContext>, ensureGuest = true): Prom
     deleteCookie(c, "qwen_session", { path: "/" });
   }
 
-  const guestToken = getCookie(c, "qwen_guest");
-  if (guestToken) {
-    const guestHash = await hashToken(guestToken);
-    const guest = await c.env.DB.prepare("SELECT id, quota_date, used_count FROM anonymous_sessions WHERE token_hash = ? AND expires_at > ?")
-      .bind(guestHash, now()).first<{ id: string; quota_date: string; used_count: number }>();
-    if (guest) {
-      let usedCount = guest.used_count;
-      if (guest.quota_date !== quotaDate()) {
-        usedCount = 0;
-        await c.env.DB.prepare("UPDATE anonymous_sessions SET quota_date = ?, used_count = 0 WHERE id = ?").bind(quotaDate(), guest.id).run();
-      }
-      return { user: null, userRow: null, userId: null, anonymousSessionId: guest.id, guestUsedCount: usedCount, sessionId: null, apiKeyId: null, scopes: [] };
-    }
-    deleteCookie(c, "qwen_guest", { path: "/" });
-  }
-
-  if (!ensureGuest) return { user: null, userRow: null, userId: null, anonymousSessionId: null, guestUsedCount: 0, sessionId: null, apiKeyId: null, scopes: [] };
-  const token = createToken();
-  const id = crypto.randomUUID();
-  const createdAt = now();
-  const expiresAt = new Date(Date.now() + GUEST_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  await c.env.DB.prepare("INSERT INTO anonymous_sessions (id, token_hash, quota_date, used_count, expires_at, created_at) VALUES (?, ?, ?, 0, ?, ?)")
-    .bind(id, await hashToken(token), quotaDate(), expiresAt, createdAt).run();
-  setPrivateCookie(c, "qwen_guest", token, GUEST_DAYS);
-  return { user: null, userRow: null, userId: null, anonymousSessionId: id, guestUsedCount: 0, sessionId: null, apiKeyId: null, scopes: [] };
+  if (getCookie(c, "qwen_guest")) deleteCookie(c, "qwen_guest", { path: "/" });
+  return { user: null, userRow: null, userId: null, sessionId: null, apiKeyId: null, scopes: [] };
 }
 
 async function requireUser(c: Context<WorkerContext>) {
-  const actor = await resolveActor(c, false);
+  const actor = await resolveActor(c);
   if (!actor.user) return null;
   c.set("actor", actor);
   return actor;
@@ -321,6 +331,14 @@ async function creditAccount(env: Env, userId: string) {
 async function isVip(env: Env, userId: string | null) {
   if (!userId) return false;
   const account = await billingAccount(env, userId);
+  return account.plan === "creator"
+    && ["creator", "professional"].includes(account.plan_tier)
+    && (account.status === "active" || account.status === "trialing");
+}
+
+async function hasPaidPlan(env: Env, userId: string | null) {
+  if (!userId) return false;
+  const account = await billingAccount(env, userId);
   return account.plan === "creator" && (account.status === "active" || account.status === "trialing");
 }
 
@@ -328,17 +346,18 @@ async function sessionState(env: Env, actor: Actor): Promise<SessionState> {
   if (actor.user && actor.userId) {
     const credits = await creditAccount(env, actor.userId);
     const vip = await isVip(env, actor.userId);
+    const paid = await hasPaidPlan(env, actor.userId);
     return {
       user: actor.user,
       entitlements: {
-        accountType: vip ? "creator" : "free",
-        guestLimit: GUEST_LIMIT,
-        guestRemaining: GUEST_LIMIT,
+        accountType: paid ? "creator" : "free",
+        guestLimit: 0,
+        guestRemaining: 0,
         credits: credits.available,
         reservedCredits: credits.reserved,
-        guestResetsAt: nextGuestReset(),
+        guestResetsAt: "",
         priorityGeneration: vip,
-        watermarkedExports: !vip,
+        watermarkedExports: !paid,
       },
     };
   }
@@ -346,53 +365,21 @@ async function sessionState(env: Env, actor: Actor): Promise<SessionState> {
     user: null,
     entitlements: {
       accountType: "guest",
-      guestLimit: GUEST_LIMIT,
-      guestRemaining: Math.max(0, GUEST_LIMIT - actor.guestUsedCount),
+      guestLimit: 0,
+      guestRemaining: 0,
       credits: 0,
       reservedCredits: 0,
-      guestResetsAt: nextGuestReset(),
+      guestResetsAt: "",
       priorityGeneration: false,
       watermarkedExports: true,
     },
   };
 }
 
-async function ensurePromotion(env: Env, actor: Actor): Promise<PricingPromotion | null> {
-  if (!actor.userId && !actor.anonymousSessionId) return null;
-  const ownerColumn = actor.userId ? "user_id" : "anonymous_session_id";
-  const ownerId = actor.userId ?? actor.anonymousSessionId!;
-  let row = await env.DB.prepare(`SELECT starts_at, expires_at, redeemed_at FROM pricing_promotions WHERE ${ownerColumn} = ?`)
-    .bind(ownerId).first<{ starts_at: string; expires_at: string; redeemed_at: string | null }>();
-  if (!row) {
-    const startsAt = now();
-    const expiresAt = new Date(Date.now() + PROMOTION_MINUTES * 60 * 1000).toISOString();
-    await env.DB.prepare(`INSERT OR IGNORE INTO pricing_promotions (id, ${ownerColumn}, offer_id, starts_at, expires_at, created_at) VALUES (?, ?, 'creator_intro', ?, ?, ?)`)
-      .bind(crypto.randomUUID(), ownerId, startsAt, expiresAt, startsAt).run();
-    row = await env.DB.prepare(`SELECT starts_at, expires_at, redeemed_at FROM pricing_promotions WHERE ${ownerColumn} = ?`)
-      .bind(ownerId).first<{ starts_at: string; expires_at: string; redeemed_at: string | null }>();
-  }
-  if (!row) return null;
-  const offers = await versionedBillingOffers(env);
-  const intro = offers.find((offer) => offer.id === "creator_intro");
-  const standard = offers.find((offer) => offer.id === "creator_monthly");
-  if (!intro || !standard) return null;
-  return {
-    offerId: "creator_intro",
-    standardOfferId: "creator_monthly",
-    startsAt: row.starts_at,
-    expiresAt: row.expires_at,
-    active: !row.redeemed_at && Date.parse(row.expires_at) > Date.now(),
-    redeemed: Boolean(row.redeemed_at),
-    standardAmountCents: standard.amountCents,
-    promotionalAmountCents: intro.amountCents,
-    currency: standard.currency,
-  };
-}
-
-function billingPriceLabel(amountCents: number, kind: BillingOffer["kind"]) {
+function billingPriceLabel(amountCents: number, kind: BillingOffer["kind"], interval?: BillingInterval) {
   const amount = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
     .format(amountCents / 100);
-  return kind === "subscription" ? `${amount} / month` : `${amount} one time`;
+  return kind === "subscription" ? `${amount} / ${interval ?? "month"}` : `${amount} one time`;
 }
 
 async function activeBillingPriceVersions(env: Env) {
@@ -423,32 +410,24 @@ async function versionedBillingOffers(env: Env) {
       currency: version.currency,
       credits: version.credits,
       kind: version.kind,
-      priceLabel: billingPriceLabel(version.amount_cents, version.kind),
-      configured: billingConfigured(env),
+      priceLabel: billingPriceLabel(version.amount_cents, version.kind, base.billingInterval),
+      configured: base.configured && version.stripe_price_id === priceIdFor(env, base.id),
     };
   });
 }
 
 async function billingRuntimeConfigured(env: Env) {
   if (!billingConfigured(env)) return false;
-  const versions = await activeBillingPriceVersions(env);
-  return billingOfferIds.every((offerId) => versions.some((version) => version.offer_id === offerId));
+  return (await versionedBillingOffers(env)).some((offer) => offer.configured);
 }
 
-async function migrateGuestData(env: Env, guestId: string | null, userId: string) {
-  if (!guestId) return 0;
-  const guestPromotion = await env.DB.prepare("SELECT * FROM pricing_promotions WHERE anonymous_session_id = ?").bind(guestId).first<Record<string, unknown>>();
-  const userPromotion = await env.DB.prepare("SELECT id FROM pricing_promotions WHERE user_id = ?").bind(userId).first();
-  const statements = [
-    env.DB.prepare("UPDATE generations SET owner_user_id = ?, anonymous_session_id = NULL WHERE anonymous_session_id = ?").bind(userId, guestId),
-  ];
-  if (guestPromotion && !userPromotion) {
-    statements.push(env.DB.prepare("UPDATE pricing_promotions SET user_id = ?, anonymous_session_id = NULL WHERE anonymous_session_id = ?").bind(userId, guestId));
-  } else if (guestPromotion) {
-    statements.push(env.DB.prepare("DELETE FROM pricing_promotions WHERE anonymous_session_id = ?").bind(guestId));
-  }
-  const results = await env.DB.batch(statements);
-  return results[0].meta.changes ?? 0;
+function subscriptionDescriptor(offerId: string): {
+  tier: BillingPlanTier;
+  interval: BillingInterval;
+} {
+  if (offerId.startsWith("starter_")) return { tier: "starter", interval: offerId.endsWith("_yearly") ? "year" : "month" };
+  if (offerId.startsWith("professional_")) return { tier: "professional", interval: offerId.endsWith("_yearly") ? "year" : "month" };
+  return { tier: "creator", interval: offerId.endsWith("_yearly") ? "year" : "month" };
 }
 
 async function createSession(c: Context<WorkerContext>, userId: string) {
@@ -502,7 +481,16 @@ async function resolveOAuthUser(
     WHERE i.provider = ? AND i.provider_subject = ?`)
     .bind(input.provider, input.subject)
     .first<UserRow>();
-  if (identity) return identity;
+  if (identity) {
+    await grantCredits(env.DB, {
+      userId: identity.id,
+      amount: 20,
+      type: "signup_grant",
+      referenceId: "email-verification",
+      description: "Account welcome credits",
+    });
+    return identity;
+  }
 
   let user = await env.DB.prepare("SELECT * FROM users WHERE email_normalized = ?")
     .bind(input.email.toLowerCase())
@@ -516,7 +504,7 @@ async function resolveOAuthUser(
       amount: 20,
       type: "signup_grant",
       referenceId: "email-verification",
-      description: "Verified social-account starter credits",
+      description: "Account welcome credits",
       timestamp,
     });
     try {
@@ -561,7 +549,7 @@ async function resolveOAuthUser(
     amount: 20,
     type: "signup_grant",
     referenceId: "email-verification",
-    description: "Verified social-account starter credits",
+    description: "Account welcome credits",
     timestamp,
   });
   const results = await env.DB.batch([
@@ -607,6 +595,7 @@ function validateGeneration(value: Record<string, unknown>): GenerationRequest |
   if (!validRatios.includes(value.aspectRatio as AspectRatio) || !validStyles.includes(value.style as ImageStyle) || !validQualities.includes(value.quality as ImageQuality)) return null;
   return {
     prompt,
+    modelId: typeof value.modelId === "string" ? value.modelId : undefined,
     aspectRatio: value.aspectRatio as AspectRatio,
     style: value.style as ImageStyle,
     quality: value.quality as ImageQuality,
@@ -634,9 +623,16 @@ function validImageSignature(bytes: Uint8Array, mimeType: string) {
 }
 
 async function generateAsset(env: Env, input: GenerationRequest) {
-  if (env.GENERATION_PROVIDER !== "qwen") {
+  const selectedModel = availableGenerationModel(env, input.modelId);
+  if (!selectedModel) {
+    throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The selected image model is not available.");
+  }
+  if (selectedModel.provider === "local-preview") {
     const result = renderGeneration(input);
-    return { bytes: encoder.encode(result.svg), mimeType: "image/svg+xml", width: result.width, height: result.height, provider: "local-preview", model: "local-qwen-preview" };
+    return { bytes: encoder.encode(result.svg), mimeType: "image/svg+xml", width: result.width, height: result.height, provider: selectedModel.provider, model: selectedModel.id };
+  }
+  if (selectedModel.provider !== "alibaba-model-studio") {
+    throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The selected image model has no assigned provider.");
   }
   if (!env.DASHSCOPE_API_KEY || !env.QWEN_API_BASE_URL || !env.QWEN_API_ALLOWED_HOST || !env.QWEN_IMAGE_ALLOWED_HOSTS) {
     throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The image provider is not configured.");
@@ -658,7 +654,7 @@ async function generateAsset(env: Env, input: GenerationRequest) {
     method: "POST",
     headers: { Authorization: `Bearer ${env.DASHSCOPE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: env.QWEN_MODEL_ID || "qwen-image-2.0-pro",
+      model: selectedModel.id,
       input: { messages: [{ role: "user", content: [{ text: `${input.prompt}\nVisual direction: ${input.style.toLowerCase()}.` }] }] },
       parameters: { size: `${dimensions.width}*${dimensions.height}`, n: 1, prompt_extend: true, watermark: false },
     }),
@@ -680,14 +676,14 @@ async function generateAsset(env: Env, input: GenerationRequest) {
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || !allowedHosts.includes(parsed.hostname.toLowerCase())) {
     throw new ExternalRequestError("PROVIDER_ASSET_REJECTED", "The image provider returned an untrusted asset location.");
   }
-  const image = await fetchWithTimeout(parsed, { redirect: "error" }, timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS), "Generated image download");
+  const image = await fetchWithTimeout(parsed, {}, timeoutMs(env.EXTERNAL_HTTP_TIMEOUT_MS), "Generated image download");
   if (!image.ok) throw new ExternalRequestError("PROVIDER_ASSET_UNAVAILABLE", "The generated image could not be downloaded.");
   const mimeType = (image.headers.get("content-type") || "").split(";")[0].toLowerCase();
   const bytes = new Uint8Array(await image.arrayBuffer());
   if (bytes.byteLength > 25 * 1024 * 1024 || !validImageSignature(bytes, mimeType)) {
     throw new ExternalRequestError("PROVIDER_ASSET_INVALID", "The generated image did not pass asset validation.");
   }
-  return { bytes, mimeType, ...dimensions, provider: "alibaba-model-studio", model: env.QWEN_MODEL_ID || "qwen-image-2.0-pro" };
+  return { bytes, mimeType, ...dimensions, provider: selectedModel.provider, model: selectedModel.id };
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -812,6 +808,30 @@ async function stripeInvoicePaymentIntent(env: Env, object: Record<string, unkno
   return typeof paymentIntent === "string" ? paymentIntent : "";
 }
 
+async function stripeChargePaymentIntent(env: Env, value: unknown) {
+  const chargeId = stripeObjectId(value);
+  if (!chargeId.startsWith("ch_")) {
+    throw new Error("Stripe risk event has no valid Charge.");
+  }
+  const expanded = value && typeof value === "object" ? value as Record<string, unknown> : null;
+  const embedded = stripeObjectId(expanded?.payment_intent);
+  if (embedded) return { chargeId, paymentIntent: embedded };
+  const charge = await stripeRequest<{ id?: unknown; payment_intent?: unknown }>(
+    env,
+    `/v1/charges/${encodeURIComponent(chargeId)}`,
+    undefined,
+    "GET",
+  );
+  if (stripeObjectId(charge.id) !== chargeId) {
+    throw new Error("Stripe returned a mismatched Charge.");
+  }
+  const paymentIntent = stripeObjectId(charge.payment_intent);
+  if (!paymentIntent.startsWith("pi_")) {
+    throw new Error("Stripe Charge has no valid PaymentIntent.");
+  }
+  return { chargeId, paymentIntent };
+}
+
 async function verifyStripeSignature(secret: string, body: string, signature: string | undefined) {
   if (!signature) return false;
   const fields = signature.split(",").map((entry) => entry.split("="));
@@ -926,12 +946,11 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const customerId = stripeObjectId(object.customer);
     const subscriptionId = stripeObjectId(object.subscription);
     if (!customerId || !subscriptionId || !["paid", "no_payment_required"].includes(String(object.payment_status))) throw new Error("Subscription checkout is incomplete.");
+    const subscription = subscriptionDescriptor(order.offer_id);
     await env.DB.batch([
       env.DB.prepare("UPDATE billing_orders SET status = 'paid', completed_at = ? WHERE id = ?").bind(now(), order.id),
-      env.DB.prepare("UPDATE billing_accounts SET stripe_customer_id = ?, stripe_subscription_id = ?, plan = 'creator', status = 'active', updated_at = ? WHERE user_id = ?")
-        .bind(customerId, subscriptionId, now(), order.user_id),
-      env.DB.prepare("UPDATE pricing_promotions SET redeemed_at = ? WHERE user_id = ? AND offer_id = 'creator_intro' AND ? = 'creator_intro'")
-        .bind(now(), order.user_id, order.offer_id),
+      env.DB.prepare("UPDATE billing_accounts SET stripe_customer_id = ?, stripe_subscription_id = ?, plan = 'creator', plan_tier = ?, billing_interval = ?, active_offer_id = ?, status = 'active', updated_at = ? WHERE user_id = ?")
+        .bind(customerId, subscriptionId, subscription.tier, subscription.interval, order.offer_id, now(), order.user_id),
       env.DB.prepare("UPDATE billing_checkout_attempts SET status = 'completed', updated_at = ? WHERE id = ?").bind(now(), order.id),
     ]);
     return;
@@ -956,17 +975,84 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
       && candidate.currency === object.currency);
     const allowedReasons = new Set(["subscription_create", "subscription_cycle", "subscription_update"]);
     if (!customerId || !subscriptionId || !invoiceId || !paymentIntent || object.status !== "paid" || object.currency !== "usd"
-      || !allowedReasons.has(String(object.billing_reason)) || !priceVersion) throw new Error("Paid invoice failed the known Creator price-version contract.");
+      || !allowedReasons.has(String(object.billing_reason)) || !priceVersion) throw new Error("Paid invoice failed the known subscription price-version contract.");
     const account = await env.DB.prepare("SELECT user_id, stripe_subscription_id FROM billing_accounts WHERE stripe_customer_id = ?").bind(customerId).first<{ user_id: string; stripe_subscription_id: string | null }>();
     if (!account || (account.stripe_subscription_id && account.stripe_subscription_id !== subscriptionId)) throw new Error("Paid invoice does not match a local subscription.");
     const existing = await env.DB.prepare("SELECT payment_intent_id FROM billing_payments WHERE payment_intent_id = ? OR invoice_id = ?").bind(paymentIntent, invoiceId).first();
     if (!existing) {
-      await grantCredits(env.DB, { userId: account.user_id, amount: priceVersion.credits, type: "subscription_grant", referenceId: invoiceId, description: "Creator VIP monthly credits" });
+      const subscription = subscriptionDescriptor(priceVersion.offer_id);
+      const periodLabel = subscription.interval === "year" ? "annual" : "monthly";
+      await grantCredits(env.DB, {
+        userId: account.user_id,
+        amount: priceVersion.credits,
+        type: "subscription_grant",
+        referenceId: invoiceId,
+        description: `${subscription.tier[0].toUpperCase()}${subscription.tier.slice(1)} ${periodLabel} credits`,
+      });
       await env.DB.prepare("INSERT INTO billing_payments (payment_intent_id, user_id, invoice_id, kind, credits_granted, amount_cents, currency, stripe_price_id, created_at, updated_at) VALUES (?, ?, ?, 'subscription', ?, ?, ?, ?, ?, ?)")
         .bind(paymentIntent, account.user_id, invoiceId, priceVersion.credits, priceVersion.amount_cents, priceVersion.currency, priceVersion.stripe_price_id, now(), now()).run();
     }
-    await env.DB.prepare("UPDATE billing_accounts SET stripe_subscription_id = ?, plan = 'creator', status = 'active', current_period_end = COALESCE(?, current_period_end), cancel_at_period_end = 0, spending_blocked = 0, block_reason = NULL, updated_at = ? WHERE user_id = ?")
-      .bind(subscriptionId, periodEnd, now(), account.user_id).run();
+    const subscription = subscriptionDescriptor(priceVersion.offer_id);
+    await env.DB.prepare("UPDATE billing_accounts SET stripe_subscription_id = ?, plan = 'creator', plan_tier = ?, billing_interval = ?, active_offer_id = ?, status = 'active', current_period_end = COALESCE(?, current_period_end), cancel_at_period_end = 0, updated_at = ? WHERE user_id = ?")
+      .bind(subscriptionId, subscription.tier, subscription.interval, priceVersion.offer_id, periodEnd, now(), account.user_id).run();
+    return;
+  }
+
+  if (event.type === "radar.early_fraud_warning.created") {
+    const warningId = stripeObjectId(object.id);
+    if (!warningId.startsWith("issfr_") || typeof object.actionable !== "boolean") {
+      throw new Error("Stripe early fraud warning is incomplete.");
+    }
+    const { chargeId, paymentIntent } = await stripeChargePaymentIntent(env, object.charge);
+    const payment = await env.DB.prepare("SELECT user_id FROM billing_payments WHERE payment_intent_id = ?")
+      .bind(paymentIntent)
+      .first<BillingPaymentOwnerRow>();
+    if (!payment) return;
+    const timestamp = now();
+    const actionable = object.actionable;
+    const fraudType = typeof object.fraud_type === "string" && object.fraud_type
+      ? object.fraud_type.slice(0, 80)
+      : "unknown";
+    const statements = [
+      env.DB.prepare(`INSERT OR IGNORE INTO billing_risk_events
+        (stripe_event_id, warning_id, charge_id, payment_intent_id, user_id, kind,
+          actionable, fraud_type, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'early_fraud_warning', ?, ?, ?, ?, ?)`)
+        .bind(
+          event.id,
+          warningId,
+          chargeId,
+          paymentIntent,
+          payment.user_id,
+          actionable ? 1 : 0,
+          fraudType,
+          actionable ? "open" : "non_actionable",
+          timestamp,
+          timestamp,
+        ),
+      env.DB.prepare(`UPDATE billing_payments
+        SET financial_event_id = CASE WHEN status = 'paid' THEN ? ELSE financial_event_id END,
+          updated_at = ?
+        WHERE payment_intent_id = ?`)
+        .bind(event.id, timestamp, paymentIntent),
+      env.DB.prepare(`UPDATE billing_orders
+        SET financial_event_id = CASE WHEN financial_status = 'normal' THEN ? ELSE financial_event_id END
+        WHERE payment_intent_id = ?`)
+        .bind(event.id, paymentIntent),
+    ];
+    if (actionable) {
+      statements.push(
+        env.DB.prepare(`UPDATE billing_accounts
+          SET spending_blocked = 1, block_reason = ?, updated_at = ?
+          WHERE user_id = ?`)
+          .bind(
+            "Credit spending is paused while an early fraud warning is reviewed.",
+            timestamp,
+            payment.user_id,
+          ),
+      );
+    }
+    await env.DB.batch(statements);
     return;
   }
 
@@ -992,8 +1078,18 @@ async function handleStripeEvent(env: Env, event: StripeEvent) {
     const status = event.type === "customer.subscription.deleted" ? "canceled"
       : event.type === "invoice.payment_failed" ? "past_due"
         : ["active", "trialing", "past_due", "canceled"].includes(String(object.status)) ? String(object.status) : "inactive";
-    await env.DB.prepare("UPDATE billing_accounts SET stripe_subscription_id = COALESCE(?, stripe_subscription_id), plan = ?, status = ?, cancel_at_period_end = ?, updated_at = ? WHERE stripe_customer_id = ?")
-      .bind(subscriptionId || null, status === "active" || status === "trialing" ? "creator" : "free", status, object.cancel_at_period_end ? 1 : 0, now(), customerId).run();
+    await env.DB.prepare("UPDATE billing_accounts SET stripe_subscription_id = COALESCE(?, stripe_subscription_id), plan = ?, plan_tier = CASE WHEN ? IN ('active', 'trialing') THEN plan_tier ELSE 'free' END, billing_interval = CASE WHEN ? IN ('active', 'trialing') THEN billing_interval ELSE NULL END, active_offer_id = CASE WHEN ? IN ('active', 'trialing') THEN active_offer_id ELSE NULL END, status = ?, cancel_at_period_end = ?, updated_at = ? WHERE stripe_customer_id = ?")
+      .bind(
+        subscriptionId || null,
+        status === "active" || status === "trialing" ? "creator" : "free",
+        status,
+        status,
+        status,
+        status,
+        object.cancel_at_period_end ? 1 : 0,
+        now(),
+        customerId,
+      ).run();
   }
 }
 
@@ -1049,6 +1145,10 @@ app.use("/api/auth/*", async (c, next) => {
 });
 
 app.use("/api/generations", async (c, next) => {
+  if (c.req.method !== "POST") {
+    await next();
+    return;
+  }
   const limited = await enforceRateLimit(c, "web-generation", 30, 60 * 1000);
   if (limited) return limited;
   await next();
@@ -1056,7 +1156,7 @@ app.use("/api/generations", async (c, next) => {
 
 app.use("/v1/generations", async (c, next) => {
   const startedAt = Date.now();
-  const actor = await resolveActor(c, false);
+  const actor = await resolveActor(c);
   c.set("actor", actor);
   try {
     await next();
@@ -1104,13 +1204,10 @@ app.use("/api/billing/*", async (c, next) => {
 
 app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
-  const providerConfigured = c.env.GENERATION_PROVIDER !== "qwen" || Boolean(
-    c.env.DASHSCOPE_API_KEY
-      && c.env.QWEN_API_BASE_URL
-      && c.env.QWEN_API_ALLOWED_HOST
-      && c.env.QWEN_IMAGE_ALLOWED_HOSTS,
-  );
-  const priceCatalogConfigured = (await activeBillingPriceVersions(c.env)).length === billingOfferIds.length;
+  const runtime = modelRuntime(c.env);
+  const providerConfigured = runtime.providerConfigured;
+  const versions = await activeBillingPriceVersions(c.env);
+  const priceCatalogConfigured = billingOfferIds.every((offerId) => versions.some((version) => version.offer_id === offerId));
   const maintenance = await c.env.DB.prepare(`SELECT status, started_at, completed_at
     FROM maintenance_runs ORDER BY started_at DESC LIMIT 1`)
     .first<{ status: string; started_at: string; completed_at: string | null }>();
@@ -1125,8 +1222,8 @@ app.get("/api/health", async (c) => {
     revision: c.env.CF_VERSION_METADATA?.id || c.env.DEPLOY_REVISION || "unversioned",
     database: "cloudflare-d1",
     objectStorage: "cloudflare-r2",
-    generator: c.env.QWEN_MODEL_ID || "local-qwen-preview",
-    provider: c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview",
+    generator: runtime.providerModel,
+    provider: runtime.providerId,
     providerConfigured,
     auth: "session-cookie",
     oauth,
@@ -1174,22 +1271,30 @@ app.post("/api/auth/register", async (c) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return errorResponse(c, 400, "INVALID_EMAIL", "Enter a valid email address.");
   if (!passwordIsStrong(password)) return errorResponse(c, 400, "WEAK_PASSWORD", "Password must be at least 8 characters and include a letter and a number.");
   if (await c.env.DB.prepare("SELECT 1 FROM users WHERE email_normalized = ?").bind(email).first()) return errorResponse(c, 409, "EMAIL_IN_USE", "An account with this email already exists.");
-  const guest = await resolveActor(c);
   const id = crypto.randomUUID();
   const createdAt = now();
-  await c.env.DB.batch([
+  const welcomeGrant = prepareCreditGrant(c.env.DB, {
+    userId: id,
+    amount: 20,
+    type: "signup_grant",
+    referenceId: "email-verification",
+    description: "Account welcome credits",
+    timestamp: createdAt,
+  });
+  const results = await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO users (id, name, email_normalized, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
       .bind(id, name, email, await hashPassword(password), createdAt, createdAt),
     c.env.DB.prepare("INSERT INTO credit_accounts (user_id, available, reserved, updated_at) VALUES (?, 0, 0, ?)").bind(id, createdAt),
     c.env.DB.prepare("INSERT INTO billing_accounts (user_id, updated_at) VALUES (?, ?)").bind(id, createdAt),
+    ...welcomeGrant.statements,
   ]);
-  const migratedGenerations = await migrateGuestData(c.env, guest.anonymousSessionId, id);
+  creditMutationApplied(results, 3);
   const sessionId = await createSession(c, id);
   const row = (await c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>())!;
   const token = await createSecurityToken(c.env, id, "verify_email");
   const delivered = await sendAuthEmail(c.env, { email, name, token, purpose: "verify_email" });
-  const actor: Actor = { user: publicUser(row), userRow: row, userId: id, anonymousSessionId: null, guestUsedCount: 0, sessionId, apiKeyId: null, scopes: [] };
-  return c.json({ ...(await sessionState(c.env, actor)), migratedGenerations, verification: { delivered, delivery: delivered ? "resend" : "none" } }, 201);
+  const actor: Actor = { user: publicUser(row), userRow: row, userId: id, sessionId, apiKeyId: null, scopes: [] };
+  return c.json({ ...(await sessionState(c.env, actor)), verification: { delivered, delivery: delivered ? "resend" : "none" } }, 201);
 });
 
 app.post("/api/auth/login", async (c) => {
@@ -1198,15 +1303,20 @@ app.post("/api/auth/login", async (c) => {
   const password = typeof body.password === "string" ? body.password : "";
   const row = await c.env.DB.prepare("SELECT * FROM users WHERE email_normalized = ?").bind(email).first<UserRow>();
   if (!row || !(await verifyPassword(password, row.password_hash))) return errorResponse(c, 401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
-  const guest = await resolveActor(c);
-  const migratedGenerations = await migrateGuestData(c.env, guest.anonymousSessionId, row.id);
+  await grantCredits(c.env.DB, {
+    userId: row.id,
+    amount: 20,
+    type: "signup_grant",
+    referenceId: "email-verification",
+    description: "Account welcome credits",
+  });
   const sessionId = await createSession(c, row.id);
-  const actor: Actor = { user: publicUser(row), userRow: row, userId: row.id, anonymousSessionId: null, guestUsedCount: 0, sessionId, apiKeyId: null, scopes: [] };
-  return c.json({ ...(await sessionState(c.env, actor)), migratedGenerations });
+  const actor: Actor = { user: publicUser(row), userRow: row, userId: row.id, sessionId, apiKeyId: null, scopes: [] };
+  return c.json(await sessionState(c.env, actor));
 });
 
 app.post("/api/auth/logout", async (c) => {
-  const actor = await resolveActor(c, false);
+  const actor = await resolveActor(c);
   if (actor.sessionId) await c.env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(actor.sessionId).run();
   deleteCookie(c, "qwen_session", { path: "/" });
   return c.body(null, 204);
@@ -1282,26 +1392,27 @@ app.get("/api/auth/oauth/:provider/start", async (c) => {
   if (!oauthMethods(c.env)[provider]) {
     return errorResponse(c, 503, "OAUTH_UNAVAILABLE", "This sign-in provider is not configured.");
   }
-  const actor = await resolveActor(c);
   const state = createToken();
   const codeVerifier = createToken(48);
   const timestamp = now();
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at <= ?").bind(timestamp),
-    c.env.DB.prepare(`INSERT INTO oauth_states
-      (state_hash, provider, code_verifier, anonymous_session_id, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`)
-      .bind(
-        await hashToken(state),
-        provider,
-        codeVerifier,
-        actor.anonymousSessionId,
-        new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        timestamp,
-      ),
-  ]);
   try {
-    return c.redirect(await createAuthorizationUrl(c.env, provider, state, codeVerifier), 302);
+    const authorizationUrl = await createAuthorizationUrl(c.env, provider, state, codeVerifier);
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at <= ?").bind(timestamp),
+      c.env.DB.prepare(`INSERT INTO oauth_states
+        (state_hash, provider, code_verifier, anonymous_session_id, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)`)
+        .bind(
+          await hashToken(state),
+          provider,
+          codeVerifier,
+          null,
+          new Date(Date.now() + OAUTH_STATE_SECONDS * 1000).toISOString(),
+          timestamp,
+        ),
+    ]);
+    setOAuthStateCookie(c, provider, state);
+    return c.redirect(authorizationUrl, 302);
   } catch (reason) {
     console.error("oauth-start-failed", {
       provider,
@@ -1316,18 +1427,21 @@ app.get("/api/auth/oauth/:provider/callback", async (c) => {
   const provider = c.req.param("provider");
   const returnTo = (query: string) => c.redirect(`${c.env.APP_BASE_URL.replace(/\/$/, "")}${query}`, 302);
   if (!isOAuthProvider(provider)) return returnTo("/?oauth_error=provider");
+  const cookieState = getCookie(c, oauthStateCookieName(provider));
+  deleteCookie(c, oauthStateCookieName(provider), { path: "/" });
   const denied = c.req.query("error") || "";
   const code = c.req.query("code") || "";
   const state = c.req.query("state") || "";
-  if (denied || !code || !state) {
-    return returnTo(`/?oauth_error=${encodeURIComponent(denied || "missing_response")}`);
-  }
+  if (!state || !oauthStateMatches(cookieState, state)) return returnTo("/?oauth_error=invalid_state");
   const stored = await c.env.DB.prepare(`DELETE FROM oauth_states
     WHERE state_hash = ? AND provider = ? AND expires_at > ?
     RETURNING code_verifier, anonymous_session_id`)
     .bind(await hashToken(state), provider, now())
     .first<{ code_verifier: string; anonymous_session_id: string | null }>();
   if (!stored) return returnTo("/?oauth_error=invalid_state");
+  if (denied || !code) {
+    return returnTo(`/?oauth_error=${encodeURIComponent(denied || "missing_response")}`);
+  }
   try {
     const profile = await exchangeOAuthCode(c.env, provider, code, stored.code_verifier);
     const row = await resolveOAuthUser(c.env, {
@@ -1337,9 +1451,8 @@ app.get("/api/auth/oauth/:provider/callback", async (c) => {
       name: profile.name,
     });
     await createSession(c, row.id);
-    const migrated = await migrateGuestData(c.env, stored.anonymous_session_id, row.id);
     deleteCookie(c, "qwen_guest", { path: "/" });
-    return returnTo(`/studio?oauth=success&migrated=${migrated}`);
+    return returnTo("/studio?oauth=success");
   } catch (reason) {
     console.error("oauth-callback-failed", {
       provider,
@@ -1551,9 +1664,11 @@ app.get("/api/billing", async (c) => {
   const offers = await versionedBillingOffers(c.env);
   const response: BillingSummary = {
     configured: await billingRuntimeConfigured(c.env),
-    promotion: await ensurePromotion(c.env, actor),
+    promotion: null,
     account: {
       plan: account.plan,
+      planTier: account.plan_tier,
+      billingInterval: account.billing_interval,
       status: account.status,
       currentPeriodEnd: account.current_period_end,
       cancelAtPeriodEnd: Boolean(account.cancel_at_period_end),
@@ -1561,7 +1676,7 @@ app.get("/api/billing", async (c) => {
       spendingBlocked: Boolean(account.spending_blocked),
       blockReason: account.block_reason,
     },
-    offers: offers.filter((offer) => offer.id !== "creator_intro"),
+    offers,
     orders: ordersResult.results.map((order) => ({
       id: order.id, offerId: order.offer_id, kind: order.kind, credits: order.credits, amountCents: order.amount_cents, currency: order.currency,
       status: order.status, financialStatus: order.financial_status, createdAt: order.created_at, completedAt: order.completed_at,
@@ -1574,17 +1689,14 @@ app.post("/api/billing/checkout", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   if (!actor.user!.emailVerified) return errorResponse(c, 403, "EMAIL_NOT_VERIFIED", "Verify your email before starting a purchase.");
-  if (!(await billingRuntimeConfigured(c.env))) return errorResponse(c, 503, "BILLING_UNAVAILABLE", "Billing is disabled or not fully configured.");
+  if (!billingConfigured(c.env)) return errorResponse(c, 503, "BILLING_UNAVAILABLE", "Billing is disabled or Stripe credentials are incomplete.");
   const body = await readBody(c);
   const offer = (await versionedBillingOffers(c.env)).find((candidate) => candidate.id === body.offerId);
   if (!offer) return errorResponse(c, 400, "INVALID_OFFER", "Choose a valid billing offer.");
   if (!offer.configured) return errorResponse(c, 503, "OFFER_UNAVAILABLE", "This billing offer is not configured.");
   const account = await billingAccount(c.env, actor.userId!);
   if (offer.kind === "subscription" && account.plan === "creator" && ["active", "trialing"].includes(account.status)) {
-    return errorResponse(c, 409, "ALREADY_SUBSCRIBED", "Manage your active Creator subscription in the billing portal.");
-  }
-  if (offer.id === "creator_intro" && !(await ensurePromotion(c.env, actor))?.active) {
-    return errorResponse(c, 409, "PROMOTION_EXPIRED", "The $8 launch window has ended. Creator VIP is now $10 per month.");
+    return errorResponse(c, 409, "ALREADY_SUBSCRIBED", "Manage your active subscription in the billing portal.");
   }
   let customerId = account.stripe_customer_id;
   const priceVersion = await activeBillingPriceVersion(c.env, offer.id);
@@ -1763,30 +1875,34 @@ app.post("/api/billing/webhook", async (c) => {
 });
 
 app.get("/api/generations", async (c) => {
-  const actor = await resolveActor(c);
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   const limit = Math.min(50, Math.max(1, Number.parseInt(c.req.query("limit") || "8", 10) || 8));
   const projectId = c.req.query("projectId") || null;
-  const ownerColumn = actor.userId ? "owner_user_id" : "anonymous_session_id";
-  const ownerId = actor.userId ?? actor.anonymousSessionId;
-  const result = await c.env.DB.prepare(`SELECT * FROM generations WHERE ${ownerColumn} = ? ${projectId ? "AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`)
-    .bind(...(projectId ? [ownerId, projectId, limit] : [ownerId, limit])).all<GenerationRow>();
+  const result = await c.env.DB.prepare(`SELECT * FROM generations WHERE owner_user_id = ? ${projectId ? "AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`)
+    .bind(...(projectId ? [actor.userId, projectId, limit] : [actor.userId, limit])).all<GenerationRow>();
   return c.json({ generations: result.results.map(generationFromRow) });
 });
 
 async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
-  const actor = apiOnly ? c.get("actor") : await resolveActor(c, true);
+  const actor = apiOnly ? c.get("actor") : await resolveActor(c);
   c.set("actor", actor);
   if (apiOnly && (!actor.user || !actor.apiKeyId)) return errorResponse(c, 401, "INVALID_API_KEY", "Provide a valid API key in the Authorization header.");
   if (apiOnly && !actor.scopes.includes("generations:write")) return errorResponse(c, 403, "INSUFFICIENT_SCOPE", "This API key does not have generations:write access.");
+  if (!actor.user || !actor.userId) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to generate an image.");
   const body = await readBody(c);
   const normalized = apiOnly ? {
     prompt: body.prompt,
+    modelId: body.model,
     aspectRatio: body.aspect_ratio,
     style: typeof body.style === "string" ? body.style.replace(/^./, (value) => value.toUpperCase()) : "Photorealistic",
     quality: typeof body.quality === "string" ? body.quality.replace(/^./, (value) => value.toUpperCase()) : "High",
     projectId: body.project_id,
   } : body;
-  const input = validateGeneration(normalized);
+  const requestedModelId = typeof normalized.modelId === "string" ? normalized.modelId.trim() : "";
+  const selectedModel = availableGenerationModel(c.env, requestedModelId);
+  if (!selectedModel) return errorResponse(c, 400, "MODEL_UNAVAILABLE", "Choose an available image model.");
+  const input = validateGeneration({ ...normalized, modelId: selectedModel.id });
   if (!input) return errorResponse(c, 400, "INVALID_REQUEST", "Prompt or generation settings are invalid.");
   if (input.projectId) {
     const owns = actor.userId && await c.env.DB.prepare("SELECT 1 FROM projects WHERE id = ? AND user_id = ?").bind(input.projectId, actor.userId).first();
@@ -1823,7 +1939,7 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
   const vip = await isVip(c.env, actor.userId);
   const queueTier = vip ? "vip" : "free";
   const generationId = crypto.randomUUID();
-  const creditCost = actor.userId ? qualityCosts[input.quality] : 0;
+  const creditCost = qualityCosts[input.quality];
   const timestamp = now();
   let generationRequestId: string | null = null;
   if (apiOnly && idempotencyKey && actor.userId) {
@@ -1867,14 +1983,14 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
     .bind(
       generationId,
       actor.userId,
-      actor.anonymousSessionId,
+      null,
       input.projectId || null,
       input.prompt,
       input.aspectRatio,
       input.style,
       input.quality,
-      c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview",
-      c.env.QWEN_MODEL_ID || "local-qwen-preview",
+      selectedModel.provider,
+      selectedModel.id,
       creditCost,
       queueTier,
       timestamp,
@@ -1924,21 +2040,8 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
       }
       return errorResponse(c, 402, "INSUFFICIENT_CREDITS", `This generation costs ${creditCost} credits.`);
     }
-  } else if (actor.anonymousSessionId) {
-    const results = await c.env.DB.batch([
-      insertGeneration(`EXISTS (
-        SELECT 1 FROM anonymous_sessions
-        WHERE id = ? AND quota_date = ? AND used_count < ?
-      )`, [actor.anonymousSessionId, quotaDate(), GUEST_LIMIT]),
-      c.env.DB.prepare(`UPDATE anonymous_sessions SET used_count = used_count + 1
-        WHERE id = ? AND quota_date = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ?)`)
-        .bind(actor.anonymousSessionId, quotaDate(), generationId),
-    ]);
-    if ((results[0].meta.changes ?? 0) !== 1 || (results[1].meta.changes ?? 0) !== 1) {
-      return errorResponse(c, 429, "ANONYMOUS_LIMIT_REACHED", "You have used today's three free generations. Sign up for 20 credits or return tomorrow.");
-    }
   } else {
-    return errorResponse(c, 401, "UNAUTHENTICATED", "A session is required to generate an image.");
+    return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to generate an image.");
   }
   let objectKey: string | null = null;
   let completed = false;
@@ -1952,11 +2055,11 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
       .run();
     const asset = await generateAsset(c.env, input);
     const extension = asset.mimeType === "image/svg+xml" ? "svg" : asset.mimeType === "image/jpeg" ? "jpg" : asset.mimeType === "image/webp" ? "webp" : "png";
-    const key = `generations/${actor.userId ? `users/${actor.userId}` : `guests/${actor.anonymousSessionId}`}/${generationId}.${extension}`;
+    const key = `generations/users/${actor.userId}/${generationId}.${extension}`;
     objectKey = key;
     await c.env.ASSETS_BUCKET.put(key, asset.bytes, {
       httpMetadata: { contentType: asset.mimeType, cacheControl: "private, no-store" },
-      customMetadata: { generationId, ownerType: actor.userId ? "user" : "guest" },
+      customMetadata: { generationId, ownerType: "user" },
     });
     const completion = await c.env.DB.prepare(`UPDATE generations
       SET status = 'complete', width = ?, height = ?, r2_key = ?, mime_type = ?, provider = ?, model = ?, updated_at = ?
@@ -2013,10 +2116,6 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
         .run();
       if ((failed.meta.changes ?? 0) === 1 && actor.userId) {
         await refundCredits(c.env.DB, { userId: actor.userId, amount: creditCost, referenceId: generationId });
-      } else if ((failed.meta.changes ?? 0) === 1 && actor.anonymousSessionId) {
-        await c.env.DB.prepare("UPDATE anonymous_sessions SET used_count = MAX(0, used_count - 1) WHERE id = ? AND quota_date = ?")
-          .bind(actor.anonymousSessionId, quotaDate())
-          .run();
       }
       if (generationRequestId) {
         await c.env.DB.prepare("UPDATE generation_requests SET status = 'failed', failure_code = ?, updated_at = ? WHERE id = ?")
@@ -2050,9 +2149,10 @@ app.post("/api/generations", (c) => generationHandler(c, false));
 app.post("/v1/generations", (c) => generationHandler(c, true));
 
 async function generationAsset(c: Context<WorkerContext>, download: boolean) {
-  const actor = await resolveActor(c, false);
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to access this image.");
   const row = await c.env.DB.prepare("SELECT * FROM generations WHERE id = ?").bind(c.req.param("id")).first<GenerationRow>();
-  if (!row || (row.owner_user_id !== actor.userId && row.anonymous_session_id !== actor.anonymousSessionId) || !row.r2_key) {
+  if (!row || row.owner_user_id !== actor.userId || !row.r2_key) {
     return errorResponse(c, 404, "NOT_FOUND", "Image not found.");
   }
   const object = await c.env.ASSETS_BUCKET.get(row.r2_key);
@@ -2076,9 +2176,10 @@ app.get("/api/generations/:id/image", (c) => generationAsset(c, false));
 app.get("/api/generations/:id/download", (c) => generationAsset(c, true));
 
 app.delete("/api/generations/:id", async (c) => {
-  const actor = await resolveActor(c, false);
-  const row = await c.env.DB.prepare("SELECT r2_key FROM generations WHERE id = ? AND ((owner_user_id = ? AND ? IS NOT NULL) OR (anonymous_session_id = ? AND ? IS NOT NULL))")
-    .bind(c.req.param("id"), actor.userId, actor.userId, actor.anonymousSessionId, actor.anonymousSessionId).first<{ r2_key: string | null }>();
+  const actor = await requireUser(c);
+  if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to manage your generations.");
+  const row = await c.env.DB.prepare("SELECT r2_key FROM generations WHERE id = ? AND owner_user_id = ?")
+    .bind(c.req.param("id"), actor.userId).first<{ r2_key: string | null }>();
   if (!row) return errorResponse(c, 404, "NOT_FOUND", "Generation not found.");
   if (row.r2_key) await c.env.ASSETS_BUCKET.delete(row.r2_key);
   await c.env.DB.prepare("DELETE FROM generations WHERE id = ?").bind(c.req.param("id")).run();
@@ -2224,7 +2325,14 @@ app.get("/api/workspace/overview", async (c) => {
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
 
   const overview: WorkspaceOverview = {
-    plan: { name: account.plan === "creator" ? "Creator" : "Free", status: account.status },
+    plan: {
+      name: account.plan === "creator"
+        ? account.plan_tier === "professional" ? "Professional"
+          : account.plan_tier === "starter" ? "Starter"
+            : "Creator"
+        : "Account",
+      status: account.status,
+    },
     credits,
     usage: {
       generationsThisMonth: Number(counts?.generations_this_month ?? 0),
@@ -2452,26 +2560,17 @@ app.get("/api/api-logs", async (c) => {
 });
 
 app.get("/api/catalog", async (c) => {
-  const actor = await resolveActor(c);
   const offers = await versionedBillingOffers(c.env);
-  const creatorOffer = offers.find((offer) => offer.id === "creator_monthly");
-  const billingReady = await billingRuntimeConfigured(c.env);
-  const providerId = c.env.GENERATION_PROVIDER === "qwen" ? "alibaba-model-studio" : "local-preview";
+  const runtime = modelRuntime(c.env);
   return c.json({
     ...createCatalogCore({
-      providerId,
-      providerModel: c.env.QWEN_MODEL_ID || (providerId === "alibaba-model-studio" ? "qwen-image-2.0-pro" : "local-qwen-preview"),
-      providerConfigured: providerId === "local-preview" || Boolean(
-        c.env.DASHSCOPE_API_KEY
-          && c.env.QWEN_API_BASE_URL
-          && c.env.QWEN_API_ALLOWED_HOST
-          && c.env.QWEN_IMAGE_ALLOWED_HOSTS,
-      ),
-      creatorPriceLabel: creatorOffer?.priceLabel ?? "$10 / month",
-      creatorCredits: creatorOffer?.credits ?? 300,
-      creatorPlanned: !billingReady,
+      ...runtime,
+      creatorPriceLabel: "$29.90 / month",
+      creatorCredits: 2000,
+      creatorPlanned: !offers.some((offer) => offer.configured),
+      pricingOffers: offers,
     }),
-    promotion: await ensurePromotion(c.env, actor),
+    promotion: null,
     creditPacks: offers.filter((offer) => offer.kind === "credits"),
   });
 });

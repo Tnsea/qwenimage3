@@ -9,7 +9,7 @@ export function getGenerationProvider() {
   const requested = process.env.GENERATION_PROVIDER?.trim().toLowerCase() || "local";
   if (requested === "qwen") {
     const configuration = qwenConfiguration();
-    if (!configuration.configured) throw new Error("GENERATION_PROVIDER=qwen requires DASHSCOPE_API_KEY and QWEN_API_BASE_URL.");
+    if (!configuration.configured) throw new Error("GENERATION_PROVIDER=qwen requires complete credentials and the supported qwen-image-2.0-pro model.");
     provider = new QwenImageProvider(configuration);
     return provider;
   }

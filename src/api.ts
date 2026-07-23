@@ -1,4 +1,4 @@
-import type { ApiErrorPayload } from "./types";
+import type { ApiErrorPayload } from "./types.js";
 
 export class ApiClientError extends Error {
   code: string;
@@ -22,7 +22,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (response.status === 204) return undefined as T;
-  const payload = (await response.json()) as T | ApiErrorPayload;
+  let payload: T | ApiErrorPayload;
+  try {
+    payload = (await response.json()) as T | ApiErrorPayload;
+  } catch {
+    throw new ApiClientError(
+      response.ok ? "The service returned an unreadable response." : "The service is temporarily unavailable.",
+      "INVALID_RESPONSE",
+      response.status,
+    );
+  }
   if (!response.ok) {
     const error = (payload as ApiErrorPayload).error;
     throw new ApiClientError(error?.message ?? "The request failed.", error?.code ?? "REQUEST_FAILED", response.status);

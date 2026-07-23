@@ -5,16 +5,17 @@ import type { BillingOffer, PricingPromotion } from "../src/types.js";
 
 const creditPacks: BillingOffer[] = [
   {
-    id: "credits_100",
-    name: "100-credit pack",
+    id: "credits_400",
+    name: "400-credit pack",
     description: "A one-time top-up.",
-    priceLabel: "$7 one time",
-    amountCents: 700,
+    priceLabel: "$12 one time",
+    amountCents: 1200,
     currency: "usd",
-    credits: 100,
+    credits: 400,
     kind: "credits",
     configured: false,
-    features: ["100 credits"],
+    standardImages: 100,
+    features: ["400 credits"],
   },
 ];
 
@@ -41,10 +42,47 @@ test("shared catalog core matches the browser contract", () => {
   });
   const catalog = parseCatalog({ ...core, promotion, creditPacks });
 
-  assert.deepEqual(catalog.plans.map((plan) => plan.id), ["guest", "free", "creator"]);
+  assert.deepEqual(catalog.plans.map((plan) => plan.id), ["starter", "creator", "professional"]);
+  assert.equal(catalog.plans.some((plan) => plan.name === "Guest"), false);
   assert.ok(catalog.plans.every((plan) => plan.features.length > 0));
+  assert.deepEqual(catalog.plans.map((plan) => plan.monthlyAmountCents), [990, 2990, 5990]);
+  assert.deepEqual(catalog.plans.map((plan) => plan.yearlyAmountCents), [9900, 29900, 59900]);
+  assert.deepEqual(catalog.plans.map((plan) => plan.monthlyCredits), [500, 2000, 5000]);
+  assert.deepEqual(catalog.plans.map((plan) => plan.yearlyCredits), [6000, 24000, 60000]);
   assert.ok(catalog.prompts.every((prompt) => prompt.id && prompt.category && prompt.title && prompt.prompt));
-  assert.ok(catalog.models.every((model) => model.id && model.status && model.speed && model.cost && model.bestFor));
+  assert.ok(catalog.models.every((model) => model.id && model.provider && typeof model.available === "boolean" && model.status && model.speed && model.cost && model.bestFor));
+  assert.deepEqual(catalog.models.filter((model) => model.available).map((model) => model.id), ["local-qwen-preview"]);
+  assert.equal(catalog.models.find((model) => model.id === "qwen-image-3")?.available, false);
+  assert.equal(catalog.models.find((model) => model.id === "qwen-image-3")?.provider, "unassigned");
+});
+
+test("catalog exposes only the configured provider model as selectable", () => {
+  const core = createCatalogCore({
+    providerId: "alibaba-model-studio",
+    providerModel: "qwen-image-2.0-pro",
+    providerConfigured: true,
+    creatorPriceLabel: "$10 / month",
+    creatorCredits: 300,
+    creatorPlanned: true,
+  });
+
+  assert.deepEqual(core.models.filter((model) => model.available).map((model) => model.id), ["qwen-image-2.0-pro"]);
+  assert.equal(core.models.find((model) => model.id === "local-qwen-preview")?.available, false);
+});
+
+test("catalog never promotes an unsupported Qwen model override", () => {
+  const core = createCatalogCore({
+    providerId: "alibaba-model-studio",
+    providerModel: "qwen-image-3",
+    providerConfigured: true,
+    creatorPriceLabel: "$10 / month",
+    creatorCredits: 300,
+    creatorPlanned: true,
+  });
+
+  assert.equal(core.models.some((model) => model.available), false);
+  assert.equal(core.models.filter((model) => model.id === "qwen-image-3").length, 1);
+  assert.equal(core.models.find((model) => model.id === "qwen-image-2.0-pro")?.status, "Unsupported model configuration");
 });
 
 test("catalog parser rejects the former Cloudflare response shape", () => {

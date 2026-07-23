@@ -6,6 +6,9 @@
 @import "./styles/pricing.css";
 @import "./styles/detail-polish.css";
 @import "./styles/workspace.css";
+@import "./styles/creation-workspace.css";
+@import "./styles/decision-sections.css";
+@import "./styles/site-footer.css";
 
 @plugin "daisyui" {
   themes: qwen --default, qwen-light;

@@ -30,7 +30,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, result/history actions |
 | Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, recovery, and dynamically configured OAuth entry |
 | Studio | `src/components/Studio.tsx` | Responsive authenticated shell, aggregate overview, projects, history, credits, billing/payments, keys, private support conversations, profile, settings, and deletion confirmation |
-| Canonical API | `worker/index.ts` | Same-origin routes, ownership, quotas, generation, billing, maintenance, and HTTP composition |
+| Canonical API | `worker/index.ts` | Same-origin routes, authentication, ownership, credits, generation, billing, maintenance, and HTTP composition |
 | Credit service | `worker/credits.ts` | Exactly-once grants plus atomic reservation, settlement, and refund statements |
 | OAuth adapter | `worker/oauth.ts` | D1-backed state, PKCE authorization, token exchange, and verified identity mapping |
 | External request boundary | `worker/external.ts` | Bounded timeouts, normalized errors, redirect control, and trusted URL validation |
@@ -43,7 +43,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 
 ### Browser to API
 
-- Account and guest sessions use opaque HttpOnly cookies.
+- Account sessions use opaque HttpOnly cookies. Signed-out visitors receive no generation identity or allowance.
 - Worker passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and encoded work factors.
 - API keys use a Bearer token whose hash is stored in D1.
 - Client-provided project IDs are checked against the authenticated owner.
@@ -67,7 +67,7 @@ The canonical Worker uses D1 for relational records and a private R2 bucket for 
 |---|---|
 | `users` | Email identity, password hash, verification state, timestamps |
 | `sessions` | Hashed account sessions, expiry, user agent, network hint, activity |
-| `anonymous_sessions` | Hashed guest cookie, UTC quota date/count, 30-day expiry |
+| `anonymous_sessions` | Legacy cleanup-only rows retained so previously created guest data can expire safely; new sessions are not issued |
 | `security_tokens` | One-time verification and password-reset tokens |
 | `oauth_states` | One-time provider state and PKCE verifier |
 | `oauth_identities` | Durable provider subject to user mapping |
@@ -87,6 +87,7 @@ The canonical Worker uses D1 for relational records and a private R2 bucket for 
 | `billing_checkout_attempts` | Pre-Stripe recoverable order intent and Checkout association |
 | `billing_events` | Retryable processing/completed/failed Stripe event state and attempts |
 | `billing_payments` | PaymentIntent-to-user/order/invoice/Price-version mapping for refunds, disputes, and recurring grants |
+| `billing_risk_events` | Local-payment Stripe Radar warning evidence and operator-review state |
 | `rate_limit_buckets` | Persistent request window counters |
 | `maintenance_runs` | Last retention/recovery result |
 | `r2_deletion_queue` | Retriable compensation for failed or post-account-deletion object cleanup |
@@ -96,13 +97,11 @@ D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, res
 
 ## Transaction Flows
 
-### Guest generation
+### Signed-out access
 
-1. `/api/session` creates or resumes an anonymous session.
-2. `/api/generations` validates prompt and settings.
-3. D1 atomically claims quota and stores the processing generation.
-5. The active provider runs synchronously.
-6. Success stores the image; failure marks the row failed and decrements quota.
+1. `/api/session` returns a signed-out state without issuing an anonymous generation cookie.
+2. Public examples, prompts, models, pricing, and guides remain browsable.
+3. Generation, history, private image access, and deletion return `401 UNAUTHENTICATED`.
 
 ### Account generation
 
@@ -112,23 +111,24 @@ D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, res
 4. Move cost from available to reserved, append a reservation entry, and store the processing generation in one D1 batch.
 5. Success stores the image and appends settlement; failure appends refund and restores available balance.
 
-The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale reservations, restores same-day guest quota, and drains R2 cleanup compensation. Generation execution remains synchronous and has no durable queue.
+The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale account reservations, drains legacy guest assets, and processes R2 cleanup compensation. Generation execution remains synchronous and has no durable queue.
 
 ### Registration and verification
 
-1. Registration creates the user, zero-balance account, billing row, and account session.
-2. Eligible generations from the active guest session and previous 24 hours move to the account.
+1. Registration creates the user, credit account, billing row, and one idempotent 20-credit welcome grant.
+2. Registration creates the account session immediately.
 3. A one-time verification token replaces any older active token and is delivered through Resend when configured.
-4. Token consumption marks the address verified and grants 20 credits once.
+4. Token consumption marks the address verified for recovery trust and developer-key access; it does not grant additional credits.
 
 ### Billing
 
 1. The Worker stores a recoverable checkout attempt with a local order ID.
 2. Stripe Checkout uses that order ID as its Stripe idempotency key and metadata; the returned session is associated with the attempt.
 3. A signed Stripe event atomically claims a retryable processing state; missing local dependencies return a retryable HTTP response.
-4. Credit packs map the PaymentIntent to the order; Creator invoices validate Customer, subscription, configured Price, exact USD 800 or 1000 amount, paid state, billing reason, and PaymentIntent before granting.
+4. Credit packs map the PaymentIntent to the order; subscription invoices validate Customer, subscription, immutable configured Price version, exact amount/currency, paid state, billing reason, and PaymentIntent before granting the monthly or annual allowance.
 5. Refund/dispute events mark financial records and quarantine further credit spending for review.
-6. Account deletion checkpoints subscription cancellation and Customer deletion, atomically queues owned R2 keys before removing D1 identity state, and retains a deletion audit. Failed object cleanup is retried by maintenance.
+6. An actionable Radar early fraud warning resolves its Charge to a known local PaymentIntent, records the warning separately from refund/dispute state, and quarantines spending. Warnings for other integrations sharing the Stripe account are ignored after signature verification.
+7. Account deletion checkpoints subscription cancellation and Customer deletion, atomically queues owned R2 keys before removing D1 identity state, and retains a deletion audit. Failed object cleanup is retried by maintenance.
 
 `BILLING_ENABLED` gates new Checkout creation, not settlement or cleanup. When Stripe credentials remain configured, signed webhooks continue to drain existing financial events and account deletion can still remove external customer state. These paths are locally regression-tested and restricted-key/signed-webhook smoke-tested, but remain blocked for public billing until paid Stripe test-mode, reconciliation, policy, and legal evidence passes [Release Readiness](./RELEASE_READINESS.md).
 
@@ -139,8 +139,8 @@ The 15-minute maintenance pass marks stale processing generations failed, settle
 - Default build/deploy/CI paths exclude Express and SQLite.
 - The retained container runs the legacy Node/SQLite comparison adapter and is local-only.
 - Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production` and private R2 bucket `qwen-image-3-assets` are bound. `https://qwen-image-3.pages.dev` remains a fallback.
-- Live smoke passed for health, guest cookie, ten-minute promotion persistence, free-queue generation, D1 metadata, R2-backed retrieval, and watermarked export.
-- Billing, email, OAuth, and real Qwen execution remain disabled/unverified; the custom domain does not by itself approve a production launch.
+- The recorded live smoke belongs to the previous guest-enabled acceptance revision. The current account-required revision needs a new deployment and signed-in smoke before external verification.
+- Google OAuth completed one acceptance sign-in and its external Google Auth Platform application is published with status `Production`. Billing, email, GitHub OAuth, and real Qwen execution remain disabled/unverified; neither the OAuth publishing label nor the custom domain approves a production launch.
 
 ## Target Evolution
 

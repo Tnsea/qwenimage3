@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExternalRequestError, fetchWithTimeout, timeoutMs, trustedServiceUrl } from "../worker/external.js";
-import { createAuthorizationUrl, oauthMethods } from "../worker/oauth.js";
+import { oauthStateMatches } from "../worker/index.js";
+import { createAuthorizationUrl, exchangeOAuthCode, oauthMethods } from "../worker/oauth.js";
 import type { Env } from "../worker/env.js";
 
 const oauthEnvironment = {
@@ -30,6 +31,58 @@ test("Worker OAuth URLs use exact callbacks, state, and PKCE without exposing se
   assert.equal(github.searchParams.get("scope"), "read:user user:email");
 });
 
+test("Worker OAuth state must match the initiating browser cookie", () => {
+  assert.equal(oauthStateMatches("browser-state", "browser-state"), true);
+  assert.equal(oauthStateMatches("browser-state", "attacker-state"), false);
+  assert.equal(oauthStateMatches(undefined, "browser-state"), false);
+});
+
+test("Worker Google OAuth exchanges the code with PKCE and accepts a verified profile", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url === "https://oauth2.googleapis.com/token") {
+      return new Response(JSON.stringify({ access_token: "google-access-token" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "https://openidconnect.googleapis.com/v1/userinfo") {
+      return new Response(JSON.stringify({
+        sub: "google-subject-123",
+        email: "Person@Example.com",
+        email_verified: true,
+        name: "Google Person",
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  try {
+    const profile = await exchangeOAuthCode(oauthEnvironment, "google", "authorization-code", "pkce-verifier");
+    assert.deepEqual(profile, {
+      subject: "google-subject-123",
+      email: "person@example.com",
+      name: "Google Person",
+    });
+    const tokenBody = new URLSearchParams(String(calls[0]?.init?.body));
+    assert.equal(tokenBody.get("client_id"), "google-client");
+    assert.equal(tokenBody.get("client_secret"), "google-secret");
+    assert.equal(tokenBody.get("code"), "authorization-code");
+    assert.equal(tokenBody.get("code_verifier"), "pkce-verifier");
+    assert.equal(tokenBody.get("grant_type"), "authorization_code");
+    assert.equal(tokenBody.get("redirect_uri"), "https://qwen-image-3.net/api/auth/oauth/google/callback");
+    assert.equal(
+      (calls[1]?.init?.headers as Record<string, string>).Authorization,
+      "Bearer google-access-token",
+    );
+    assert.equal(calls[0]?.init?.redirect, "manual");
+    assert.equal(calls[1]?.init?.redirect, "manual");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("external URL and timeout policies are exact and bounded", () => {
   assert.equal(timeoutMs("1"), 1_000);
   assert.equal(timeoutMs("999999"), 120_000);
@@ -39,6 +92,7 @@ test("external URL and timeout policies are exact and bounded", () => {
     "https://checkout.stripe.com/c/pay/test",
   );
   for (const value of [
+    "not a URL",
     "http://checkout.stripe.com/c/pay/test",
     "https://evil.checkout.stripe.com/c/pay/test",
     "https://checkout.stripe.com.evil.example/c/pay/test",
@@ -54,14 +108,29 @@ test("external URL and timeout policies are exact and bounded", () => {
 
 test("external requests reject redirects unless a caller explicitly supplies another policy", async () => {
   const originalFetch = globalThis.fetch;
-  let observed: RequestInit | undefined;
+  const observed: RequestInit[] = [];
   globalThis.fetch = async (_input, init) => {
-    observed = init;
-    return new Response("ok");
+    observed.push(init ?? {});
+    return init?.redirect === "follow"
+      ? new Response("ok")
+      : new Response(null, { status: 302, headers: { Location: "https://redirect.example.test" } });
   };
   try {
-    await fetchWithTimeout("https://service.example.test", {}, 1_000, "Test service");
-    assert.equal(observed?.redirect, "error");
+    await assert.rejects(
+      fetchWithTimeout("https://service.example.test", { redirect: undefined }, 1_000, "Test service"),
+      (reason: unknown) => reason instanceof ExternalRequestError
+        && reason.code === "EXTERNAL_REDIRECT_BLOCKED",
+    );
+    assert.equal(observed[0]?.redirect, "manual");
+
+    const followed = await fetchWithTimeout(
+      "https://service.example.test",
+      { redirect: "follow" },
+      1_000,
+      "Test service",
+    );
+    assert.equal(followed.ok, true);
+    assert.equal(observed[1]?.redirect, "follow");
   } finally {
     globalThis.fetch = originalFetch;
   }

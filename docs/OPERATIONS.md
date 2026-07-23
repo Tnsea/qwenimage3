@@ -18,18 +18,25 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `DASHSCOPE_API_KEY` | Empty | Qwen provider | Server-side secret |
 | `QWEN_API_BASE_URL` | Empty | Qwen provider | HTTPS URL for the intended Model Studio workspace/region |
 | `QWEN_API_ALLOWED_HOST` | Empty | Qwen provider | Exact hostname of `QWEN_API_BASE_URL`; wildcards and suffix matching are not accepted |
-| `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Model override | Require release-gate evidence before changing |
+| `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Implemented model contract | Other values are rejected until a separate adapter and release gate are reviewed |
 | `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
 | `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
 | `STRIPE_TIMEOUT_MS` | `15000` | Stripe API calls | Minimum effective value is one second |
 | `STRIPE_SECRET_KEY` | Empty | Stripe API, Portal, and external cleanup | Use a restricted managed key; never commit it |
 | `STRIPE_WEBHOOK_SECRET` | Empty | Billing webhook | Rotate and store as a managed secret |
-| `STRIPE_PRICE_CREATOR_INTRO` | Empty | Seed the first launch-price version | The database catalog becomes the financial source of truth |
-| `STRIPE_PRICE_CREATOR_MONTHLY` | Empty | Seed the first standard Creator version | Never reuse a Stripe Price ID for different credits or money |
-| `STRIPE_PRICE_CREDITS_100` | Empty | Seed the first 100-credit version | Verify USD 7 one-time amount before seeding |
-| `STRIPE_PRICE_CREDITS_300` | Empty | Seed the first 300-credit version | Verify USD 18 one-time amount before seeding |
+| `STRIPE_PRICE_STARTER_MONTHLY` | Live Price ID configured | USD 9.90/month, 500 credits | Never reuse a Stripe Price ID for different credits or money |
+| `STRIPE_PRICE_STARTER_YEARLY` | Live Price ID configured | USD 99/year, 6,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_CREATOR_MONTHLY` | Live Price ID configured | USD 29.90/month, 2,000 credits | Never reuse the retired USD 10 Creator Price |
+| `STRIPE_PRICE_CREATOR_YEARLY` | Live Price ID configured | USD 299/year, 24,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_PROFESSIONAL_MONTHLY` | Live Price ID configured | USD 59.90/month, 5,000 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_PROFESSIONAL_YEARLY` | Live Price ID configured | USD 599/year, 60,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_CREDITS_400` | Live Price ID configured | USD 12 one time, 400 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_CREDITS_1200` | Live Price ID configured | USD 30 one time, 1,200 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_CREDITS_3000` | Live Price ID configured | USD 60 one time, 3,000 credits | Match the D1 version exactly |
 
 `RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, Stripe keys, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables.
+
+The dedicated Live webhook destination is `https://qwen-image-3.net/api/billing/webhook`. It subscribes only to the Checkout, invoice, subscription, reversal, dispute, and `radar.early_fraud_warning.created` events handled by the Worker. The restricted runtime key needs read-only `Charges and Refunds` access so a Radar warning's Charge can be resolved to its PaymentIntent; it must not receive product/Price administration access after catalog setup.
 
 The variables `PORT`, `HOST`, `DATABASE_PATH`, `CORS_ORIGINS`, `COOKIE_SECURE`, `EMAIL_PROVIDER`, and `ALLOW_DEV_AUTH_TOKENS` apply only to the inactive Express/SQLite comparison adapter in `server/` and `.env.example`.
 
@@ -85,7 +92,8 @@ Current resources:
 - D1 database: `qwen-image-3-production`
 - R2 bucket: `qwen-image-3-assets`
 - Billing: disabled
-- Email/OAuth: disabled
+- Email/GitHub OAuth: disabled
+- Google OAuth: enabled with Google Auth Platform publishing status `Production` for external Google accounts
 - Generation provider: deterministic local preview
 
 Release verification, migration, and deployment:
@@ -109,9 +117,41 @@ curl -fsS -c cookies.txt -b cookies.txt https://qwen-image-3.net/api/catalog
 curl -fsSI https://www.qwen-image-3.net/pricing
 ```
 
-Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance also created a guest generation, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. Stripe Sandbox acceptance created and expired an API-only Checkout Session, deleted that temporary Customer, delivered a signed no-op subscription update through the canonical webhook, and confirmed idempotent replay. A separate application-created USD 7/100-credit Checkout then completed with Stripe's test card: the Stripe-origin `checkout.session.completed` event completed once in D1, the order and payment became paid, and one ledger row granted exactly 100 credits. New Checkout was disabled again before the payment was submitted.
+Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`provider`/`available`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance created a guest generation on the previous guest-enabled revision, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. That result is historical only; the current revision requires an account and needs a fresh post-deploy smoke test. Stripe Sandbox acceptance created and expired an API-only Checkout Session, deleted that temporary Customer, delivered a signed no-op subscription update through the canonical webhook, and confirmed idempotent replay. A separate application-created USD 7/100-credit Checkout then completed with Stripe's test card: the Stripe-origin `checkout.session.completed` event completed once in D1, the order and payment became paid, and one ledger row granted exactly 100 credits. New Checkout was disabled again before the payment was submitted.
 
 Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. OAuth callbacks are `/api/auth/oauth/google/callback` and `/api/auth/oauth/github/callback` under `APP_BASE_URL`. `BILLING_ENABLED=false` blocks new Checkout while allowing configured signed webhooks and Stripe-side account cleanup to finish. Enabling new purchases requires updating that switch and redeploying only after test-mode acceptance passes.
+
+### Google sign-in
+
+Google sign-in requires a Google Cloud project with an OAuth consent screen and an OAuth 2.0 Client ID of type **Web application**. The current Worker uses Google's OpenID Connect `userinfo` endpoint, so no Google storage, model, or paid API service is required.
+
+Configure the Google OAuth application with:
+
+```text
+Authorized JavaScript origin:
+https://qwen-image-3.net
+
+Authorized redirect URI:
+https://qwen-image-3.net/api/auth/oauth/google/callback
+```
+
+Keep the consent screen in testing mode during initial validation and add only designated test accounts. After the successful acceptance callback, switching Google Auth Platform to `Production` makes the external OAuth application available to Google accounts outside the tester list; this OAuth publishing label does not make the website a production-approved service. Store the issued credentials as encrypted Worker secrets; do not put them in `wrangler.worker.jsonc`, `.env.example`, CI logs, or shell history:
+
+```bash
+npx wrangler secret put GOOGLE_CLIENT_ID --config wrangler.worker.jsonc
+npx wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.worker.jsonc
+```
+
+After deploying the reviewed revision, verify:
+
+```bash
+curl -fsS https://qwen-image-3.net/api/health
+curl -fsS https://qwen-image-3.net/api/auth/methods
+```
+
+Both responses must report Google OAuth as configured. Complete one consent denial and one successful sign-in with a test account. Confirm the callback returns to `/studio`, the session cookie is `HttpOnly`, `Secure`, and `SameSite=Lax`, the Google access token is absent from logs and D1, and a repeated callback is rejected because OAuth state is single-use. This closes only the Google portion of `AUTH-001`; the acceptance deployment remains non-production until the other release gates are resolved.
+
+Acceptance evidence on July 23, 2026: Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` reported Google configured, completed the real authorization-code and PKCE callback, created one Google identity mapping and browser session, granted the social-account starter credits once, entered the private Workspace, and left no pending OAuth state. Google Auth Platform was then switched from `Testing` to `Production` for the external user type, making sign-in available beyond the tester list. Denial/failure acceptance and reviewed release provenance remain open.
 
 Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. The CSP deliberately permits only same-origin scripts and connections; analytics must not be “fixed” by weakening CSP.
 
@@ -129,7 +169,7 @@ WHERE offer_id = 'creator_monthly' AND active_for_checkout = 1;
 INSERT INTO billing_price_versions
   (stripe_price_id, offer_id, kind, amount_cents, currency, credits, active_for_checkout, effective_from, created_at)
 VALUES
-  ('price_new_from_stripe', 'creator_monthly', 'subscription', 1200, 'usd', 450, 1,
+  ('price_new_from_stripe', 'creator_monthly', 'subscription', 2990, 'usd', 2000, 1,
    '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z');
 ```
 
@@ -207,22 +247,22 @@ Restore must target a separate D1 database first, run consistency and applicatio
 - Keep `BILLING_ENABLED=false` in any public environment until every public-billing acceptance gate is closed.
 - Use the dedicated restricted Sandbox key for the application. Stripe's default Sandbox standard secret was rotated after setup and is not an application dependency.
 - Test signed delivery, out-of-order events, missing local records, replay, refunds, disputes, asynchronous payment, subscription updates, cancellation, account deletion, and reconciliation.
-- Local and Worker code validate the Creator Customer, stored subscription, configured launch or standard Price, paid state, exact USD 800 or 1000 amount, allowed billing reason, and PaymentIntent; test-mode must prove that contract against real Stripe payloads.
+- The Worker validates the subscription Customer, stored subscription, immutable Price version, exact amount/currency, paid state, allowed billing reason, and PaymentIntent; test-mode must prove every current offer contract against real Stripe payloads.
 - Confirm external subscription state before deleting local identity data.
 
 ## Data Retention
 
 Current behavior:
 
-- account and guest sessions have 30-day expiries;
-- guest-to-account migration considers the previous 24 hours;
-- guest history and asset access are denied after 24 hours;
-- Worker maintenance runs every 15 minutes to delete guest assets older than 24 hours, drain the R2 deletion compensation queue, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded generation reservations, and record its result;
-- free/paid account assets, billing/audit records, and backups do not yet have approved deletion schedules.
+- account sessions have 30-day expiries;
+- signed-out visitors receive no anonymous generation session and cannot access generation routes;
+- legacy guest rows remain cleanup-only and are not migrated into new accounts;
+- Worker maintenance runs every 15 minutes to delete legacy guest assets older than 24 hours, drain the R2 deletion compensation queue, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded account generation reservations, and record its result;
+- Starter/paid account assets, billing/audit records, and backups do not yet have approved deletion schedules.
 
 Required before external beta:
 
-- monitor maintenance freshness and overdue guest records in the target environment;
+- monitor maintenance freshness and any overdue legacy guest records until they are drained;
 - prove primary and backup deletion against the approved policy;
 - document account, paid, billing, audit, and backup retention separately;
 - verify deletion against primary storage and backups.

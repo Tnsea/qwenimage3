@@ -96,7 +96,7 @@ export async function exchangeOAuthCode(
   if (provider === "google") tokenBody.set("grant_type", "authorization_code");
   const tokenResponse = await fetchWithTimeout(tokenUrl, {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
@@ -115,7 +115,7 @@ export async function exchangeOAuthCode(
   if (provider === "google") {
     const response = await fetchWithTimeout(
       "https://openidconnect.googleapis.com/v1/userinfo",
-      { headers: authorization, redirect: "error" },
+      { headers: authorization, redirect: "manual" },
       requestTimeout,
       "Google profile request",
     );
@@ -138,7 +138,7 @@ export async function exchangeOAuthCode(
   const headers = { ...authorization, "X-GitHub-Api-Version": "2022-11-28" };
   const profileResponse = await fetchWithTimeout(
     "https://api.github.com/user",
-    { headers, redirect: "error" },
+    { headers, redirect: "manual" },
     requestTimeout,
     "GitHub profile request",
   );
@@ -153,7 +153,7 @@ export async function exchangeOAuthCode(
   }
   const emailResponse = await fetchWithTimeout(
     "https://api.github.com/user/emails",
-    { headers, redirect: "error" },
+    { headers, redirect: "manual" },
     requestTimeout,
     "GitHub email request",
   );

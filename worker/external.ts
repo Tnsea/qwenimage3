@@ -21,13 +21,25 @@ export async function fetchWithTimeout(
   timeout: number,
   context: string,
 ) {
+  const redirect = init.redirect ?? "manual";
   try {
-    return await fetch(input, {
-      redirect: "error",
+    const response = await fetch(input, {
       ...init,
+      redirect,
       signal: AbortSignal.timeout(timeout),
     });
+    if (redirect === "manual" && response.status >= 300 && response.status < 400) {
+      throw new ExternalRequestError(
+        "EXTERNAL_REDIRECT_BLOCKED",
+        `${context} returned an unexpected redirect.`,
+        `${context} returned redirect status ${response.status}.`,
+      );
+    }
+    return response;
   } catch (reason) {
+    if (reason instanceof ExternalRequestError) {
+      throw reason;
+    }
     if (reason instanceof DOMException && reason.name === "TimeoutError") {
       throw new ExternalRequestError("EXTERNAL_TIMEOUT", `${context} timed out.`, `${context} timed out after ${timeout}ms.`);
     }
@@ -39,7 +51,12 @@ export function trustedServiceUrl(value: unknown, expectedHost: string, context:
   if (typeof value !== "string") {
     throw new ExternalRequestError("EXTERNAL_RESPONSE_INVALID", `${context} returned an invalid URL.`);
   }
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ExternalRequestError("EXTERNAL_RESPONSE_INVALID", `${context} returned an invalid URL.`);
+  }
   if (url.protocol !== "https:" || url.hostname !== expectedHost || url.username || url.password || url.port) {
     throw new ExternalRequestError("EXTERNAL_RESPONSE_INVALID", `${context} returned an untrusted URL.`);
   }

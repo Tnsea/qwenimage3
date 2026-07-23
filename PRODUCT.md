@@ -21,11 +21,11 @@ No locally verified state implies merged, deployed, publicly available, commerci
 
 ## 2. Product Definition
 
-Qwen Image Generator Hub helps a visitor create a private image from a plain-English prompt before registration. The user can then register, migrate recent guest work, organize generations in Studio, inspect credit activity, and optionally call the same generation contract with an API key.
+Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pricing publicly. Image generation begins after account creation or sign-in, uses an account credit balance, stores private work in Studio, and optionally exposes the same generation contract through a scoped API key.
 
 ### Product principles
 
-- **Experience before registration:** the first successful generation must not require an account.
+- **Account before generation:** visitors may explore publicly, but generation and private assets require a signed-in account.
 - **English-only MVP:** customer-facing UI contains no language selector or mixed-language release surface.
 - **Private by default:** generations are never public without a future, separate consent flow.
 - **Honest model status:** local preview, configured production provider, and planned integrations must remain visibly distinct.
@@ -38,25 +38,25 @@ Qwen Image Generator Hub helps a visitor create a private image from a plain-Eng
 1. A first-time user who needs examples and simple defaults.
 2. A creator who needs repeatable formats, projects, history, and favorites.
 3. A developer who needs a stable authenticated generation endpoint.
-4. A product evaluator who wants to try the service without registration.
+4. A product evaluator who wants to inspect the workflow, examples, model status, and pricing before registration.
 
 ## 3. Current Implementation Baseline
 
 | Capability | Current status | Production requirement |
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
-| Guest generation | **Verified locally** with local SVG provider, three-use UTC daily quota, and scheduled 24-hour guest-asset deletion | Production provider, abuse controls, and backup-deletion telemetry |
+| Account-gated generation | **Implemented locally** with a signed-in requirement and server-authoritative credit reservation | External redeploy, real provider acceptance, and backup-deletion telemetry |
 | Real image provider | **Implemented, external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved model contract, license, cost model, live smoke, and rollback |
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
-| Google/GitHub OAuth | **Implemented, external verification pending** | Registered applications and real callback acceptance |
-| Guest migration | **Verified locally** for generations from the previous 24 hours | Retention policy and expiry cleanup |
-| Credits | **Verified locally** for signup grant and generation reserve/settle/refund | Reconciliation monitoring and commercial policy |
+| Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
+| Welcome credits | **Implemented locally** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | External redeploy and reconciliation monitoring |
+| Credits | **Verified locally** for generation reserve/settle/refund | Reconciliation monitoring and commercial policy |
 | Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
 | Stripe adapter | **Implemented and locally verified; blocked for public use** | Stripe test-mode lifecycle acceptance, reconciliation monitoring, and approved refund/dispute policy |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
-| Content library | **Prototype**: twelve prompt records, eight unique example cards, and ten homepage FAQs | 60/80-item editorial inventory and content review workflow |
+| Content library | **Prototype**: twelve prompt records, eight unique example cards, and eleven homepage FAQs | 60/80-item editorial inventory and content review workflow |
 
 ## 4. Current User Experience
 
@@ -68,7 +68,7 @@ Qwen Image Generator Hub helps a visitor create a private image from a plain-Eng
 | `/examples` | Eight unique curated cards |
 | `/prompts` | Twelve reusable English prompt records |
 | `/models` | Local preview and configured Qwen 2.0 adapter status |
-| `/pricing` | Guest and free-account offers; Creator is enabled only when the Stripe kill switch and configuration pass |
+| `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default, and each checkout is enabled only when the Stripe gate, matching environment Price ID, and active D1 Price version all pass |
 | `/guides` | English guide overview |
 | `/api` | Developer API overview and request example |
 | `/verify-email` | Consumes a one-time verification token, then returns home |
@@ -80,8 +80,9 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 | Route | Current behavior |
 |---|---|
-| `/studio` | Plan, balance, current-month usage, active-key count, recent work, and normalized account activity |
-| `/studio/new` | Signed-in generation with optional project assignment |
+| `/studio` | Signed-in generation with optional project assignment; this is the default workspace landing route |
+| `/studio/new` | Backward-compatible alias for the signed-in generation workspace |
+| `/studio/overview` | Plan, balance, current-month usage, active-key count, recent work, and normalized account activity |
 | `/studio/projects` | Create, archive, and restore projects |
 | `/studio/history` | Recent account generations |
 | `/studio/favorites` | Favorited generations |
@@ -105,17 +106,18 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 ## 5. Core Flows
 
-### 5.1 Guest creation
+### 5.1 Account-gated creation
 
 ```mermaid
 flowchart LR
-  A[Open application] --> B[Receive HttpOnly guest cookie]
-  B --> C[Enter prompt and settings]
-  C --> D[Atomically reserve daily guest use]
-  D --> E[Call active provider synchronously]
-  E -->|Success| F[Store private asset and show download]
-  E -->|Failure| G[Mark failed and restore guest use]
-  F --> H[Continue, delete, or register]
+  A[Open application] --> B[Browse examples, models, and pricing]
+  B --> C[Create account or sign in]
+  C --> D[Receive or load account credits]
+  D --> E[Enter prompt and settings]
+  E --> F[Atomically reserve account credits]
+  F --> G[Call active provider synchronously]
+  G -->|Success| H[Store private asset and show download]
+  G -->|Failure| I[Mark failed and restore credits]
 ```
 
 Current rules:
@@ -123,10 +125,10 @@ Current rules:
 - Prompt length is 3–1000 characters.
 - Aspect ratios are 1:1, 3:2, 16:9, 4:3, and 9:16.
 - Styles are Photorealistic, Editorial, Cinematic, and Illustration.
-- Quality costs are Standard 1, High 2, and Ultra 4 credits for accounts; guest requests cost zero credits.
-- A guest receives three successful attempts per UTC date.
-- Provider failure restores guest allowance.
-- Successful assets are private; guest and free-account downloads use the product’s visible free-export watermark, while an accepted Creator entitlement may download the original.
+- Quality costs are Standard 4, High 8, and Ultra 16 account credits.
+- Signed-out requests to generation, history, images, and deletion return an authentication error.
+- Provider failure restores the reserved account credits.
+- Successful assets are private; unpaid account downloads use the product’s visible standard-export watermark, while every active paid tier may download the original.
 
 Failed records render an explicit no-charge state in the generator and Studio, with retry and removal actions where applicable.
 
@@ -134,20 +136,20 @@ Failed records render an explicit no-charge state in the generator and Studio, w
 
 ```mermaid
 flowchart LR
-  A[Guest] --> B[Register or sign in]
-  B --> C[Migrate eligible guest work]
+  A[Visitor] --> B[Register or sign in]
+  B --> C[Grant 20 welcome credits once]
   C --> D[Create 30-day account session]
   D --> E{Email verified?}
-  E -->|No| F[Send one-time verification]
-  F --> G[Grant 20 credits once]
-  E -->|Yes| H[Open Studio]
+  E -->|No| F[Offer one-time verification]
+  E -->|Yes| G[Enable verified developer access]
+  F --> H[Open Studio]
   G --> H
 ```
 
 - Email/password registration creates an unverified account and signed-in session.
 - Verification tokens expire after 24 hours; reset tokens expire after 60 minutes.
-- The verified-email grant is issued once.
-- Login and registration migrate generations created in the previous 24 hours from the current guest session.
+- The 20-credit welcome grant is issued once at registration; the first subsequent login safely backfills it for an older account that never received a signup grant.
+- Email verification protects recovery and remains required for developer-key issuance; it does not gate welcome credits.
 - Password reset revokes all account sessions.
 - Password change keeps the current session and revokes other sessions.
 - Google and GitHub OAuth use state and PKCE and require a verified provider email.
@@ -177,17 +179,19 @@ The ledger is append-only in normal application flows. Startup and 15-minute mai
 
 Implemented adapter flow:
 
-1. The first guest/account pricing visit creates one server-authoritative ten-minute promotion window. Refreshing does not restart it; guest-to-account migration preserves it; redemption closes it.
-2. During the active window Creator VIP is USD 8/month; afterward the standard USD 10/month Price is restored. Credit packs are USD 7/100 credits and USD 18/300 credits.
-3. A verified user selects a server-defined offer.
-4. The server creates or reuses a Stripe Customer.
-5. The server creates Stripe-hosted Checkout with a configured Price ID.
-6. A signed webhook claims a retryable event state, validates dependencies, and records completion only after fulfillment.
-7. Creator invoices must match the stored Customer/subscription, configured launch or standard Price, exact USD 800 or 1000 amount, paid state, allowed billing reason, and PaymentIntent.
-8. Refunds and disputes update financial status and pause credit spending for review.
-9. The Customer Portal manages the external subscription after a customer exists.
+1. Pricing defaults to yearly billing and supports Starter, Creator, and Professional monthly/yearly subscriptions.
+2. Starter is USD 9.90/month for 500 credits or USD 99/year for 6,000 credits.
+3. Creator is USD 29.90/month for 2,000 credits or USD 299/year for 24,000 credits.
+4. Professional is USD 59.90/month for 5,000 credits or USD 599/year for 60,000 credits.
+5. One-time packs are USD 12/400 credits, USD 30/1,200 credits, and USD 60/3,000 credits.
+6. Monthly invoices grant the monthly allowance; yearly invoices grant the full annual allowance once after payment.
+7. A verified user selects a server-defined offer, and the server creates or reuses a Stripe Customer before Stripe-hosted Checkout.
+8. A signed webhook claims a retryable event state, validates the exact immutable Price version, amount, currency, Customer, subscription, invoice reason, and PaymentIntent, then records completion only after fulfillment.
+9. Refunds and disputes update financial status and pause credit spending for review.
+10. Actionable Radar early fraud warnings resolve to a known local PaymentIntent, create a separate risk record, and pause credit spending without being treated as a refund or dispute.
+11. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. Restricted-key Sandbox API, signed-webhook replay, and one full USD 7 credit-pack payment pass, including Stripe-origin event delivery, D1 payment mapping, and an exactly-once 100-credit grant. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on subscription/invoice, reversal, Portal/deletion, policy, monitoring, and commercial/legal evidence.
+Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable and a matching active D1 price-version row for that individual offer. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on current-catalog Sandbox acceptance, subscription/invoice, reversal, Portal/deletion, policy, monitoring, and commercial/legal evidence.
 
 ### 5.6 Developer API
 
@@ -201,6 +205,7 @@ Request:
 
 ```json
 {
+  "model": "local-qwen-preview",
   "prompt": "A glass pavilion at dawn",
   "aspect_ratio": "16:9",
   "style": "editorial",
@@ -209,14 +214,14 @@ Request:
 }
 ```
 
-The same completed idempotency key returns the stored generation for 24 hours; a concurrent request receives `409 REQUEST_IN_PROGRESS` with `Retry-After`, and a stored failure is replayed without charging again. Keys carry an explicit `generations:write` scope. D1 stores rate-limit buckets and every request result, duration, request ID, and available user/key association. Per-key budgets, async reads/cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
+The `model` field may be omitted to select the server's only available runtime; unavailable IDs are rejected. The same completed idempotency key returns the stored generation for 24 hours; a concurrent request receives `409 REQUEST_IN_PROGRESS` with `Retry-After`, and a stored failure is replayed without charging again. Keys carry an explicit `generations:write` scope. D1 stores rate-limit buckets and every request result, duration, request ID, and available user/key association. Per-key budgets, async reads/cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
 
 ## 6. Data, Privacy, and Security Contract
 
 ### Current verified safeguards
 
 - The canonical Worker uses salted PBKDF2-SHA-256 password hashes with the work factor encoded beside each hash.
-- Session, guest, security, OAuth state, and API key tokens are stored as hashes where appropriate.
+- Session, security, OAuth state, and API key tokens are stored as hashes where appropriate.
 - Account and generation ownership checks run on the server.
 - Cookies are HttpOnly and SameSite=Lax; production HTTPS configuration adds Secure and HSTS.
 - Security headers include CSP, frame denial, MIME sniffing protection, and a restrictive permissions policy.
@@ -226,8 +231,8 @@ The same completed idempotency key returns the stored generation for 24 hours; a
 
 ### Current limitations
 
-- Guest sessions expire after 30 days; guest generation assets are deleted after 24 hours by scheduled maintenance.
-- Free-account retention and backup-deletion timing are not implemented.
+- New guest sessions and guest generations are disabled. Legacy guest rows remain cleanup-only until previously created assets are drained.
+- Starter-account retention and backup-deletion timing are not implemented.
 - Rate limiting is IP-based and persisted in D1 locally and in acceptance; production per-account/key budgets and load acceptance remain pending.
 - Provider API and asset URLs require HTTPS and exact configured hosts; redirects are rejected. Assets also require allowed MIME types, valid signatures, and size limits.
 - D1 uses ordered forward-only SQL migrations. Rollback/upgrade exercises remain pending.
@@ -236,8 +241,8 @@ The same completed idempotency key returns the stored generation for 24 hours; a
 
 ### Target retention policy
 
-- Guest assets: maximum 24 hours by default, enforced by scheduled deletion.
-- Free-account assets: 30 days by default, subject to product and legal approval.
+- Legacy guest assets: continue to use the existing 24-hour cleanup until drained.
+- Starter-account assets: 30 days by default, subject to product and legal approval.
 - Paid retention: plan-defined only after billing and legal approval.
 - Backups: published deletion window and tested restoration procedure.
 
@@ -301,10 +306,10 @@ The current production bundle passes the JavaScript size target locally. No publ
 ### Completed and locally verified
 
 - English responsive public interface and navigation.
-- Worker-backed guest-first generation, download, quota, and history.
+- Worker-backed account-gated generation, download, credit settlement, and history.
 - Email/password authentication, verification, recovery, and sessions.
 - Google and GitHub OAuth adapters.
-- Guest migration, projects, favorites, account export, and externally checkpointed deletion.
+- Projects, favorites, account export, and externally checkpointed deletion.
 - Credit ledger and generation reserve/settle/refund.
 - Hashed API keys and synchronous idempotent developer generation.
 - Stripe adapter and signed webhook tests.
@@ -315,9 +320,9 @@ The current production bundle passes the JavaScript size target locally. No publ
 ### Release-blocking work
 
 - Complete Stripe test-mode lifecycle acceptance, approved refund/dispute policy, and reconciliation monitoring.
-- Prove guest/account retention against backup deletion and production telemetry.
-- Obtain the first successful GitHub CI run for the committed baseline and hardening branch.
-- Complete real provider, email, OAuth, and Stripe test-mode acceptance.
+- Prove account retention against backup deletion and production telemetry.
+- Review and merge the current hardening branch, then deploy from the reviewed immutable revision.
+- Complete real provider, email, GitHub OAuth, Google denial/failure, and remaining Stripe test-mode acceptance.
 - Complete accessibility, browser, mobile, security, and container acceptance.
 - Approve legal, privacy, commercial-use, pricing, tax, and launch-region decisions.
 
@@ -334,32 +339,31 @@ The current production bundle passes the JavaScript size target locally. No publ
 
 | ID | Decision | Owner | Required before |
 |---|---|---|---|
-| `TBD-BUSINESS-001` | Final packs, subscription terms, currency, taxes, refunds, disputes, and expiry | Product + Finance + Legal | Public billing |
+| `TBD-BUSINESS-001` | Launch countries, tax handling, refunds, disputes, and final credit-expiry policy | Product + Finance + Legal | Public billing |
 | `TBD-MODEL-001` | Approved production model ID, provider contract, regions, license, SLA, and whether a future Qwen Image 3 offering exists | AI + Legal | Real provider launch |
 | `TBD-LEGAL-001` | Launch countries, privacy obligations, residency, age limits, commercial-use disclosure, and provider data use | Legal | External beta |
-| `TBD-PRIVACY-002` | Product behavior when required guest cookies are rejected | Privacy + Product | External beta |
-| `TBD-RETENTION-001` | Guest, free, paid, backup, and billing-record deletion periods | Product + Legal + Infrastructure | External beta |
+| `TBD-RETENTION-001` | Starter, paid, backup, and billing-record deletion periods | Product + Legal + Infrastructure | External beta |
 | `TBD-INFRA-001` | Production database, object storage, queue, rate limiter, observability, backup, and rollback platform | Engineering | Production deployment |
 
 Closed decisions:
 
 - `DEC-AUTH-001`: MVP uses email/password with one-time verification and recovery; Google/GitHub OAuth are optional configured methods. Phone authentication is deferred.
 - `DEC-I18N-001`: MVP is English-only with no language switch. Additional locales are post-MVP and require separate review.
+- `DEC-BILLING-001`: The product uses three subscription tiers, monthly/yearly billing with yearly selected by default, 4/8/16 generation costs, and the fixed prices and allowances documented in section 5.5.
 
 ## 11. Release Acceptance
 
 ### Locally verified
 
-- [x] A guest can generate and download without signing in.
-- [x] Guest quota is enforced by the server and restored on provider failure.
-- [x] Registration and login migrate eligible guest work.
-- [x] Email verification grants 20 credits once.
+- [x] Signed-out visitors cannot generate, list generations, fetch private images, or delete generation records.
+- [x] New accounts receive one idempotent 20-credit welcome grant.
+- [x] Email verification remains separate from the welcome grant and protects recovery/developer access.
 - [x] Account and API generation share the credit ledger.
 - [x] Projects, history, favorites, API keys, sessions, export, and local deletion have automated flow coverage.
 - [x] Strict TypeScript, React Hooks, basic JSX accessibility checks, automated tests, production build, and production-artifact scan pass locally.
 - [ ] Dependency audit currently reports three high-severity development-tool findings through Wrangler/Miniflare/Sharp; confirm an upstream fixed release before production approval.
 - [x] Production JavaScript gzip is below 180 KB.
-- [x] Guest assets are deleted after 24 hours by tested scheduled maintenance.
+- [x] Legacy guest assets continue to be deleted after 24 hours by tested scheduled maintenance.
 - [x] Unsupported Qwen Image 3 release marketing is removed from the live UI.
 - [x] Billing events are retryable; invoices are validated; refunds/disputes quarantine spending; account deletion is external-first.
 - [x] API scopes/result logs, persisted limits, concurrent D1 credit invariants, failed states, and dedicated 404 routes are locally verified.
@@ -367,8 +371,8 @@ Closed decisions:
 ### Required before external beta
 
 - [x] The unsupported Qwen Image 3 release claim is removed from the product UI.
-- [ ] Guest primary-storage retention is locally enforced; backup deletion, approved policy, and production overdue telemetry remain to verify.
-- [ ] Production email and real OAuth callbacks pass end-to-end tests.
+- [ ] Account primary-storage and backup deletion, approved policy, and production overdue telemetry remain to verify.
+- [ ] Google completed one successful acceptance callback and is published for external accounts; production email, GitHub OAuth, and Google denial/failure acceptance remain.
 - [ ] Browser, mobile, keyboard, screen-reader, and reduced-motion acceptance is documented.
 - [ ] Content inventory and FAQ meet the MVP target.
 - [ ] Legal, privacy, provider-license, commercial-use, and launch-region decisions are approved.
@@ -384,7 +388,7 @@ Closed decisions:
 
 ### Required before production deployment
 
-- [ ] A committed Git baseline and required CI checks exist.
+- [x] A committed Git baseline and required CI checks exist.
 - [ ] Versioned migrations, backup restore, rollback, and deletion exercises pass.
 - [x] Cloudflare custom-domain Worker/D1/R2 acceptance deployment is built and smoke-tested.
 - [ ] Build from a committed immutable revision and prove production rollback.

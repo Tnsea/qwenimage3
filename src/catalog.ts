@@ -1,5 +1,7 @@
 import type { BillingOffer, Catalog, CatalogModel, CatalogPlan, CatalogPrompt, PricingPromotion } from "./types.js";
 
+export const SUPPORTED_QWEN_MODEL_ID = "qwen-image-2.0-pro";
+
 export interface CatalogRuntime {
   providerId: "local-preview" | "alibaba-model-studio";
   providerModel: string;
@@ -7,37 +9,115 @@ export interface CatalogRuntime {
   creatorPriceLabel: string;
   creatorCredits: number;
   creatorPlanned: boolean;
+  pricingOffers?: BillingOffer[];
+}
+
+export type ModelCatalogRuntime = Pick<CatalogRuntime, "providerId" | "providerModel" | "providerConfigured">;
+
+export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[] {
+  const localAvailable = runtime.providerId === "local-preview";
+  const qwenSelected = runtime.providerId === "alibaba-model-studio";
+  const qwenModelSupported = runtime.providerModel === SUPPORTED_QWEN_MODEL_ID;
+  const qwenAvailable = qwenSelected && qwenModelSupported && runtime.providerConfigured;
+
+  return [
+    {
+      id: "local-qwen-preview",
+      name: "Fast Preview",
+      provider: "local-preview",
+      available: localAvailable,
+      status: localAvailable ? "Available" : "Development fallback",
+      speed: "< 1 sec",
+      cost: "4–16 account credits",
+      bestFor: "Fast composition and layout previews",
+    },
+    {
+      id: SUPPORTED_QWEN_MODEL_ID,
+      name: "Qwen Image 2.0 Pro",
+      provider: "alibaba-model-studio",
+      available: qwenAvailable,
+      status: qwenAvailable ? "Available" : qwenSelected && !qwenModelSupported ? "Unsupported model configuration" : "Configuration required",
+      speed: "Provider dependent",
+      cost: "4–16 product credits",
+      bestFor: "Provider-backed image generation through Alibaba Cloud Model Studio",
+    },
+    {
+      id: "qwen-image-3",
+      name: "Qwen Image 3",
+      provider: "unassigned",
+      available: false,
+      status: "Integration in progress",
+      speed: "Not available",
+      cost: "Not available",
+      bestFor: "Shown for roadmap transparency; generation is disabled",
+    },
+  ];
 }
 
 export function createCatalogCore(runtime: CatalogRuntime): Pick<Catalog, "plans" | "prompts" | "models"> {
+  const offerConfigured = (offerId: BillingOffer["id"]) => Boolean(
+    runtime.pricingOffers?.find((offer) => offer.id === offerId)?.configured,
+  );
   const plans: CatalogPlan[] = [
     {
-      id: "guest",
-      name: "Guest",
-      price: "$0",
-      description: "Try the provider-aware image creation workflow",
-      features: ["3 generations per day", "Standard free queue", "Watermarked exports", "24-hour private history"],
-    },
-    {
-      id: "free",
-      name: "Free account",
-      price: "$0",
-      description: "Keep your private image work and explore Studio",
-      features: ["20 welcome credits", "Standard free queue", "Watermarked exports", "Projects, favorites, and API keys"],
+      id: "starter",
+      name: "Starter",
+      price: "$9.90 / month",
+      description: "For exploring a dependable account-based image workflow.",
+      monthlyAmountCents: 990,
+      yearlyAmountCents: 9900,
+      monthlyCredits: 500,
+      yearlyCredits: 6000,
+      monthlyConfigured: offerConfigured("starter_monthly"),
+      yearlyConfigured: offerConfigured("starter_yearly"),
+      features: [
+        "Up to 125 Standard images per month",
+        "Private account generations",
+        "Original exports without a watermark",
+        "Projects, favorites, API keys, and ledger",
+        "Credits restored automatically after failed jobs",
+      ],
     },
     {
       id: "creator",
-      name: "Creator VIP",
-      price: runtime.creatorPriceLabel,
-      description: "For priority image workflow production",
+      name: "Creator",
+      price: "$29.90 / month",
+      description: "For consistent creators who need more capacity and faster processing.",
+      monthlyAmountCents: 2990,
+      yearlyAmountCents: 29900,
+      monthlyCredits: 2000,
+      yearlyCredits: 24000,
+      monthlyConfigured: offerConfigured("creator_monthly"),
+      yearlyConfigured: offerConfigured("creator_yearly"),
+      recommended: true,
       features: [
-        `${runtime.creatorCredits} monthly credits`,
+        "Up to 500 Standard images per month",
+        "Everything in Starter",
         "VIP priority generation",
         "Original exports without watermark",
         "Projects, favorites, API keys, and ledger",
         "Automatic credit recovery after failures",
       ],
-      planned: runtime.creatorPlanned,
+    },
+    {
+      id: "professional",
+      name: "Professional",
+      price: "$59.90 / month",
+      description: "For high-volume production workflows with the lowest subscription cost per credit.",
+      monthlyAmountCents: 5990,
+      yearlyAmountCents: 59900,
+      monthlyCredits: 5000,
+      yearlyCredits: 60000,
+      monthlyConfigured: offerConfigured("professional_monthly"),
+      yearlyConfigured: offerConfigured("professional_yearly"),
+      valuePick: true,
+      features: [
+        "Up to 1,250 Standard images per month",
+        "Everything in Creator",
+        "VIP priority generation",
+        "Original exports without watermark",
+        "Lowest subscription cost per credit",
+      ],
     },
   ];
 
@@ -56,24 +136,7 @@ export function createCatalogCore(runtime: CatalogRuntime): Pick<Catalog, "plans
     { id: "automotive", category: "Automotive", title: "Electric coupe after rain", prompt: "A silver electric coupe parked beneath brutalist concrete after rain, wet reflections, low camera angle, cinematic automotive campaign" },
   ];
 
-  const models: CatalogModel[] = [
-    {
-      id: "local-preview",
-      name: "Deterministic Preview",
-      status: runtime.providerId === "local-preview" ? "Available" : "Development fallback",
-      speed: "< 1 sec",
-      cost: "Free guest / 1–4 credits",
-      bestFor: "Layout and prompt iteration",
-    },
-    {
-      id: runtime.providerId === "alibaba-model-studio" ? runtime.providerModel : "qwen-image-2.0-pro",
-      name: "Qwen Image 2.0 Pro",
-      status: runtime.providerId === "alibaba-model-studio" && runtime.providerConfigured ? "Available" : "Configuration required",
-      speed: "Provider dependent",
-      cost: "1–4 product credits",
-      bestFor: "Production image generation through Alibaba Cloud Model Studio",
-    },
-  ];
+  const models = createModelCatalog(runtime);
 
   return { plans, prompts, models };
 }
@@ -88,11 +151,19 @@ function isStringArray(value: unknown): value is string[] {
 
 function isPlan(value: unknown): value is CatalogPlan {
   return isRecord(value)
-    && ["guest", "free", "creator"].includes(String(value.id))
+    && ["starter", "creator", "professional"].includes(String(value.id))
     && typeof value.name === "string"
     && typeof value.price === "string"
     && typeof value.description === "string"
+    && typeof value.monthlyAmountCents === "number"
+    && typeof value.yearlyAmountCents === "number"
+    && typeof value.monthlyCredits === "number"
+    && typeof value.yearlyCredits === "number"
+    && typeof value.monthlyConfigured === "boolean"
+    && typeof value.yearlyConfigured === "boolean"
     && isStringArray(value.features)
+    && (value.recommended === undefined || typeof value.recommended === "boolean")
+    && (value.valuePick === undefined || typeof value.valuePick === "boolean")
     && (value.planned === undefined || typeof value.planned === "boolean");
 }
 
@@ -108,6 +179,8 @@ function isModel(value: unknown): value is CatalogModel {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.name === "string"
+    && ["local-preview", "alibaba-model-studio", "unassigned"].includes(String(value.provider))
+    && typeof value.available === "boolean"
     && typeof value.status === "string"
     && typeof value.speed === "string"
     && typeof value.cost === "string"
@@ -125,6 +198,10 @@ function isBillingOffer(value: unknown): value is BillingOffer {
     && typeof value.credits === "number"
     && typeof value.kind === "string"
     && typeof value.configured === "boolean"
+    && (value.planTier === undefined || ["starter", "creator", "professional"].includes(String(value.planTier)))
+    && (value.billingInterval === undefined || ["month", "year"].includes(String(value.billingInterval)))
+    && (value.monthlyEquivalentCredits === undefined || typeof value.monthlyEquivalentCredits === "number")
+    && (value.standardImages === undefined || typeof value.standardImages === "number")
     && isStringArray(value.features);
 }
 

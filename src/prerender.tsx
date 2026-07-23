@@ -4,17 +4,18 @@ import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
 import { HomeSections } from "./components/Marketing";
+import { SiteFooter } from "./components/SiteFooter";
 import type { Catalog, SessionState } from "./types";
 
 const prerenderedSession: SessionState = {
   user: null,
   entitlements: {
     accountType: "guest",
-    guestLimit: 3,
-    guestRemaining: 3,
+    guestLimit: 0,
+    guestRemaining: 0,
     credits: 0,
     reservedCredits: 0,
-    guestResetsAt: "2099-01-01T00:00:00.000Z",
+    guestResetsAt: "",
     priorityGeneration: false,
     watermarkedExports: true,
   },
@@ -25,8 +26,8 @@ const prerenderedCatalog: Catalog = {
     providerId: "local-preview",
     providerModel: "local-qwen-preview",
     providerConfigured: true,
-    creatorPriceLabel: "$10 / month",
-    creatorCredits: 300,
+    creatorPriceLabel: "$29.90 / month",
+    creatorCredits: 2000,
     creatorPlanned: true,
   }),
   promotion: null,
@@ -56,7 +57,7 @@ function PrerenderedHome() {
         <HomeHero />
         <GeneratorWorkspace
           session={prerenderedSession}
-          prerendered
+          models={prerenderedCatalog.models}
           onRequireAuth={noop}
           onSessionRefresh={async () => undefined}
         />
@@ -67,10 +68,7 @@ function PrerenderedHome() {
           onRegister={noop}
         />
       </main>
-      <footer className="site-footer footer sm:footer-horizontal">
-        <span>Qwen Image 3 Generator Hub</span>
-        <span>English-only · Private by default · Provider-aware</span>
-      </footer>
+      <SiteFooter onNavigate={noop} />
     </div>
   );
 }

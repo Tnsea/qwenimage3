@@ -291,9 +291,118 @@ test("Worker Stripe webhook replay grants a paid credit pack exactly once", asyn
   }
 });
 
+test("Worker quarantines a local payment on an actionable Stripe early fraud warning", async () => {
+  const { miniflare, database } = await createDatabase();
+  const originalFetch = globalThis.fetch;
+  let chargeLookupCount = 0;
+  try {
+    const timestamp = new Date().toISOString();
+    await database.batch([
+      database.prepare(`INSERT INTO billing_orders
+        (id, user_id, stripe_checkout_session_id, offer_id, kind, credits, amount_cents,
+          currency, status, payment_intent_id, financial_status, stripe_price_id, created_at, completed_at)
+        VALUES ('order-risk', 'user-1', 'cs_risk', 'credits_400', 'credits', 400, 1200,
+          'usd', 'paid', 'pi_risk', 'normal', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+      database.prepare(`INSERT INTO billing_payments
+        (payment_intent_id, user_id, billing_order_id, kind, credits_granted, amount_cents,
+          currency, status, stripe_price_id, created_at, updated_at)
+        VALUES ('pi_risk', 'user-1', 'order-risk', 'credits', 400, 1200,
+          'usd', 'paid', 'price_1TwMSbHyVvkt92TEBWGvGd0Y', ?, ?)`)
+        .bind(timestamp, timestamp),
+    ]);
+    globalThis.fetch = async (input, init) => {
+      assert.equal(String(input), "https://api.stripe.com/v1/charges/ch_risk");
+      assert.equal(init?.method, "GET");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer rk_test_runtime");
+      chargeLookupCount += 1;
+      return Response.json({ id: "ch_risk", payment_intent: "pi_risk" });
+    };
+    const event = {
+      id: "evt_risk",
+      type: "radar.early_fraud_warning.created",
+      data: {
+        object: {
+          id: "issfr_risk",
+          actionable: true,
+          charge: "ch_risk",
+          fraud_type: "unauthorized_use_of_card",
+        },
+      },
+    };
+    const body = JSON.stringify(event);
+    const secret = "whsec_worker_risk";
+    const signedRequest = () => {
+      const signedAt = Math.floor(Date.now() / 1000);
+      const signature = createHmac("sha256", secret).update(`${signedAt}.${body}`).digest("hex");
+      return new Request("https://qwen-image-3.net/api/billing/webhook", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Stripe-Signature": `t=${signedAt},v1=${signature}`,
+        },
+        body,
+      });
+    };
+    const environment = {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      STRIPE_SECRET_KEY: "rk_test_runtime",
+      STRIPE_WEBHOOK_SECRET: secret,
+      DB: database,
+      ASSETS_BUCKET: { delete: async () => undefined },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    };
+    const executionContext = { passThroughOnException() {}, waitUntil() {} };
+    const first = await worker.fetch(signedRequest(), environment as never, executionContext as never);
+    const replay = await worker.fetch(signedRequest(), environment as never, executionContext as never);
+    assert.equal(first.status, 200);
+    assert.equal(replay.status, 200);
+    assert.equal(chargeLookupCount, 1);
+
+    const account = await database.prepare(`SELECT spending_blocked, block_reason
+      FROM billing_accounts WHERE user_id = 'user-1'`)
+      .first<{ spending_blocked: number; block_reason: string | null }>();
+    assert.equal(account?.spending_blocked, 1);
+    assert.match(account?.block_reason ?? "", /early fraud warning/i);
+    const risk = await database.prepare(`SELECT warning_id, charge_id, payment_intent_id,
+      actionable, fraud_type, status FROM billing_risk_events WHERE stripe_event_id = 'evt_risk'`)
+      .first<{
+        warning_id: string;
+        charge_id: string;
+        payment_intent_id: string;
+        actionable: number;
+        fraud_type: string;
+        status: string;
+      }>();
+    assert.deepEqual(risk, {
+      warning_id: "issfr_risk",
+      charge_id: "ch_risk",
+      payment_intent_id: "pi_risk",
+      actionable: 1,
+      fraud_type: "unauthorized_use_of_card",
+      status: "open",
+    });
+    const payment = await database.prepare(`SELECT status, financial_event_id
+      FROM billing_payments WHERE payment_intent_id = 'pi_risk'`)
+      .first<{ status: string; financial_event_id: string | null }>();
+    assert.deepEqual(payment, { status: "paid", financial_event_id: "evt_risk" });
+    const order = await database.prepare(`SELECT financial_status, financial_event_id
+      FROM billing_orders WHERE id = 'order-risk'`)
+      .first<{ financial_status: string; financial_event_id: string | null }>();
+    assert.deepEqual(order, { financial_status: "normal", financial_event_id: "evt_risk" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await miniflare.dispose();
+  }
+});
+
 test("Worker generation idempotency elects one executor, returns 409 in flight, and logs every result", async () => {
   const { miniflare, database } = await createDatabase();
   try {
+    await database.prepare("UPDATE credit_accounts SET available = 16 WHERE user_id = 'user-1'").run();
     const apiSecret = "qh_test_worker_idempotency";
     await database.prepare(`INSERT INTO api_keys
       (id, user_id, name, prefix, secret_hash, scopes, created_at)
@@ -348,7 +457,7 @@ test("Worker generation idempotency elects one executor, returns 409 in flight, 
 
     const account = await database.prepare("SELECT available, reserved FROM credit_accounts WHERE user_id = 'user-1'")
       .first<{ available: number; reserved: number }>();
-    assert.deepEqual(account, { available: 2, reserved: 0 });
+    assert.deepEqual(account, { available: 8, reserved: 0 });
     const generations = await database.prepare("SELECT COUNT(*) count FROM generations")
       .first<{ count: number }>();
     assert.equal(generations?.count, 1);

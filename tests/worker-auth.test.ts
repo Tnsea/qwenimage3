@@ -54,7 +54,7 @@ test("Worker HTML is immutable to edge transforms so Cloudflare cannot inject an
   assert.doesNotMatch(await response.text(), /cloudflareinsights|beacon\.min\.js/);
 });
 
-for (const path of ["/api/workspace/overview", "/api/projects", "/api/credits", "/api/account/export", "/api/api-keys", "/api/support/tickets"]) {
+for (const path of ["/api/workspace/overview", "/api/projects", "/api/credits", "/api/account/export", "/api/api-keys", "/api/support/tickets", "/api/generations"]) {
   test(`Cloudflare protected route ${path} returns structured 401 without a session`, async () => {
     const response = await worker.fetch(
       new Request(`https://qwen-image-3.net${path}`),

@@ -17,23 +17,21 @@ test("Cloudflare password and token hashing is salted, verifiable, and one-way",
   assert.notEqual(await hashToken(token), token);
 });
 
-test("Cloudflare billing remains fail-closed until every Stripe Price is configured", () => {
-  const incomplete = {
+test("Cloudflare billing requires the sales gate and credentials while offers configure independently", () => {
+  const credentialsOnly = {
     BILLING_ENABLED: "true",
     STRIPE_SECRET_KEY: "sk_test_example",
     STRIPE_WEBHOOK_SECRET: "whsec_example",
-    STRIPE_PRICE_CREATOR_INTRO: "price_intro",
-    STRIPE_PRICE_CREATOR_MONTHLY: "price_standard",
-    STRIPE_PRICE_CREDITS_100: "price_pack_100",
   };
-  assert.equal(billingConfigured(incomplete), false);
-  assert.equal(allOffers(incomplete).find((offer) => offer.id === "credits_300")?.configured, false);
+  assert.equal(billingConfigured(credentialsOnly), true);
+  assert.ok(allOffers(credentialsOnly).every((offer) => offer.configured === false));
 
-  const complete = { ...incomplete, STRIPE_PRICE_CREDITS_300: "price_pack_300" };
-  assert.equal(billingConfigured(complete), true);
-  assert.deepEqual(allOffers(complete).map((offer) => offer.amountCents), [800, 1000, 700, 1800]);
+  const partial = { ...credentialsOnly, STRIPE_PRICE_CREATOR_YEARLY: "price_creator_yearly" };
+  assert.equal(allOffers(partial).find((offer) => offer.id === "creator_yearly")?.configured, true);
+  assert.equal(allOffers(partial).find((offer) => offer.id === "starter_yearly")?.configured, false);
+  assert.deepEqual(allOffers(partial).map((offer) => offer.amountCents), [990, 9900, 2990, 29900, 5990, 59900, 1200, 3000, 6000]);
 
-  const salesPaused = { ...complete, BILLING_ENABLED: "false" };
+  const salesPaused = { ...partial, BILLING_ENABLED: "false" };
   assert.equal(billingConfigured(salesPaused), false);
   assert.equal(billingCredentialsConfigured(salesPaused), true);
   assert.equal(stripeAccessConfigured(salesPaused), true);

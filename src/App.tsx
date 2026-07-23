@@ -7,12 +7,13 @@ import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
 import { ApiPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, PromptsPage, type Catalog } from "./components/Marketing";
+import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
 import type { SessionState } from "./types";
 
 const emptySession: SessionState = {
   user: null,
-  entitlements: { accountType: "guest", guestLimit: 3, guestRemaining: 3, credits: 0, reservedCredits: 0, guestResetsAt: new Date().toISOString(), priorityGeneration: false, watermarkedExports: true },
+  entitlements: { accountType: "guest", guestLimit: 0, guestRemaining: 0, credits: 0, reservedCredits: 0, guestResetsAt: "", priorityGeneration: false, watermarkedExports: true },
 };
 
 const emptyCatalog: Catalog = { plans: [], prompts: [], models: [], promotion: null, creditPacks: [] };
@@ -68,16 +69,15 @@ export default function App() {
           }
           window.history.replaceState({}, "", "/");
           setPath("/");
-          setNotice(payload.session ? "Email verified. Your 20 welcome credits are ready." : "Email verified. Sign in to access your 20 welcome credits.");
+          setNotice(payload.session ? "Email verified. Account recovery and developer access are ready." : "Email verified. Sign in to continue.");
         })
         .catch((reason: Error) => setStartupError(reason.message));
       return;
     }
     if (query.get("oauth") === "success") {
       void refreshSession();
-      const migrated = Number(query.get("migrated") ?? 0);
       window.history.replaceState({}, "", path);
-      setNotice(migrated > 0 ? `Signed in. ${migrated} guest generation${migrated === 1 ? " was" : "s were"} migrated.` : "Secure social sign-in complete.");
+      setNotice("Secure social sign-in complete.");
     } else if (query.has("oauth_error")) {
       window.history.replaceState({}, "", "/");
       setPath("/");
@@ -123,7 +123,7 @@ export default function App() {
 
   let page: React.ReactNode;
   if (path.startsWith("/studio")) {
-    page = <Studio path={path} session={session} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onLogout={logout} />;
+    page = <Studio path={path} session={session} models={catalog.models} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onLogout={logout} />;
   } else if (path === "/examples") {
     page = <ExamplesPage catalog={catalog} onUsePrompt={usePrompt} />;
   } else if (path === "/prompts") {
@@ -131,16 +131,16 @@ export default function App() {
   } else if (path === "/models") {
     page = <ModelsPage catalog={catalog} onNavigate={navigate} />;
   } else if (path === "/pricing") {
-    page = <PricingPage catalog={catalog} onNavigate={navigate} onRegister={() => session.user ? navigate("/studio/billing") : openAuth("register")} />;
+    page = <PricingPage catalog={catalog} onRegister={() => session.user ? navigate("/studio/billing") : openAuth("register")} />;
   } else if (path === "/guides") {
     page = <GuidesPage onNavigate={navigate} />;
   } else if (path === "/api") {
-    page = <ApiPage onNavigate={navigate} />;
+    page = <ApiPage models={catalog.models} onNavigate={navigate} />;
   } else if (path === "/" || path === "/verify-email" || path === "/reset-password") {
     page = (
       <main className="home-main">
         <HomeHero />
-        <GeneratorWorkspace session={session} initialPrompt={initialPrompt} onRequireAuth={() => openAuth("register")} onSessionRefresh={refreshSession} />
+        <GeneratorWorkspace session={session} models={catalog.models} initialPrompt={initialPrompt} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} />
         <HomeSections catalog={catalog} onNavigate={navigate} onUsePrompt={usePrompt} onRegister={() => openAuth("register")} />
       </main>
     );
@@ -154,19 +154,17 @@ export default function App() {
       {startupError && <div role="alert" className="alert alert-error global-alert"><span>{startupError}</span></div>}
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
-      {!path.startsWith("/studio") && <footer className="site-footer footer sm:footer-horizontal"><span>Qwen Image 3 Generator Hub</span><span>English-only · Private by default · Provider-aware</span></footer>}
+      {!path.startsWith("/studio") && <SiteFooter onNavigate={navigate} />}
       <AuthDialog open={authOpen} initialMode={authMode} resetToken={resetToken} onClose={() => setAuthOpen(false)} onResetComplete={() => {
         window.history.replaceState({}, "", "/");
         setPath("/");
         setResetToken("");
         setNotice("Password updated. Sign in with your new password.");
-      }} onSuccess={(nextSession, migrated, verifiedNow) => {
+      }} onSuccess={(nextSession) => {
         setSession(nextSession);
         setAuthOpen(false);
         navigate("/studio");
-        if (verifiedNow) setNotice("Email verified. Your 20 welcome credits are ready.");
-        else if (migrated > 0) setNotice(`Account ready. ${migrated} guest generation${migrated > 1 ? "s were" : " was"} migrated.${nextSession.user?.emailVerified ? "" : " Verify your email to unlock credits."}`);
-        else setNotice(nextSession.user?.emailVerified ? "Account ready. Your 20 welcome credits are available." : "Account ready. Check your email to unlock 20 welcome credits.");
+        setNotice("Account ready. Your credits are available.");
       }} />
     </div>
   );

@@ -39,12 +39,12 @@ Run `npm run check`, `npm test`, and `npm run build` after behavior changes. For
 
 - The default provider is a deterministic local SVG preview.
 - The implemented external adapter targets `qwen-image-2.0-pro`; no Qwen Image 3 integration is verified.
-- The Cloudflare Worker custom domain, D1, and R2 acceptance runtime is deployed and smoke-tested; Pages remains a fallback URL. Stripe restricted-key, signed-webhook, and one paid Sandbox credit-pack lifecycle are recorded in `docs/RELEASE_READINESS.md`; Google, GitHub, Resend, Docker, real Qwen execution, and the remaining Stripe subscription/reversal/Portal/deletion lifecycle remain unverified.
+- The Cloudflare Worker custom domain, D1, and R2 acceptance runtime is deployed and smoke-tested; Pages remains a fallback URL. Stripe restricted-key, signed-webhook, and one paid Sandbox credit-pack lifecycle are recorded in `docs/RELEASE_READINESS.md`. One real Google sign-in passed and Google's external-user consent screen is published; this is not product production approval. Google denial/failure paths, GitHub, Resend, Docker, real Qwen execution, and the remaining Stripe subscription/reversal/Portal/deletion lifecycle remain unverified.
 - Billing is fail-closed behind `BILLING_ENABLED` for new Checkout creation; configured webhook settlement and external cleanup stay available. Local and signed-event tests do not replace paid Stripe test-mode acceptance.
-- Guest assets are deleted by the scheduled 24-hour maintenance pass; backup-deletion and production telemetry remain unverified.
+- New guest generation is disabled. The scheduled 24-hour maintenance path remains only to drain legacy guest assets; backup deletion and production telemetry remain unverified.
 - `compose.yaml` is local-only and must not be presented as an internet deployment configuration.
 - A clean build is not a deployment. Distinguish implemented, locally verified, externally verified, deployed, and live verified.
 
 ## Current Priority
 
-Resolve the blockers in `docs/RELEASE_READINESS.md`, establish the first committed baseline and CI, then verify external integrations. Do not delete runtime data, generated artifacts, branches, or worktrees without an explicit post-report confirmation.
+Review and commit the current account-gated changes, deploy from that reviewed immutable revision, and verify the remaining blockers in `docs/RELEASE_READINESS.md`. Do not delete runtime data, generated artifacts, branches, or worktrees without an explicit post-report confirmation.
