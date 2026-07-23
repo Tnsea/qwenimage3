@@ -3,7 +3,6 @@ import { ArrowLeft, FileQuestion } from "lucide-react";
 import { api } from "./api";
 import { initializeAnalytics, trackPageView } from "./analytics";
 import { parseCatalog } from "./catalog";
-import { AnalyticsConsent } from "./components/AnalyticsConsent";
 import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
@@ -170,7 +169,6 @@ export default function App() {
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
       {!path.startsWith("/studio") && <SiteFooter onNavigate={navigate} />}
-      <AnalyticsConsent path={path} />
       <AuthDialog open={authOpen} initialMode={authMode} resetToken={resetToken} onClose={() => setAuthOpen(false)} onResetComplete={() => {
         window.history.replaceState({}, "", "/");
         setPath("/");

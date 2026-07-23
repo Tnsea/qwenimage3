@@ -1,7 +1,4 @@
 export const GA_MEASUREMENT_ID = "G-7Q6BB5CR23";
-export const ANALYTICS_CONSENT_STORAGE_KEY = "qwen-analytics-consent-v1";
-
-export type AnalyticsConsent = "granted" | "denied";
 
 declare global {
   interface Window {
@@ -19,13 +16,8 @@ function ensureDataLayer() {
   });
 }
 
-export function readAnalyticsConsent(): AnalyticsConsent | null {
-  const value = window.localStorage.getItem(ANALYTICS_CONSENT_STORAGE_KEY);
-  return value === "granted" || value === "denied" ? value : null;
-}
-
 export function initializeAnalytics() {
-  if (initialized || readAnalyticsConsent() !== "granted") return;
+  if (initialized) return;
   initialized = true;
   ensureDataLayer();
   window.gtag!("consent", "default", {
@@ -52,30 +44,11 @@ export function initializeAnalytics() {
   }
 }
 
-export function setAnalyticsConsent(consent: AnalyticsConsent) {
-  window.localStorage.setItem(ANALYTICS_CONSENT_STORAGE_KEY, consent);
-  if (consent === "granted") {
-    initializeAnalytics();
-  } else if (window.gtag) {
-    window.gtag("consent", "update", {
-      analytics_storage: "denied",
-      ad_storage: "denied",
-      ad_user_data: "denied",
-      ad_personalization: "denied",
-    });
-  }
-}
-
 export function trackPageView(path: string) {
-  if (readAnalyticsConsent() !== "granted") return;
   initializeAnalytics();
   window.gtag?.("event", "page_view", {
     page_location: `${window.location.origin}${path}`,
     page_path: path,
     page_title: document.title,
   });
-}
-
-export function openAnalyticsPreferences() {
-  window.dispatchEvent(new Event("qwen:analytics-preferences"));
 }

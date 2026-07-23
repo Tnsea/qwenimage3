@@ -157,21 +157,20 @@ Both responses must report Google OAuth as configured. Complete one consent deni
 
 Acceptance evidence on July 23, 2026: Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` reported Google configured, completed the real authorization-code and PKCE callback, created one Google identity mapping and browser session, granted the social-account starter credits once, entered the private Workspace, and left no pending OAuth state. Google Auth Platform was then switched from `Testing` to `Production` for the external user type, making sign-in available beyond the tester list. Denial/failure acceptance and reviewed release provenance remain open.
 
-Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. Reviewed GA4 support is manual, consent-gated, and limited by CSP to the exact Google Tag Manager script host plus the primary and regional Google Analytics collection hosts. Inline scripts remain blocked.
+Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. Reviewed GA4 support is loaded by the client and limited by CSP to the exact Google Tag Manager script host plus the primary and regional Google Analytics collection hosts. Inline scripts remain blocked.
 
 ### GA4 page-view analytics
 
-The reviewed web stream uses Measurement ID `G-7Q6BB5CR23` for `https://qwen-image-3.net`. The client does not load `gtag.js` until the visitor selects **Allow analytics**. Declining leaves the external script unloaded; the choice is stored in that browser and can be reopened from **Analytics choices** in the footer.
+The reviewed web stream uses Measurement ID `G-7Q6BB5CR23` for `https://qwen-image-3.net`. The client loads `gtag.js` on site entry and records SPA page views without displaying an analytics prompt.
 
 The configuration sends SPA page-view events only. Advertising storage, advertising user data, personalization, Google Signals, and ad-personalization signals are disabled. Product code must not add prompts, generated images, user IDs, email addresses, billing identifiers, or project names to analytics events.
 
 Live acceptance after deployment:
 
-1. Open a clean browser profile and confirm no request to `googletagmanager.com` or `google-analytics.com` occurs before a choice.
-2. Select **Decline**, reload, and confirm the external script remains absent.
-3. Reopen **Analytics choices**, select **Allow analytics**, and confirm `gtag/js?id=G-7Q6BB5CR23` plus one page-view collection request.
-4. Navigate between public SPA routes and confirm subsequent page-view events use the new path without a full reload.
-5. Use GA4 Realtime or DebugView to confirm receipt. Google notes that standard collection views can take longer to populate.
+1. Open a clean browser profile and confirm `gtag/js?id=G-7Q6BB5CR23` and one page-view collection request load without a prompt.
+2. Confirm the page does not display an analytics banner or footer choice.
+3. Navigate between public SPA routes and confirm subsequent page-view events use the new path without a full reload.
+4. Use GA4 Realtime or DebugView to confirm receipt. Google notes that standard collection views can take longer to populate.
 
 ## Billing Price Versions
 
