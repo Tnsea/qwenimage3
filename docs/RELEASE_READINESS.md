@@ -27,7 +27,9 @@ The application is locally functional and verified. This file is the authoritati
 
 Source-control evidence:
 
-- baseline commit `39b9e3a` is pushed to `Tnsea/qwenimage3`; the hardening branch and GitHub Actions workflow still need their first successful remote CI run.
+- baseline commit `39b9e3a` is pushed to `Tnsea/qwenimage3`;
+- hardening commit `61cf65e` is pushed on `codex/worker-online-hardening`;
+- GitHub Actions run `29995895346` passed the full CI workflow for pull request 1.
 
 Limitations of this evidence:
 
@@ -79,11 +81,11 @@ Public billing stays fail-closed behind `BILLING_ENABLED=false` until every rema
 
 **Remaining:** no Qwen Image 3 claim may return without an official source plus implemented provider, license, and acceptance evidence.
 
-### SCM-001: Committed baseline established; CI evidence pending
+### SCM-001: Committed baseline and CI established; reviewed release marker pending
 
-**Evidence:** baseline commit `39b9e3a` is pushed to `main` in `Tnsea/qwenimage3`. `.github/workflows/ci.yml` runs strict checks, all tests, Worker checking, the production build, local-artifact scanning, and a blocking production dependency audit; the full development audit is recorded separately.
+**Evidence:** baseline commit `39b9e3a` is pushed to `main` in `Tnsea/qwenimage3`. Hardening commit `61cf65e` is pushed through draft pull request 1. GitHub Actions run `29995895346` passed strict checks, all 56 tests, Worker checking, the production build, local-artifact scanning, and the blocking production dependency audit; the full development audit is recorded separately.
 
-**Remaining:** push the hardening branch, obtain a successful GitHub Actions run, and deploy from the reviewed immutable revision.
+**Remaining:** review and merge the pull request, then deploy from the reviewed immutable revision instead of treating a pre-review acceptance deployment as a release.
 
 **Acceptance:** successful required CI on the reviewed hardening revision and recorded deployment provenance.
 
@@ -148,6 +150,7 @@ Before changing this file to Ready, record:
 
 ## Current Acceptance Deployment Record
 
+- Source revision and CI: `61cf65e`; GitHub Actions run `29995895346` passed for draft pull request 1
 - Worker version: `4dcd71ed-466d-4fa1-afb8-03d5bc575f6e`
 - Environment and URL: Cloudflare acceptance, `https://qwen-image-3.net`
 - Enabled providers: deterministic local preview only; billing, Qwen, Google, GitHub, and external email remain disabled
@@ -157,4 +160,4 @@ Before changing this file to Ready, record:
 - Operator: repository owner with Codex implementation assistance
 - Deferred blockers: all P0/P1 and applicable P2 items above remain blocking
 
-The source revision and CI run will be added after the reviewed hardening branch passes remote CI. This record documents acceptance evidence only and is not a Ready decision.
+The Worker and client runtime content are represented by the recorded hardening commit, but the acceptance deployment preceded review and was not produced by CI. This record documents acceptance evidence only and is not a Ready decision.
