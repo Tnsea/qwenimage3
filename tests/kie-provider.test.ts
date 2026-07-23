@@ -9,7 +9,8 @@ const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 test("Kie.ai Qwen provider creates, polls, validates, and downloads one image", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   let clock = 0;
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: typeof fetch = async function (this: unknown, input, init) {
+    assert.equal(this, undefined);
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     requests.push({ url, init });
     if (requests.length === 1) {

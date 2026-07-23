@@ -177,7 +177,10 @@ export class KieQwenImageProvider {
     this.requestTimeoutMs = boundedMilliseconds(options.requestTimeoutMs, 15_000, 120_000);
     this.maxPollMs = boundedMilliseconds(options.maxPollMs, 120_000, 180_000);
     this.pollIntervalMs = boundedMilliseconds(options.pollIntervalMs, 2_000, 10_000);
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    const fetchImpl = options.fetchImpl;
+    this.fetchImpl = fetchImpl
+      ? (input, init) => fetchImpl(input, init)
+      : (input, init) => fetch(input, init);
     this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.now = options.now ?? Date.now;
   }
