@@ -1,4 +1,4 @@
-import { ArrowRight, ArrowUpRight, BookOpen, Check, Code2, Coins, Copy, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
+import { ArrowRight, ArrowUpRight, BookOpen, Check, Code2, Coins, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
 import { useState } from "react";
 import {
   BILLING_TERMS_EFFECTIVE_DATE,
@@ -8,7 +8,6 @@ import {
   termsSections,
 } from "../billing-policy";
 import { exampleMedia } from "../exampleMedia";
-import { promptMedia } from "../promptMedia";
 import type { Catalog } from "../types";
 
 export type { Catalog } from "../types";
@@ -358,46 +357,6 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Ca
 
 function PageIntro({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) {
   return <header className="content-page-intro"><div className="section-kicker">{eyebrow}</div><h1>{title}</h1><p>{copy}</p></header>;
-}
-
-export function PromptsPage({ catalog, onUsePrompt }: { catalog: Catalog; onUsePrompt: (prompt: string) => void }) {
-  const [copied, setCopied] = useState("");
-  async function copy(id: string, prompt: string) { await navigator.clipboard.writeText(prompt); setCopied(id); window.setTimeout(() => setCopied(""), 1600); }
-  return (
-    <main className="content-page prompts-page">
-      <PageIntro
-        eyebrow="Prompt library"
-        title="AI image prompts, explained."
-        copy="Every template includes a complete visual reference for the subject, setting, light, and style. Copy one or send the full setup to the configured generator."
-      />
-      <div className="library-grid">
-        {catalog.prompts.map((item, index) => {
-          const media = promptMedia[item.id];
-          return (
-            <article className="card card-border library-card" key={item.id}>
-              <figure className="library-media">
-                <img src={media.src} alt={media.alt} width={media.width} height={media.height} loading="lazy" decoding="async" />
-                <figcaption>
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <strong>{item.category}</strong>
-                </figcaption>
-              </figure>
-              <div className="card-body">
-                <span className="badge badge-outline">{item.category}</span>
-                <h2 className="card-title">{item.title}</h2>
-                <p>{item.prompt}</p>
-                <div className="prompt-anatomy"><span>Subject</span><span>Setting</span><span>Light</span><span>Style</span></div>
-                <div className="card-actions">
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => void copy(item.id, item.prompt)}><Copy size={14} />{copied === item.id ? "Copied" : "Copy"}</button>
-                  <button className="btn btn-primary btn-sm" type="button" onClick={() => onUsePrompt(item.prompt)}>Use in generator <ArrowRight size={14} /></button>
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </main>
-  );
 }
 
 export function ExamplesPage({ catalog, onUsePrompt }: { catalog: Catalog; onUsePrompt: (prompt: string) => void }) {

@@ -10,7 +10,7 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 
 | Area | Current status |
 |---|---|
-| Public UI | English homepage, sticky navigation, responsive generator, Examples, Prompts, Models, Pricing, Guides, and API pages |
+| Public UI | English homepage, sticky navigation, responsive generator, Examples, Models, Pricing, Guides, and API pages |
 | Search discovery | Homepage content is prerendered into the initial HTML; the Worker emits self-referencing canonical and `og:url` metadata for every public sitemap route, while JSON-LD, robots.txt, and sitemap.xml ship with the web build |
 | Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
 | Accounts | Email/password registration and login, one-time email verification, password recovery, session management, export, and fail-safe account deletion that cleans Stripe first when linked |

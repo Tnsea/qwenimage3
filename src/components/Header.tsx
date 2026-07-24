@@ -4,7 +4,6 @@ import type { SessionState } from "../types";
 const navigation = [
   { label: "Generator", path: "/" },
   { label: "Examples", path: "/examples" },
-  { label: "Prompts", path: "/prompts" },
   { label: "Models", path: "/models" },
   { label: "Pricing", path: "/pricing" },
   { label: "Guides", path: "/guides" },

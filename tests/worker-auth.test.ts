@@ -63,6 +63,17 @@ test("Worker HTML is immutable to edge transforms so Cloudflare cannot inject an
   assert.doesNotMatch(await response.text(), /cloudflareinsights|beacon\.min\.js/);
 });
 
+test("Worker permanently redirects the removed prompts page to examples", async () => {
+  const response = await worker.fetch(
+    new Request("https://qwen-image-3.net/prompts?source=legacy"),
+    environment as never,
+    executionContext as never,
+  );
+
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get("location"), "https://qwen-image-3.net/examples?source=legacy");
+});
+
 for (const path of PUBLIC_INDEXABLE_PATHS) {
   test(`Worker emits a self-referencing canonical for ${path}`, async () => {
     const response = await worker.fetch(

@@ -106,7 +106,7 @@ D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, res
 ### Signed-out access
 
 1. `/api/session` returns a signed-out state without issuing an anonymous generation cookie.
-2. Public examples, prompts, models, pricing, and guides remain browsable.
+2. Public examples, models, pricing, and guides remain browsable.
 3. Generation, history, private image access, and deletion return `401 UNAUTHENTICATED`.
 
 ### Account generation

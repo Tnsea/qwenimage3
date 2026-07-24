@@ -1544,6 +1544,14 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+for (const legacyPromptsPath of ["/prompts", "/prompts/"]) {
+  app.get(legacyPromptsPath, (c) => {
+    const destination = new URL(c.req.url);
+    destination.pathname = "/examples";
+    return c.redirect(destination.toString(), 308);
+  });
+}
+
 export function browserWriteOriginAllowed(request: Request, appBaseUrl: string) {
   const origin = request.headers.get("origin")?.replace(/\/$/, "");
   const fetchSite = request.headers.get("sec-fetch-site");

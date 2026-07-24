@@ -7,11 +7,11 @@ import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
-import { ApiPage, BillingTermsPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, PromptsPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
+import { ApiPage, BillingTermsPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
 import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
 import { IndependentStatusPage, PrivacyDataPage, SupportPage } from "./components/TrustPages";
-import { CANONICAL_SITE_ORIGIN, publicCanonicalUrl } from "./seo";
+import { CANONICAL_SITE_ORIGIN, legacyPublicRedirectPath, publicCanonicalUrl } from "./seo";
 import type { SessionState } from "./types";
 
 const emptySession: SessionState = {
@@ -22,7 +22,7 @@ const emptySession: SessionState = {
 const emptyCatalog: Catalog = { plans: [], prompts: [], models: [], promotion: null, creditPacks: [] };
 
 export default function App() {
-  const [path, setPath] = useState(() => window.location.pathname);
+  const [path, setPath] = useState(() => legacyPublicRedirectPath(window.location.pathname) ?? window.location.pathname);
   const [session, setSession] = useState<SessionState>(emptySession);
   const [catalog, setCatalog] = useState<Catalog>(emptyCatalog);
   const [authOpen, setAuthOpen] = useState(false);
@@ -41,11 +41,17 @@ export default function App() {
 
   useEffect(() => {
     initializeAnalytics();
+    const initialRedirect = legacyPublicRedirectPath(window.location.pathname);
+    if (initialRedirect) window.history.replaceState({}, "", `${initialRedirect}${window.location.search}${window.location.hash}`);
     void api<SessionState>("/api/session")
       .then(async (nextSession) => ({ nextSession, nextCatalog: parseCatalog(await api<unknown>("/api/catalog")) }))
       .then(({ nextSession, nextCatalog }) => { setSession(nextSession); setCatalog(nextCatalog); })
       .catch((reason: Error) => setStartupError(reason.message));
-    const handlePopState = () => setPath(window.location.pathname);
+    const handlePopState = () => {
+      const redirect = legacyPublicRedirectPath(window.location.pathname);
+      if (redirect) window.history.replaceState({}, "", `${redirect}${window.location.search}${window.location.hash}`);
+      setPath(redirect ?? window.location.pathname);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
@@ -137,8 +143,6 @@ export default function App() {
     page = <Studio path={path} session={session} models={catalog.models} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onLogout={logout} />;
   } else if (path === "/examples") {
     page = <ExamplesPage catalog={catalog} onUsePrompt={usePrompt} />;
-  } else if (path === "/prompts") {
-    page = <PromptsPage catalog={catalog} onUsePrompt={usePrompt} />;
   } else if (path === "/models") {
     page = <ModelsPage catalog={catalog} onNavigate={navigate} />;
   } else if (path === "/pricing") {

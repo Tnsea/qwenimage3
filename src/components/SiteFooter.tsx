@@ -16,7 +16,6 @@ const footerGroups = [
   {
     title: "Explore",
     links: [
-      ["Prompt library", "/prompts"],
       ["Image models", "/models"],
       ["Guides", "/guides"],
       ["API guide", "/api"],

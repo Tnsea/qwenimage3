@@ -57,6 +57,7 @@ test("every sitemap route resolves to its own public canonical", () => {
 
   assert.deepEqual(sitemapUrls, expectedUrls);
   assert.equal(publicCanonicalUrl("/pricing/"), `${CANONICAL_SITE_ORIGIN}/pricing`);
+  assert.equal(publicCanonicalUrl("/prompts"), null);
   assert.equal(publicCanonicalUrl("/studio"), null);
   assert.equal(publicCanonicalUrl("/verify-email"), null);
   assert.equal(publicCanonicalUrl("/not-a-route"), null);

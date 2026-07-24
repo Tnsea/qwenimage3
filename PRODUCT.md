@@ -21,7 +21,7 @@ No locally verified state implies merged, deployed, publicly available, commerci
 
 ## 2. Product Definition
 
-Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pricing publicly. Image generation begins after account creation or sign-in, uses an account credit balance, stores private work in Studio, and optionally exposes the same generation contract through a scoped API key.
+Qwen Image Generator Hub lets visitors explore models, examples, and pricing publicly. Image generation begins after account creation or sign-in, uses an account credit balance, stores private work in Studio, and optionally exposes the same generation contract through a scoped API key.
 
 ### Product principles
 
@@ -66,7 +66,6 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 |---|---|
 | `/` | Homepage and generator entry; successful signed-in generations hand off directly to private Studio history instead of rendering inline results, followed by product sections, pricing preview, and FAQ |
 | `/examples` | Eight unique curated cards |
-| `/prompts` | Twelve reusable English prompt records |
 | `/models` | Local preview and configured Qwen 2.0 adapter status |
 | `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default, and each checkout is enabled only when the Stripe gate, matching environment Price ID, and active D1 Price version all pass |
 | `/privacy` | Pre-release privacy and data notice covering account, creative, billing, support, analytics, provider, retention, export, and deletion boundaries without claiming launch-region legal approval |
@@ -102,7 +101,7 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 ### Global navigation requirements
 
-- Desktop navigation contains Generator, Examples, Prompts, Models, Pricing, and Guides.
+- Desktop navigation contains Generator, Examples, Models, Pricing, and Guides.
 - The active route uses `aria-current="page"`.
 - Signed-out actions expose Sign in and Create account.
 - Signed-in actions expose credits and an account menu.

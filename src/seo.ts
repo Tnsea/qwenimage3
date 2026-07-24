@@ -3,7 +3,6 @@ export const CANONICAL_SITE_ORIGIN = "https://qwen-image-3.net";
 export const PUBLIC_INDEXABLE_PATHS = [
   "/",
   "/examples",
-  "/prompts",
   "/models",
   "/pricing",
   "/privacy",
@@ -16,6 +15,11 @@ export const PUBLIC_INDEXABLE_PATHS = [
 ] as const;
 
 const publicIndexablePathSet = new Set<string>(PUBLIC_INDEXABLE_PATHS);
+
+export function legacyPublicRedirectPath(pathname: string): string | null {
+  const normalizedPath = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
+  return normalizedPath === "/prompts" ? "/examples" : null;
+}
 
 export function publicCanonicalPath(pathname: string): string | null {
   const normalizedPath = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
