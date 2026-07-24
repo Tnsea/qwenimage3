@@ -45,13 +45,13 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 | Capability | Current status | Production requirement |
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
-| Account-gated generation | **Implemented locally** with a signed-in requirement and server-authoritative credit reservation | External redeploy, real provider acceptance, and backup-deletion telemetry |
-| Real image provider | **Kie.ai Worker path externally verified; signed-in lifecycle pending** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Signed-in credit/private-R2/browser acceptance, approved provider contract, license, cost model, timeout behavior, and rollback |
+| Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering | Failure/timeout recovery, backup-deletion telemetry, and production monitoring |
+| Real image provider | **Kie.ai signed-in success path externally verified once** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
 | Email/password accounts | **Verified locally** | Production mail delivery and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
 | Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
-| Credits | **Verified locally and in the isolated Sandbox** for generation reserve/settle/refund and non-negative billing-loss recovery; aggregate billing-health alert delivery passed externally | Reconciliation monitoring |
+| Credits | **Verified locally, in the isolated Sandbox, and once in the Cloudflare acceptance flow** for generation reservation/settlement; non-negative billing-loss recovery and aggregate billing-health alert delivery also passed | Reconciliation monitoring |
 | Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
 | Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |

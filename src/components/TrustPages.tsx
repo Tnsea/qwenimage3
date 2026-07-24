@@ -248,7 +248,7 @@ export function IndependentStatusPage({ onNavigate }: TrustPageProps) {
           </article>
           <article>
             <h3>Still unverified</h3>
-            <p>The signed-in Kie.ai credit, private-R2, and browser lifecycle; Alibaba Qwen execution; production backup and restore; broad browser and accessibility acceptance; production telemetry; and launch-region privacy and legal review remain open. One paid Kie.ai Qwen Image 2 Worker task has completed successfully in the acceptance environment.</p>
+            <p>Kie.ai failure, moderation, timeout, and late-completion behavior; provider commercial terms; Alibaba Qwen execution; production backup and restore; broad browser and accessibility acceptance; production telemetry; and launch-region privacy and legal review remain open. One signed-in Kie.ai Qwen Image 2 request completed credit settlement, private R2 persistence, and browser rendering in the acceptance environment.</p>
           </article>
           <article>
             <h3>Current source of truth</h3>

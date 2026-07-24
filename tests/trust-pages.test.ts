@@ -31,7 +31,8 @@ test("public trust pages preserve the pre-release and secret-handling boundaries
   assert.match(pages, /export function IndependentStatusPage/);
   assert.match(pages, /It is not an externally accepted production service/);
   assert.match(pages, /No Qwen Image 3 provider integration has been verified/);
-  assert.match(pages, /One paid Kie\.ai Qwen Image 2 Worker task has completed successfully/);
+  assert.match(pages, /One signed-in Kie\.ai Qwen Image 2 request completed credit settlement, private R2 persistence, and browser rendering/);
+  assert.doesNotMatch(pages, /signed-in Kie\.ai credit, private-R2, and browser lifecycle/);
   assert.doesNotMatch(pages, />Real Qwen execution,/);
   assert.match(pages, /export function SupportPage/);
   assert.match(pages, /Do not submit passwords, complete API keys, raw session tokens/);
