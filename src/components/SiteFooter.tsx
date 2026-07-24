@@ -78,7 +78,7 @@ export function SiteFooter({ onNavigate }: SiteFooterProps) {
         </div>
 
         <div
-          className="mt-6 flex flex-col items-center justify-center gap-3"
+          className="mt-6 flex flex-wrap items-center justify-center gap-3 sm:flex-nowrap"
           role="group"
           aria-label="Featured listings"
         >

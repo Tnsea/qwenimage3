@@ -36,7 +36,7 @@ test("homepage build injects the real semantic page into the first-response docu
   assert.match(footer, /alt="Software Bolt"/);
   assert.match(footer, /width=\{203\}[\s\S]*height=\{54\}[\s\S]*loading="lazy"/);
   assert.match(footer, /findly\.tools[\s\S]*softwarebolt\.com/);
-  assert.match(footer, /className="mt-6 flex flex-col items-center justify-center gap-3"/);
+  assert.match(footer, /className="mt-6 flex flex-wrap items-center justify-center gap-3 sm:flex-nowrap"/);
   assert.match(footer, /role="group"[\s\S]*aria-label="Featured listings"/);
   assert.doesNotMatch(hero, /provider currently configured/);
   assert.match(marketing, /<h2>Create private image results in one workspace\.<\/h2>/);
