@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified: July 23, 2026
+Last verified: July 24, 2026
 
 This document describes the repository as it exists. Future architecture is clearly labeled and must not be presented as current behavior.
 
@@ -14,7 +14,8 @@ flowchart TD
   W --> P{Configured provider}
   P --> L[Deterministic local SVG]
   P --> Q[Alibaba Cloud Qwen 2.0 adapter]
-  W --> T
+  P --> K[Kie.ai Qwen Image 2 adapter]
+  W --> T[Stripe billing and webhooks]
   E[Legacy Express adapter] -. comparison only .-> S[(SQLite with WAL)]
 ```
 

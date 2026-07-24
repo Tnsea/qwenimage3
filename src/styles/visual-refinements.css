@@ -179,17 +179,12 @@ main,
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.controls-panel,
-.result-panel {
+.controls-panel {
   padding: 32px;
 }
 
 .controls-panel {
   border-right-color: #292b2b;
-}
-
-.result-panel {
-  background: rgba(255, 255, 255, 0.022);
 }
 
 .prompt-field.textarea {
@@ -216,18 +211,6 @@ main,
   height: 46px;
   min-height: 46px;
   border-radius: 12px;
-}
-
-.result-stage {
-  height: 322px;
-  border-color: #2f3131;
-  border-radius: 16px;
-  background: #080a0a;
-}
-
-.image-placeholder-icon {
-  border: 1px solid #343636;
-  background: #1b1d1d;
 }
 
 .marketing-section {

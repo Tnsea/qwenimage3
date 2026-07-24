@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Plus, ReceiptText, Send, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
+import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Plus, ReceiptText, RefreshCw, Send, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
 import { api } from "../api";
 import { BILLING_TERMS_VERSION, billingPolicySummary } from "../billing-policy";
 import type {
@@ -173,6 +173,77 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
       const updated = await api<Project>(`/api/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ name: project.name, description: project.description, archived: !project.archived }) });
       setProjects((items) => items.map((item) => item.id === updated.id ? updated : item));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update the project."); }
+  }
+
+  async function setGenerationFavorite(generation: Generation) {
+    const action = `generation-favorite-${generation.id}`;
+    setBusyAction(action);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await api<{ favorite: boolean }>(`/api/generations/${generation.id}/favorite`, {
+        method: "PATCH",
+        body: JSON.stringify({ favorite: !generation.favorite }),
+      });
+      setGenerations((items) => items.map((item) => item.id === generation.id ? { ...item, favorite: updated.favorite } : item));
+      setMessage(updated.favorite ? "Saved to Favorites." : "Removed from Favorites.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update this favorite.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function createGenerationVariation(generation: Generation) {
+    const retrying = generation.status === "failed";
+    const actionLabel = retrying ? "retry" : "variation";
+    if (!window.confirm(`Create a ${actionLabel} using the same settings? This generation uses ${generation.creditCost} credits when it completes.`)) return;
+    const action = `generation-variation-${generation.id}`;
+    setBusyAction(action);
+    setError("");
+    setMessage("");
+    try {
+      const created = await api<Generation>("/api/generations", {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: generation.prompt,
+          modelId: generation.model,
+          aspectRatio: generation.aspectRatio,
+          style: generation.style,
+          quality: generation.quality,
+          projectId: generation.projectId,
+        }),
+      });
+      setGenerations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+      await Promise.allSettled([
+        onSessionRefresh(),
+        api<WorkspaceOverview>("/api/workspace/overview").then(setOverview),
+      ]);
+      setMessage(retrying ? "Retry complete. The new result is first in your history." : "Variation complete. The new result is first in your history.");
+      onNavigate("/studio/history");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `Could not create the ${actionLabel}.`);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function deleteGenerationRecord(generation: Generation) {
+    if (!window.confirm("Delete this generation and its private image permanently? This cannot be undone.")) return;
+    const action = `generation-delete-${generation.id}`;
+    setBusyAction(action);
+    setError("");
+    setMessage("");
+    try {
+      await api<void>(`/api/generations/${generation.id}`, { method: "DELETE" });
+      setGenerations((items) => items.filter((item) => item.id !== generation.id));
+      setOverview(await api<WorkspaceOverview>("/api/workspace/overview"));
+      setMessage("Generation deleted.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete this generation.");
+    } finally {
+      setBusyAction("");
+    }
   }
 
   async function createSupportRequest(event: React.FormEvent) {
@@ -460,7 +531,14 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
             <div><h2>Continue creating</h2><p>Your latest private work stays attached to your account.</p></div>
             <button className="btn btn-ghost btn-sm" type="button" onClick={() => onNavigate("/studio")}><Plus size={14} />New image</button>
           </div>
-          <GenerationGrid generations={generations.slice(0, 6)} onCreate={() => onNavigate("/studio")} />
+          <GenerationGrid
+            generations={generations.slice(0, 6)}
+            busyAction={busyAction}
+            onCreate={() => onNavigate("/studio")}
+            onDelete={deleteGenerationRecord}
+            onFavorite={setGenerationFavorite}
+            onVariation={createGenerationVariation}
+          />
         </section>
 
         <section className="studio-panel studio-activity-panel">
@@ -644,7 +722,7 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
   </div>;
 
   const visibleHistory = currentSection === "favorites" ? favoriteGenerations : generations;
-  const renderHistory = () => <div className="studio-content"><header className="studio-heading"><div><span>{currentSection === "favorites" ? "Curated work" : "Private archive"}</span><h1>{currentSection === "favorites" ? "Favorites" : "Generation history"}</h1><p>{currentSection === "favorites" ? "The results you marked for quick return." : "Every signed-in generation in one private archive."}</p></div></header><section className="studio-panel"><GenerationGrid generations={visibleHistory} onCreate={() => onNavigate("/studio")} /></section></div>;
+  const renderHistory = () => <div className="studio-content"><header className="studio-heading"><div><span>{currentSection === "favorites" ? "Curated work" : "Private archive"}</span><h1>{currentSection === "favorites" ? "Favorites" : "Generation history"}</h1><p>{currentSection === "favorites" ? "The results you marked for quick return." : "Every signed-in generation in one private archive."}</p></div></header><section className="studio-panel"><GenerationGrid generations={visibleHistory} busyAction={busyAction} onCreate={() => onNavigate("/studio")} onDelete={deleteGenerationRecord} onFavorite={setGenerationFavorite} onVariation={createGenerationVariation} /></section></div>;
 
   let content = studioLoading && currentSection !== "create" && currentSection !== "new" ? renderLoading() : renderOverview();
   if (currentSection === "create" || currentSection === "new") content = <div className="studio-content studio-create"><GeneratorWorkspace session={session} models={models} compact onRequireAuth={onRequireAuth} onSessionRefresh={onSessionRefresh} onGenerationCreated={(generation) => { setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id)]); onNavigate("/studio/history"); }} /></div>;
@@ -733,7 +811,38 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
   </div>;
 }
 
-function GenerationGrid({ generations, onCreate }: { generations: Generation[]; onCreate?: () => void }) {
+interface GenerationGridProps {
+  generations: Generation[];
+  busyAction: string;
+  onCreate?: () => void;
+  onDelete: (generation: Generation) => Promise<void>;
+  onFavorite: (generation: Generation) => Promise<void>;
+  onVariation: (generation: Generation) => Promise<void>;
+}
+
+function GenerationGrid({ generations, busyAction, onCreate, onDelete, onFavorite, onVariation }: GenerationGridProps) {
   if (generations.length === 0) return <div className="studio-empty"><ImageIcon /><h3>No recent work yet</h3><p>Create an image to begin building your private workspace history.</p>{onCreate && <button className="btn studio-primary-action" type="button" onClick={onCreate}><Plus size={15} />Create image</button>}</div>;
-  return <div className={`studio-generation-grid ${generations.length < 3 ? "is-sparse" : ""}`}>{generations.map((generation, index) => <article className={`studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>{generation.imageUrl ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading={index < 3 ? "eager" : "lazy"} decoding="async" /> : <div className="studio-generation-failed"><TriangleAlert size={22} /><span className="badge badge-error badge-outline">{generation.status}</span><small>No credits charged</small></div>}<div><p>{generation.prompt}</p><span>{generation.quality} · {generation.aspectRatio}</span>{generation.favorite && <Heart size={13} fill="currentColor" />}</div></article>)}</div>;
+  return <div className={`studio-generation-grid ${generations.length < 3 ? "is-sparse" : ""}`}>{generations.map((generation, index) => {
+    const favoriteAction = `generation-favorite-${generation.id}`;
+    const variationAction = `generation-variation-${generation.id}`;
+    const deleteAction = `generation-delete-${generation.id}`;
+    const actionPending = [favoriteAction, variationAction, deleteAction].includes(busyAction);
+    return <article className={`card card-border studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>
+      <figure className="studio-generation-media">
+        {generation.imageUrl
+          ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading={index < 3 ? "eager" : "lazy"} decoding="async" />
+          : <div className="studio-generation-failed"><TriangleAlert size={22} /><span className="badge badge-error badge-outline">{generation.status}</span><small>No credits charged</small></div>}
+      </figure>
+      <div className="card-body studio-generation-body">
+        <p>{generation.prompt}</p>
+        <span className="studio-generation-meta">{generation.quality} · {generation.aspectRatio}</span>
+        <div className="card-actions studio-generation-actions" aria-label={`Actions for ${generation.prompt.slice(0, 40)}`}>
+          {generation.status === "complete" && generation.downloadUrl && <div className="tooltip" data-tip="Download"><a className="btn btn-ghost btn-square btn-sm" href={generation.downloadUrl} download aria-label="Download generation"><Download size={15} /></a></div>}
+          <div className="tooltip" data-tip={generation.status === "failed" ? "Retry" : "Create variation"}><button className="btn btn-ghost btn-square btn-sm" type="button" disabled={actionPending} onClick={() => void onVariation(generation)} aria-label={generation.status === "failed" ? "Retry generation" : "Create variation"}>{busyAction === variationAction ? <span className="loading loading-spinner loading-xs" /> : <RefreshCw size={15} />}</button></div>
+          {generation.status === "complete" && <div className="tooltip" data-tip={generation.favorite ? "Remove favorite" : "Save favorite"}><button className={`btn btn-ghost btn-square btn-sm ${generation.favorite ? "is-favorite" : ""}`} type="button" disabled={actionPending} onClick={() => void onFavorite(generation)} aria-label={generation.favorite ? "Remove from Favorites" : "Save to Favorites"} aria-pressed={generation.favorite}>{busyAction === favoriteAction ? <span className="loading loading-spinner loading-xs" /> : <Heart size={15} fill={generation.favorite ? "currentColor" : "none"} />}</button></div>}
+          <div className="tooltip" data-tip="Delete"><button className="btn btn-ghost btn-square btn-sm studio-generation-delete" type="button" disabled={actionPending} onClick={() => void onDelete(generation)} aria-label="Delete generation">{busyAction === deleteAction ? <span className="loading loading-spinner loading-xs" /> : <Trash2 size={15} />}</button></div>
+        </div>
+      </div>
+    </article>;
+  })}</div>;
 }

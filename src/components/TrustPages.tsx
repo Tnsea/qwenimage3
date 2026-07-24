@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   BadgeDollarSign,
-  CircleAlert,
   Cloud,
   Code2,
   CreditCard,
@@ -17,9 +16,6 @@ import {
   UserRoundCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-
-const NOTICE_REVIEW_DATE = "July 24, 2026";
-const NOTICE_REVIEW_DATE_ISO = "2026-07-24";
 
 interface TrustPageProps {
   onNavigate: (path: string) => void;
@@ -101,16 +97,8 @@ export function PrivacyDataPage({ onNavigate }: TrustPageProps) {
       <TrustPageIntro
         eyebrow="Privacy and data notice"
         title="Your data, without vague promises."
-        copy="This page explains what the pre-release service processes, why it is needed, which service providers may receive it, and which controls are available to you."
+        copy="This page explains what the pre-release service processes, why it is needed, which service providers may receive it, and which controls are available to you. Launch-region privacy, residency, age-limit, and legal-basis review is still pending; this notice does not claim production legal approval."
       />
-
-      <div role="alert" className="alert alert-warning alert-soft trust-page-alert">
-        <CircleAlert size={18} />
-        <div>
-          <strong>Pre-release notice</strong>
-          <span>Last reviewed <time dateTime={NOTICE_REVIEW_DATE_ISO}>{NOTICE_REVIEW_DATE}</time>. Launch-region privacy, residency, age-limit, and legal-basis review is still pending; this notice does not claim production legal approval.</span>
-        </div>
-      </div>
 
       <TrustSectionGrid sections={privacySections} />
 

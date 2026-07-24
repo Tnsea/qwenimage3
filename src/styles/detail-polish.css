@@ -261,7 +261,6 @@
 }
 
 .generator-mark,
-.image-placeholder-icon,
 .workspace-metric-icon,
 .studio-activity-icon,
 .settings-card-icon,
@@ -311,33 +310,6 @@
     0 0 0 3px var(--ui-focus-soft);
 }
 
-.result-panel {
-  background:
-    radial-gradient(circle at 50% 0%, rgba(139, 111, 240, 0.045), transparent 42%),
-    var(--ui-surface-soft);
-}
-
-.result-stage {
-  border-color: var(--ui-border);
-  background:
-    radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.026), transparent 32%),
-    color-mix(in srgb, var(--color-base-100) 92%, #000000);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    inset 0 0 46px rgba(0, 0, 0, 0.1);
-}
-
-.page-shell.light-mode .result-stage {
-  border-color: var(--ui-border);
-  background:
-    radial-gradient(circle at 50% 45%, rgba(112, 71, 235, 0.045), transparent 34%),
-    #efeee9;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    inset 0 0 42px rgba(50, 43, 31, 0.035);
-}
-
-.recent-item,
 .example-gallery-card,
 .support-ticket-button,
 .api-key-row {
@@ -556,7 +528,6 @@ dialog[open].modal .modal-box,
     transform: translateY(-3px);
   }
 
-  .recent-item:hover,
   .example-gallery-card:hover,
   .support-ticket-button:hover,
   .api-key-row:hover {

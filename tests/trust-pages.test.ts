@@ -25,6 +25,7 @@ test("public trust pages preserve the pre-release and secret-handling boundaries
   const pages = readFileSync(new URL("../src/components/TrustPages.tsx", import.meta.url), "utf8");
 
   assert.match(pages, /export function PrivacyDataPage/);
+  assert.doesNotMatch(pages, /Pre-release notice/);
   assert.match(pages, /Launch-region privacy, residency, age-limit, and legal-basis review is still pending/);
   assert.match(pages, /Generations are private by default/);
   assert.match(pages, /No universal public retention period is claimed yet/);

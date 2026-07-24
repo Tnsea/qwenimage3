@@ -120,7 +120,7 @@ flowchart LR
   D --> E[Enter prompt and settings]
   E --> F[Atomically reserve account credits]
   F --> G[Call active provider synchronously]
-  G -->|Success| H[Store private asset and show download]
+  G -->|Success| H[Store private asset and open Studio history]
   G -->|Failure| I[Mark failed and restore credits]
 ```
 
@@ -134,7 +134,7 @@ Current rules:
 - Provider failure restores the reserved account credits.
 - Successful assets are private; unpaid account downloads use the product’s visible standard-export watermark, while every active paid tier may download the original.
 
-Failed records render an explicit no-charge state in the generator and Studio, with retry and removal actions where applicable.
+Completed and failed records render in Studio history. Completed cards expose download, favorite, variation, and permanent removal; failed cards expose an explicit no-charge state, retry, and removal.
 
 ### 5.2 Registration, verification, and login
 
@@ -212,11 +212,11 @@ Request:
 
 ```json
 {
-  "model": "local-qwen-preview",
+  "model": "qwen2/text-to-image",
   "prompt": "A glass pavilion at dawn",
   "aspect_ratio": "16:9",
   "style": "editorial",
-  "quality": "high",
+  "quality": "standard",
   "project_id": null
 }
 ```
@@ -306,7 +306,7 @@ The target architecture is not a claim about the current repository.
 | Monthly availability after production launch | ≥ 99.9% |
 | Ledger reconciliation accuracy | 100% |
 
-The current production bundle passes the JavaScript size target locally. No public Core Web Vitals or availability evidence exists.
+The current production-mode bundle passes the JavaScript size target locally. No public Core Web Vitals or availability evidence exists.
 
 ## 9. Roadmap
 
@@ -329,7 +329,7 @@ The current production bundle passes the JavaScript size target locally. No publ
 
 - Add broader financial reconciliation and availability supervision beyond the accepted billing-health email path.
 - Prove account retention against backup deletion and production telemetry.
-- Review and merge the current hardening branch, then deploy from the reviewed immutable revision.
+- Push the current acceptance revision, complete CI and review, merge the hardening branch, and then create the reviewed release marker.
 - Complete real provider, email, GitHub OAuth, and Google denial/failure acceptance.
 - Complete accessibility, browser, mobile, security, and container acceptance.
 - Approve legal, privacy, commercial-use, pricing, tax, and launch-region decisions.
@@ -369,7 +369,7 @@ Closed decisions:
 - [x] Account and API generation share the credit ledger.
 - [x] Projects, history, favorites, API keys, sessions, export, and local deletion have automated flow coverage.
 - [x] Strict TypeScript, React Hooks, basic JSX accessibility checks, automated tests, production build, and production-artifact scan pass locally.
-- [ ] Dependency audit currently reports three high-severity development-tool findings through Wrangler/Miniflare/Sharp; confirm an upstream fixed release before production approval.
+- [x] Production and full development dependency audits report zero findings after upgrading Wrangler to 4.114.0 and Miniflare to 4.20260722.0.
 - [x] Production JavaScript gzip is below 180 KB.
 - [x] Legacy guest assets continue to be deleted after 24 hours by tested scheduled maintenance.
 - [x] Unsupported Qwen Image 3 release marketing is removed from the live UI.
@@ -399,7 +399,8 @@ Closed decisions:
 - [x] A committed Git baseline and required CI checks exist.
 - [ ] Versioned migrations, backup restore, rollback, and deletion exercises pass.
 - [x] Cloudflare custom-domain Worker/D1/R2 acceptance deployment is built and smoke-tested.
-- [ ] Build from a committed immutable revision and prove production rollback.
+- [x] Build and deploy the acceptance environment from a committed immutable revision.
+- [ ] Prove production rollback and D1 restore.
 - [ ] Shared rate limiting, monitoring, alerting, request correlation, and secret management are active.
 - [ ] Production provider quality, safety, cost, timeout, and rollback gates pass.
 - [ ] There are zero open P0/P1 defects.

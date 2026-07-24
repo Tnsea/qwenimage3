@@ -495,30 +495,35 @@
 
 .studio-generation-card {
   min-width: 0;
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  transition: opacity 160ms ease;
+  overflow: hidden;
+  border-color: var(--workspace-border);
+  border-radius: 12px;
+  background: var(--workspace-panel);
 }
 
-.studio-generation-card:hover {
-  opacity: 0.84;
+.studio-generation-media {
+  display: block;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  background: var(--color-base-200);
 }
 
-.studio-generation-card img,
+.studio-generation-media img,
 .studio-generation-card .studio-generation-failed {
   display: block;
   width: 100%;
+  height: 100%;
   aspect-ratio: 1 / 1;
-  border: 1px solid var(--workspace-border);
-  border-radius: 8px;
-  background: #0f1010;
+  border: 0;
+  border-radius: 0;
+  background: var(--color-base-200);
   object-fit: cover;
 }
 
 .studio-generation-card.is-failed {
-  border: 0;
+  border-style: dashed;
 }
 
 .studio-generation-card .studio-generation-failed {
@@ -529,16 +534,16 @@
   color: var(--workspace-text-muted);
 }
 
-.studio-generation-card > div:last-child {
-  position: relative;
-  padding: 9px 1px 0;
-  background: transparent;
+.studio-generation-body.card-body {
+  gap: 6px;
+  padding: 12px;
 }
 
-.studio-generation-card p {
+.studio-generation-body p {
   display: -webkit-box;
   overflow: hidden;
-  margin: 0 20px 4px 0;
+  min-height: 28px;
+  margin: 0;
   color: var(--workspace-text-soft);
   font-size: 10px;
   line-height: 1.4;
@@ -546,16 +551,31 @@
   -webkit-line-clamp: 2;
 }
 
-.studio-generation-card > div:last-child > span {
-  color: #6f706d;
+.studio-generation-meta {
+  color: var(--workspace-text-muted);
   font-size: 8px;
 }
 
-.studio-generation-card > div:last-child > svg {
-  position: absolute;
-  top: 10px;
-  right: 1px;
-  color: #a48df0;
+.studio-generation-actions.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.studio-generation-actions .btn {
+  min-height: 34px;
+  width: 34px;
+  height: 34px;
+}
+
+.studio-generation-actions .is-favorite {
+  color: var(--color-accent);
+}
+
+.studio-generation-actions .studio-generation-delete:hover {
+  color: var(--color-error);
 }
 
 .studio-activity-list {

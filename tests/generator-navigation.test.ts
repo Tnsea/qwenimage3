@@ -13,3 +13,14 @@ test("successful web generations open the private Studio history without inline 
   assert.match(app, /onGenerationCreated=\{\(\) => navigate\("\/studio\/history"\)\}/);
   assert.match(studio, /onGenerationCreated=\{\(generation\) => \{ setGenerations\([\s\S]*onNavigate\("\/studio\/history"\); \}\}/);
 });
+
+test("Studio history keeps every generation action after the handoff", () => {
+  const studio = readFileSync(new URL("../src/components/Studio.tsx", import.meta.url), "utf8");
+
+  assert.match(studio, /href=\{generation\.downloadUrl\} download aria-label="Download generation"/);
+  assert.match(studio, /\/api\/generations\/\$\{generation\.id\}\/favorite/);
+  assert.match(studio, /Create variation/);
+  assert.match(studio, /Retry generation/);
+  assert.match(studio, /\/api\/generations\/\$\{generation\.id\}.*method: "DELETE"/s);
+  assert.match(studio, /Delete this generation and its private image permanently/);
+});

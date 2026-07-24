@@ -164,11 +164,11 @@ curl -X POST https://qwen-image-3.net/v1/generations \
   -H "Idempotency-Key: launch-001" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "local-qwen-preview",
+    "model": "qwen2/text-to-image",
     "prompt": "A glass pavilion at dawn",
     "aspect_ratio": "16:9",
     "style": "editorial",
-    "quality": "high"
+    "quality": "standard"
   }'
 ```
 

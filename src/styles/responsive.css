@@ -132,18 +132,13 @@
     justify-content: flex-start;
   }
 
-  .controls-panel,
-  .result-panel {
+  .controls-panel {
     padding: 24px 18px;
   }
 
   .prompt-field.textarea {
     height: 132px;
     min-height: 132px;
-  }
-
-  .result-stage {
-    height: 285px;
   }
 
   .process-card.card {
