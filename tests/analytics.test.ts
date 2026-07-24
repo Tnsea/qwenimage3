@@ -3,11 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("GA4 loads by default, excludes advertising signals, and tracks SPA page views", async () => {
-  const [analytics, app, footer, marketing] = await Promise.all([
+  const [analytics, app, footer, content] = await Promise.all([
     readFile("src/analytics.ts", "utf8"),
     readFile("src/App.tsx", "utf8"),
     readFile("src/components/SiteFooter.tsx", "utf8"),
-    readFile("src/components/Marketing.tsx", "utf8"),
+    readFile("src/content.ts", "utf8"),
   ]);
 
   assert.match(analytics, /G-7Q6BB5CR23/);
@@ -25,6 +25,6 @@ test("GA4 loads by default, excludes advertising signals, and tracks SPA page vi
   assert.match(app, /trackPageView\(path\)/);
   assert.doesNotMatch(app, /AnalyticsConsent/);
   assert.doesNotMatch(footer, /Analytics choices/);
-  assert.match(marketing, /GA4 measures page visits when the site loads/);
-  assert.match(marketing, /prompts, generated images, and account identifiers are not sent/);
+  assert.match(content, /GA4 measures page visits when the site loads/);
+  assert.match(content, /prompts, generated images, and account identifiers are not sent/);
 });

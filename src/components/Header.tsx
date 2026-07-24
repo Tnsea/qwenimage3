@@ -7,6 +7,7 @@ const navigation = [
   { label: "Models", path: "/models" },
   { label: "Pricing", path: "/pricing" },
   { label: "Guides", path: "/guides" },
+  { label: "Blog", path: "/blog" },
 ] as const;
 
 interface HeaderProps {

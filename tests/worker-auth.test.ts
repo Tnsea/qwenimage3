@@ -48,13 +48,14 @@ test("Worker browser writes accept the served origin for preview and Wrangler wh
   }), environment.APP_BASE_URL), false);
 });
 
-test("Worker HTML is immutable to edge transforms so Cloudflare cannot inject an analytics beacon", async () => {
+test("Worker returns the immutable noindex 404 document for unknown HTML routes", async () => {
   const response = await worker.fetch(
     new Request("https://qwen-image-3.net/not-a-route"),
     environment as never,
     executionContext as never,
   );
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow");
   assert.equal(response.headers.get("cache-control"), "public, max-age=0, must-revalidate, no-transform");
   const csp = response.headers.get("content-security-policy") ?? "";
   assert.match(csp, /img-src 'self' data: blob: https:\/\/www\.google-analytics\.com https:\/\/region1\.google-analytics\.com https:\/\/findly\.tools https:\/\/softwarebolt\.com/);
@@ -75,6 +76,37 @@ test("Worker permanently redirects the removed prompts page to examples", async 
 
   assert.equal(response.status, 308);
   assert.equal(response.headers.get("location"), "https://qwen-image-3.net/examples?source=legacy");
+});
+
+test("draft preview paths are local-only and always noindex", async () => {
+  const localResponse = await worker.fetch(
+    new Request("http://127.0.0.1:8787/_preview/guides/qwen-image-3-tutorial"),
+    environment as never,
+    executionContext as never,
+  );
+  assert.equal(localResponse.status, 200);
+  assert.equal(localResponse.headers.get("x-robots-tag"), "noindex, nofollow");
+  assert.match(await localResponse.text(), /name="qwen-draft-preview" content="enabled"/);
+
+  const wranglerResponse = await worker.fetch(
+    new Request("http://qwen-image-3.net/_preview/guides/qwen-image-3-tutorial", {
+      headers: { "CF-Connecting-IP": "127.0.0.1" },
+    }),
+    environment as never,
+    executionContext as never,
+  );
+  assert.equal(wranglerResponse.status, 200);
+  assert.equal(wranglerResponse.headers.get("x-robots-tag"), "noindex, nofollow");
+  assert.match(await wranglerResponse.text(), /name="qwen-draft-preview" content="enabled"/);
+
+  const publicResponse = await worker.fetch(
+    new Request("https://qwen-image-3.net/_preview/guides/qwen-image-3-tutorial"),
+    environment as never,
+    executionContext as never,
+  );
+  assert.equal(publicResponse.status, 404);
+  assert.equal(publicResponse.headers.get("x-robots-tag"), "noindex, nofollow");
+  assert.doesNotMatch(await publicResponse.text(), /name="qwen-draft-preview"/);
 });
 
 for (const path of PUBLIC_INDEXABLE_PATHS) {

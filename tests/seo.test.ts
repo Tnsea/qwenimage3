@@ -4,19 +4,24 @@ import test from "node:test";
 import {
   CANONICAL_SITE_ORIGIN,
   PUBLIC_INDEXABLE_PATHS,
+  pageSeoForPath,
   publicCanonicalUrl,
+  renderSitemap,
   rewritePublicCanonicalMetadata,
+  structuredDataForPath,
 } from "../src/seo.js";
+import { homeFaqs, publishedContentDocuments } from "../src/content.js";
 
-test("homepage build injects the real semantic page into the first-response document", () => {
+test("public route build injects semantic pages into first-response documents", () => {
   const viteConfig = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
   const prerender = readFileSync(new URL("../src/prerender.tsx", import.meta.url), "utf8");
   const hero = readFileSync(new URL("../src/components/HomeHero.tsx", import.meta.url), "utf8");
   const footer = readFileSync(new URL("../src/components/SiteFooter.tsx", import.meta.url), "utf8");
   const marketing = readFileSync(new URL("../src/components/Marketing.tsx", import.meta.url), "utf8");
 
-  assert.match(viteConfig, /renderPrerenderedHome\(\)/);
-  assert.match(viteConfig, /html\.replace\(marker,/);
+  assert.match(viteConfig, /renderPrerenderedRoute/);
+  assert.match(viteConfig, /PUBLIC_INDEXABLE_PATHS/);
+  assert.match(viteConfig, /const fileName = outputFileName\(path\)/);
   assert.match(prerender, /<HomeHero \/>/);
   assert.match(prerender, /<GeneratorWorkspace/);
   assert.match(prerender, /<HomeSections/);
@@ -60,7 +65,7 @@ test("entry document and discovery files expose complete crawl metadata", () => 
   assert.doesNotMatch(index, /Three free daily generations|without an account/);
   assert.match(index, /<meta property="og:image" content="https:\/\/qwen-image-3\.net\/qwen-image-3-workflow\.png" \/>/);
   assert.match(index, /<meta name="twitter:card" content="summary_large_image" \/>/);
-  assert.match(index, /<script type="application\/ld\+json">/);
+  assert.match(index, /<script id="seo-structured-data" type="application\/ld\+json">/);
   assert.match(robots, /Sitemap: https:\/\/qwen-image-3\.net\/sitemap\.xml/);
   assert.match(sitemap, /<loc>https:\/\/qwen-image-3\.net\/<\/loc>/);
 });
@@ -71,11 +76,49 @@ test("every sitemap route resolves to its own public canonical", () => {
   const expectedUrls = PUBLIC_INDEXABLE_PATHS.map((path) => publicCanonicalUrl(path));
 
   assert.deepEqual(sitemapUrls, expectedUrls);
+  assert.equal(sitemap, renderSitemap());
   assert.equal(publicCanonicalUrl("/pricing/"), `${CANONICAL_SITE_ORIGIN}/pricing`);
   assert.equal(publicCanonicalUrl("/prompts"), null);
   assert.equal(publicCanonicalUrl("/studio"), null);
   assert.equal(publicCanonicalUrl("/verify-email"), null);
   assert.equal(publicCanonicalUrl("/not-a-route"), null);
+});
+
+test("each published content route has independent metadata and source-visible HTML", () => {
+  const pages = readFileSync(new URL("../src/components/ContentPages.tsx", import.meta.url), "utf8");
+  const prerender = readFileSync(new URL("../src/prerender.tsx", import.meta.url), "utf8");
+
+  for (const document of publishedContentDocuments) {
+    const seo = pageSeoForPath(document.path);
+
+    assert.ok(seo);
+    assert.equal(seo.title, document.title);
+    assert.equal(seo.description, document.description);
+    assert.match(pages, new RegExp(document.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(pages, /<h1>\{document\.h1\}<\/h1>/);
+  assert.match(pages, /Official model, independent site\./);
+  assert.match(pages, /This site has not connected or externally accepted a Qwen Image 3 provider/);
+  assert.match(prerender, /<ContentArticlePage path=\{path\}/);
+});
+
+test("FAQ schema is generated from the same visible FAQ records and no HowTo schema is emitted", () => {
+  const homeSchema = structuredDataForPath("/");
+  const homeGraph = homeSchema["@graph"] as Array<Record<string, unknown>>;
+  const homeFaq = homeGraph.find((entry) => entry["@type"] === "FAQPage");
+  const homeQuestions = (homeFaq?.mainEntity as Array<{ name: string }>).map((entry) => entry.name);
+  assert.deepEqual(homeQuestions, homeFaqs.map((faq) => faq.question));
+
+  for (const document of publishedContentDocuments) {
+    const schema = structuredDataForPath(document.path);
+    const graph = schema["@graph"] as Array<Record<string, unknown>>;
+    const faq = graph.find((entry) => entry["@type"] === "FAQPage");
+    const questions = (faq?.mainEntity as Array<{ name: string }>).map((entry) => entry.name);
+    assert.deepEqual(questions, document.faqs.map((entry) => entry.question));
+    assert.equal(graph.some((entry) => entry["@type"] === "HowTo"), false);
+    assert.equal(graph.some((entry) => entry["@type"] === (document.kind === "blog" ? "BlogPosting" : "Article")), true);
+    assert.equal(graph.some((entry) => entry["@type"] === "BreadcrumbList"), true);
+  }
 });
 
 test("public canonical rewriting keeps raw HTML and social metadata aligned", () => {

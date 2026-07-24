@@ -10,8 +10,8 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 
 | Area | Current status |
 |---|---|
-| Public UI | English homepage, sticky navigation, responsive generator, Examples, Models, Pricing, Guides, and API pages |
-| Search discovery | Homepage content is prerendered into the initial HTML; the Worker emits self-referencing canonical and `og:url` metadata for every public sitemap route, while JSON-LD, robots.txt, and sitemap.xml ship with the web build |
+| Public UI | English homepage, sticky navigation, responsive generator, Examples, Models, Pricing, Guides, Blog, four source-led Qwen Image 3 content pages, and API pages |
+| Search discovery | Every published public route is prerendered into independent initial HTML with route-specific title, description, canonical, social metadata, and JSON-LD; the sitemap is generated from the published content manifest and unknown routes return HTTP 404 |
 | Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
 | Accounts | Customer-facing access is Google-only in the acceptance UI; the Worker retains locally tested email/password, verification, and recovery routes, plus session management, export, and fail-safe account deletion |
 | Social login | Google is the only customer-facing sign-in method; its authorization-code flow completed one real acceptance sign-in and its OAuth publishing status is Production. The GitHub adapter remains implemented but unverified and is not offered in the UI |
@@ -109,7 +109,7 @@ Then configure the corresponding `GOOGLE_*` and `GITHUB_*` variables from `.env.
 
 ### Alibaba Cloud Model Studio
 
-The implemented adapter targets `qwen-image-2.0-pro`. No Qwen Image 3 provider is implemented or verified.
+The implemented adapter targets `qwen-image-2.0-pro`. Qwen officially announced Qwen-Image-3.0 on July 21, 2026, and Alibaba Cloud documents `qwen-image-3.0-pro` as invite-only. This repository has not implemented, selected, or externally accepted a Qwen Image 3 provider.
 
 ```bash
 GENERATION_PROVIDER=qwen
@@ -195,7 +195,7 @@ npm run audit:production
 
 The automated suite covers rendering, the browser/Worker catalog contract, the signed-out generation gate, Cloudflare password/offer contracts, yearly-default pricing, 4/8/16 charging, Starter-versus-Creator entitlements, registration/verification, workspace overview, private support conversations, recovery, sessions, export/deletion, projects, favorites, concurrent D1 credit accounting, scoped keys, API logs/idempotency, OAuth mapping, recoverable Stripe fulfillment and invoice validation, refund and Radar fraud-warning quarantine, external deletion safety, origin rejection, maintenance, persisted rate limits, configuration gates, and Qwen host/MIME safeguards. Historical promotion tests remain isolated in the inactive comparison adapter.
 
-Passing these commands means the repository is locally consistent. The current account-required revision has been deployed to the isolated Stripe Sandbox for the billing evidence described above; the canonical public-billing switch remains off. This does not replace the remaining OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
+Passing these commands means the repository is locally consistent. The current account-required revision has been deployed to the isolated Stripe Sandbox for the billing evidence described above; the canonical acceptance Worker has new Checkout enabled only by the explicit repository-owner decision recorded in [Release Readiness](./docs/RELEASE_READINESS.md). This does not replace the remaining OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
 
 ## Project Documentation
 

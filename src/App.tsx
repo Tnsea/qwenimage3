@@ -8,11 +8,13 @@ import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
-import { ApiPage, BillingTermsPage, ExamplesPage, GuidesPage, HomeSections, ModelsPage, PricingPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
+import { BlogHubPage, ContentArticlePage, GuidesHubPage } from "./components/ContentPages";
+import { ApiPage, BillingTermsPage, ExamplesPage, HomeSections, ModelsPage, PricingPage, RefundPolicyPage, type Catalog } from "./components/Marketing";
 import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
 import { IndependentStatusPage, PrivacyDataPage, SupportPage } from "./components/TrustPages";
-import { CANONICAL_SITE_ORIGIN, legacyPublicRedirectPath, publicCanonicalUrl } from "./seo";
+import { contentDocumentForPath } from "./content";
+import { CANONICAL_SITE_ORIGIN, legacyPublicRedirectPath, pageSeoForPath, publicCanonicalUrl, serializeStructuredData } from "./seo";
 import type { BillingOfferId, SessionState } from "./types";
 
 const emptySession: SessionState = {
@@ -39,13 +41,25 @@ function pendingCheckoutOffer() {
   return offerId && activeCheckoutOfferIds.has(offerId) ? offerId : null;
 }
 
+function previewContentPath(pathname: string): string | null {
+  if (!document.querySelector('meta[name="qwen-draft-preview"][content="enabled"]')) return null;
+  const match = pathname.match(/^\/_preview\/(blog|guides)\/([^/]+)\/?$/);
+  if (!match) return null;
+  const contentPath = `/${match[1]}/${match[2]}`;
+  return contentDocumentForPath(contentPath) ? contentPath : null;
+}
+
+function setMetaContent(selector: string, content: string) {
+  document.querySelector<HTMLMetaElement>(selector)?.setAttribute("content", content);
+}
+
 export default function App() {
   const [path, setPath] = useState(() => legacyPublicRedirectPath(window.location.pathname) ?? window.location.pathname);
   const [session, setSession] = useState<SessionState>(emptySession);
   const [catalog, setCatalog] = useState<Catalog>(emptyCatalog);
   const [authOpen, setAuthOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [initialPrompt, setInitialPrompt] = useState("");
+  const [initialPrompt, setInitialPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt")?.slice(0, 800) ?? "");
   const [notice, setNotice] = useState("");
   const [startupError, setStartupError] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">(() => window.localStorage.getItem("qwen-theme") === "light" ? "light" : "dark");
@@ -66,7 +80,9 @@ export default function App() {
     const handlePopState = () => {
       const redirect = legacyPublicRedirectPath(window.location.pathname);
       if (redirect) window.history.replaceState({}, "", `${redirect}${window.location.search}${window.location.hash}`);
-      setPath(redirect ?? window.location.pathname);
+      const nextPath = redirect ?? window.location.pathname;
+      setPath(nextPath);
+      setInitialPrompt(nextPath === "/" ? new URLSearchParams(window.location.search).get("prompt")?.slice(0, 800) ?? "" : "");
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -128,7 +144,24 @@ export default function App() {
   }, [path]);
 
   useEffect(() => {
-    const canonicalUrl = publicCanonicalUrl(path) ?? `${CANONICAL_SITE_ORIGIN}/`;
+    const previewPath = previewContentPath(path);
+    const metadataPath = previewPath ?? path;
+    const pageSeo = pageSeoForPath(metadataPath);
+    const canonicalUrl = publicCanonicalUrl(metadataPath) ?? `${CANONICAL_SITE_ORIGIN}/`;
+    if (pageSeo) {
+      document.title = pageSeo.title;
+      setMetaContent('meta[name="description"]', pageSeo.description);
+      setMetaContent('meta[name="robots"]', previewPath ? "noindex,nofollow" : pageSeo.robots);
+      setMetaContent('meta[property="og:type"]', pageSeo.ogType);
+      setMetaContent('meta[property="og:title"]', pageSeo.title);
+      setMetaContent('meta[property="og:description"]', pageSeo.description);
+      setMetaContent('meta[property="og:image"]', new URL(pageSeo.ogImage, `${CANONICAL_SITE_ORIGIN}/`).toString());
+      setMetaContent('meta[name="twitter:title"]', pageSeo.title);
+      setMetaContent('meta[name="twitter:description"]', pageSeo.description);
+      setMetaContent('meta[name="twitter:image"]', new URL(pageSeo.ogImage, `${CANONICAL_SITE_ORIGIN}/`).toString());
+      const schema = document.querySelector<HTMLScriptElement>("#seo-structured-data");
+      if (schema) schema.textContent = serializeStructuredData(metadataPath);
+    }
     document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", canonicalUrl);
     document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.setAttribute("content", canonicalUrl);
     trackPageView(path);
@@ -188,11 +221,16 @@ export default function App() {
   }
 
   function usePrompt(prompt: string) {
-    setInitialPrompt(prompt);
-    navigate("/");
+    const limitedPrompt = prompt.slice(0, 800);
+    setInitialPrompt(limitedPrompt);
+    const destination = `/?prompt=${encodeURIComponent(limitedPrompt)}`;
+    window.history.pushState({}, "", destination);
+    setPath("/");
+    setMobileOpen(false);
     window.setTimeout(() => document.getElementById("generator")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
   }
 
+  const contentPath = previewContentPath(path) ?? path;
   let page: React.ReactNode;
   if (path.startsWith("/studio")) {
     page = <Studio path={path} session={session} models={catalog.models} theme={theme} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onLogout={logout} />;
@@ -203,7 +241,11 @@ export default function App() {
   } else if (path === "/pricing") {
     page = <PricingPage catalog={catalog} onCheckout={startPricingCheckout} />;
   } else if (path === "/guides") {
-    page = <GuidesPage onNavigate={navigate} />;
+    page = <GuidesHubPage onNavigate={navigate} />;
+  } else if (path === "/blog") {
+    page = <BlogHubPage onNavigate={navigate} />;
+  } else if (contentDocumentForPath(contentPath)) {
+    page = <ContentArticlePage path={contentPath} onNavigate={navigate} onUsePrompt={usePrompt} />;
   } else if (path === "/api") {
     page = <ApiPage models={catalog.models} onNavigate={navigate} />;
   } else if (path === "/terms") {

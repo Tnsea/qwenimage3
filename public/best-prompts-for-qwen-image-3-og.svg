@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#080909"/>
+  <g transform="translate(728 54)">
+    <rect width="184" height="150" rx="20" fill="#151616" stroke="#343635"/>
+    <rect x="204" width="184" height="150" rx="20" fill="#f59e0b"/>
+    <rect y="170" width="184" height="150" rx="20" fill="#f1f1ed"/>
+    <rect x="204" y="170" width="184" height="150" rx="20" fill="#1d1f1e" stroke="#343635"/>
+    <rect y="340" width="388" height="150" rx="20" fill="#111313" stroke="#343635"/>
+    <g font-family="Arial,Helvetica,sans-serif" font-weight="700">
+      <text x="22" y="42" fill="#f59e0b" font-size="15">POSTER</text><text x="226" y="42" fill="#111" font-size="15">UI</text>
+      <text x="22" y="212" fill="#111" font-size="15">DATA</text><text x="226" y="212" fill="#f59e0b" font-size="15">STORY</text>
+      <text x="22" y="382" fill="#f59e0b" font-size="15">PRODUCT</text>
+    </g>
+    <g fill="#777a76">
+      <rect x="22" y="66" width="116" height="8" rx="4"/><rect x="22" y="84" width="76" height="8" rx="4"/>
+      <rect x="226" y="66" width="116" height="8" rx="4"/><rect x="226" y="84" width="76" height="8" rx="4"/>
+      <rect x="22" y="236" width="116" height="8" rx="4"/><rect x="22" y="254" width="76" height="8" rx="4"/>
+      <rect x="226" y="236" width="116" height="8" rx="4"/><rect x="226" y="254" width="76" height="8" rx="4"/>
+      <rect x="22" y="406" width="270" height="8" rx="4"/><rect x="22" y="424" width="194" height="8" rx="4"/>
+    </g>
+  </g>
+  <text x="72" y="102" fill="#f59e0b" font-family="Arial,Helvetica,sans-serif" font-size="23" font-weight="700" letter-spacing="2">CURATED EXAMPLES</text>
+  <text x="72" y="228" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="98" font-weight="700" letter-spacing="-5">50+</text>
+  <text x="72" y="310" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" letter-spacing="-3">Qwen Image 3</text>
+  <text x="72" y="382" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" letter-spacing="-3">Prompt Templates</text>
+  <text x="74" y="446" fill="#969895" font-family="Arial,Helvetica,sans-serif" font-size="22">Posters · UI · Infographics · Storyboards · Products</text>
+  <text x="72" y="574" fill="#777a76" font-family="Arial,Helvetica,sans-serif" font-size="18">Curated from official capability documentation · Not yet a 50-result benchmark</text>
+</svg>

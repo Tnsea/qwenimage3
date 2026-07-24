@@ -26,7 +26,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | Component | Source | Responsibility |
 |---|---|---|
 | React application | `src/App.tsx` | Client routing, session bootstrap, theme, page composition, verification/reset callbacks |
-| Search entry document | `vite.config.ts`, `src/prerender.tsx`, `src/seo.ts`, `worker/index.ts`, `index.html` | Build-time homepage prerender plus a shared public-route registry; the Worker rewrites canonical and `og:url` metadata to each requested sitemap URL before the first response |
+| Search entry documents | `vite.config.ts`, `src/prerender.tsx`, `src/seo.ts`, `worker/index.ts`, `index.html` | Build-time independent HTML for every published public route from one route/content manifest; the Worker serves the matching artifact, normalizes canonical and `og:url` to the configured origin, and returns a dedicated noindex 404 for unknown routes |
 | Navigation | `src/components/Header.tsx` | Desktop/mobile public routes and signed-in account actions |
 | Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, and successful handoff to private Studio history without inline result galleries |
 | Authentication UI | `src/components/AuthDialog.tsx` | Google-only customer sign-in entry with runtime availability detection |

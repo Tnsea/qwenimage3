@@ -18,6 +18,9 @@ const footerGroups = [
     links: [
       ["Image models", "/models"],
       ["Guides", "/guides"],
+      ["Blog", "/blog"],
+      ["Qwen Image 3 tutorial", "/guides/qwen-image-3-tutorial"],
+      ["Prompt guide", "/guides/best-prompts-for-qwen-image-3"],
       ["API guide", "/api"],
     ],
   },

@@ -176,10 +176,10 @@ const statusCards = [
   },
   {
     title: "Qwen Image 3",
-    badge: "Not verified",
+    badge: "Official; not connected",
     badgeClass: "badge-warning badge-soft",
     icon: Code2,
-    copy: "No Qwen Image 3 provider integration has been verified. Implemented external adapters target Qwen Image 2-era provider endpoints and remain unaccepted for public production use.",
+    copy: "Qwen officially announced Qwen-Image-3.0 on July 21, 2026, and Alibaba Cloud documents an invite-only qwen-image-3.0-pro API. This site has not implemented, selected, or externally accepted an Image 3 adapter.",
   },
   {
     title: "Public billing",

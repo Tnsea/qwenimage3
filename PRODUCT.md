@@ -47,7 +47,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
 | Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering | Failure/timeout recovery, backup-deletion telemetry, and production monitoring |
 | Real image provider | **Kie.ai signed-in success path externally verified once** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
-| Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
+| Qwen Image 3 | **Officially announced, unavailable here**; Qwen published the model on 2026-07-21 and Alibaba Cloud documents invite-only `qwen-image-3.0-pro`, but this product has no implemented, selected, or externally accepted Image 3 adapter | Implemented and accepted provider adapter, license, commercial approval, and production decision |
 | Account access | **Google-only in the customer-facing acceptance UI**; retained email/password, verification, and recovery APIs are locally verified but not exposed as sign-in options | Google denial/failure acceptance, production account-recovery decision, and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub adapter implemented but not offered and externally unverified** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance before any UI enablement |
 | Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
@@ -56,7 +56,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
-| Content library | **Prototype**: twelve prompt records, eight unique example cards, and eleven homepage FAQs | 60/80-item editorial inventory and content review workflow |
+| Content library | **Implemented locally**: four published SEO pages, 50 original curated prompt templates across five categories, eight existing example cards, and 15 homepage FAQs generated from a shared content source; the prompt set is not labeled tested | Prompt-level Qwen Image 3 test evidence, editorial acceptance, and ongoing review workflow |
 
 ## 4. Current User Experience
 
@@ -74,6 +74,11 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | `/status` | Independent product, runtime, deployment, billing-gate, and verification status with explicit pre-release boundaries |
 | `/support` | Public support orientation and security guidance leading to private signed-in tickets in Studio |
 | `/guides` | English guide overview |
+| `/guides/qwen-image-3-tutorial` | Source-led pillar guide to official capabilities, access, prompting, editing, use cases, and verification limits |
+| `/guides/how-to-generate-ai-images-with-qwen-image-3` | Step-by-step official-access and review workflow that keeps this site's current model separate |
+| `/guides/best-prompts-for-qwen-image-3` | 50 original curated prompt templates; “tested” language remains gated on prompt-level evidence |
+| `/blog` | Source-led comparison and analysis index |
+| `/blog/qwen-image-3-vs-midjourney` | Official-documentation comparison without an unsupported universal winner claim |
 | `/api` | Developer API overview and request example |
 | `/verify-email` | Consumes a one-time verification token, then returns home |
 | `/reset-password` | Opens the password reset dialog with a one-time token |
@@ -346,7 +351,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 | ID | Decision | Owner | Required before |
 |---|---|---|---|
 | `TBD-BUSINESS-001` | Launch countries, tax handling, refunds, disputes, and final credit-expiry policy | Product + Finance + Legal | Production-approved public billing |
-| `TBD-MODEL-001` | Approved production model ID, provider contract, regions, license, SLA, and whether a future Qwen Image 3 offering exists | AI + Legal | Real provider launch |
+| `TBD-MODEL-001` | Approved production model ID, provider contract, regions, license, SLA, and whether Qwen Image 3 should be integrated | AI + Legal | Real provider launch |
 | `TBD-LEGAL-001` | Launch countries, privacy obligations, residency, age limits, commercial-use disclosure, and provider data use | Legal | External beta |
 | `TBD-RETENTION-001` | Starter, paid, backup, and billing-record deletion periods | Product + Legal + Infrastructure | External beta |
 | `TBD-INFRA-001` | Production database, object storage, queue, rate limiter, observability, backup, and rollback platform | Engineering | Production deployment |
@@ -370,13 +375,13 @@ Closed decisions:
 - [x] Production and full development dependency audits report zero findings after upgrading Wrangler to 4.114.0 and Miniflare to 4.20260722.0.
 - [x] Production JavaScript gzip is below 180 KB.
 - [x] Legacy guest assets continue to be deleted after 24 hours by tested scheduled maintenance.
-- [x] Unsupported Qwen Image 3 release marketing is removed from the live UI.
+- [x] Qwen Image 3 editorial claims cite the official release while availability copy states that no Image 3 provider is connected here.
 - [x] Billing events are retryable; invoices are validated; refunds/disputes quarantine spending; account deletion is external-first.
 - [x] API scopes/result logs, persisted limits, concurrent D1 credit invariants, failed states, and dedicated 404 routes are locally verified.
 
 ### Required before external beta
 
-- [x] The unsupported Qwen Image 3 release claim is removed from the product UI.
+- [x] Qwen Image 3 release coverage is source-led and remains separate from product availability claims.
 - [ ] Account primary-storage and backup deletion, approved policy, and production overdue telemetry remain to verify.
 - [ ] Google completed one successful acceptance callback and is published for external accounts; production email, GitHub OAuth, and Google denial/failure acceptance remain.
 - [ ] Browser, mobile, keyboard, screen-reader, and reduced-motion acceptance is documented.

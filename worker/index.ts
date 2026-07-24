@@ -4,7 +4,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { renderGeneration } from "../server/generator.js";
 import { BILLING_TERMS_VERSION } from "../src/billing-policy.js";
 import { createCatalogCore, createModelCatalog, KIE_QWEN_MODEL_ID, SUPPORTED_QWEN_MODEL_ID } from "../src/catalog.js";
-import { publicCanonicalUrl, rewritePublicCanonicalMetadata } from "../src/seo.js";
+import { isKnownClientRoute, publicCanonicalUrl, rewritePublicCanonicalMetadata } from "../src/seo.js";
 import type {
   AccountSession,
   ApiKeyCreated,
@@ -3494,12 +3494,44 @@ app.onError((reason, c) => {
 
 app.notFound(async (c) => {
   if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/v1/")) return errorResponse(c, 404, "NOT_FOUND", "Route not found.");
-  const asset = await c.env.ASSETS.fetch(c.req.raw);
+  const requestHostname = new URL(c.req.url).hostname;
+  const connectingIp = c.req.header("CF-Connecting-IP") ?? "";
+  const isLocalRuntime = ["localhost", "127.0.0.1", "::1"].includes(requestHostname)
+    || ["127.0.0.1", "::1"].includes(connectingIp);
+  const isLocalDraftPreview = isLocalRuntime
+    && /^\/_preview\/(blog|guides)\/[^/]+\/?$/.test(c.req.path);
+  const assetRequest = isLocalDraftPreview
+    ? new Request(new URL("/", c.req.url), { method: "GET", headers: c.req.raw.headers })
+    : c.req.raw;
+  const asset = await c.env.ASSETS.fetch(assetRequest);
   if (!asset.headers.get("content-type")?.toLowerCase().includes("text/html")) return asset;
+
+  if (!isKnownClientRoute(c.req.path) && !isLocalDraftPreview) {
+    const notFoundUrl = new URL("/404.html", c.req.url);
+    const notFoundAsset = await c.env.ASSETS.fetch(new Request(notFoundUrl, {
+      method: "GET",
+      headers: c.req.raw.headers,
+    }));
+    const headers = new Headers(notFoundAsset.headers);
+    headers.set("Cache-Control", "public, max-age=0, must-revalidate, no-transform");
+    headers.set("X-Robots-Tag", "noindex, nofollow");
+    return new Response(notFoundAsset.body, { status: 404, headers });
+  }
+
   const headers = new Headers(asset.headers);
   // Zone-level Web Analytics is independent of Worker code. no-transform keeps
   // the reviewed HTML immutable at the edge and prevents automatic beacon injection.
   headers.set("Cache-Control", "public, max-age=0, must-revalidate, no-transform");
+  if (isLocalDraftPreview) headers.set("X-Robots-Tag", "noindex, nofollow");
+  if (isLocalDraftPreview) {
+    const html = (await asset.text()).replace(
+      "<head>",
+      '<head><meta name="qwen-draft-preview" content="enabled" />',
+    );
+    headers.delete("Content-Length");
+    headers.delete("ETag");
+    return new Response(html, { status: asset.status, statusText: asset.statusText, headers });
+  }
   const canonicalUrl = publicCanonicalUrl(c.req.path, c.env.APP_BASE_URL);
   if (!canonicalUrl) return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
 

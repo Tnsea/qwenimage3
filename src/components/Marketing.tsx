@@ -1,4 +1,4 @@
-import { ArrowRight, ArrowUpRight, BookOpen, Check, Code2, Coins, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, Code2, Coins, Crown, Gauge, Image as ImageIcon, KeyRound, Layers3, ShieldCheck, WandSparkles, Zap } from "lucide-react";
 import { useState } from "react";
 import {
   BILLING_TERMS_EFFECTIVE_DATE,
@@ -7,6 +7,7 @@ import {
   refundPolicySections,
   termsSections,
 } from "../billing-policy";
+import { homeFaqs } from "../content";
 import { exampleMedia } from "../exampleMedia";
 import type { BillingOffer, Catalog } from "../types";
 
@@ -115,20 +116,6 @@ function PricingPlanGrid({
 
 export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Catalog } & NavigateProps) {
   const [homeBillingPeriod, setHomeBillingPeriod] = useState<BillingPeriod>("yearly");
-  const faqs = [
-    ["account-access", "Can I generate without signing in?", "No. Image generation requires an account so every request is charged against a server-authoritative credit balance."],
-    ["starter-credits", "Do new accounts receive starter credits?", "Yes. A new account receives 20 welcome credits once—enough for five Standard images. Generation requires signing in."],
-    ["credits", "How do credits work?", "Standard costs 4 credits, High costs 8, and Ultra costs 16. Credits are reserved first and settled only after a successful result."],
-    ["failed-generations", "Are failed generations charged?", "No. A system or provider failure releases the reservation automatically and restores the account credits."],
-    ["priority", "Do paid generations run faster?", "Creator and Professional subscribers enter the VIP priority lane. Starter subscribers use the standard account queue while keeping private, watermark-free exports."],
-    ["privacy", "Are my images public?", "No. Generations are private by default. Nothing is published without a separate explicit action."],
-    ["analytics", "Do you use analytics?", "Yes. GA4 measures page visits when the site loads. Advertising storage and personalization are disabled, and prompts, generated images, and account identifiers are not sent."],
-    ["model-availability", "Is Qwen Image 3 available in this generator?", "No verified Qwen Image 3 provider is currently connected. You can still create with the available runtime shown in the generator, and the Models page identifies the exact system used for every image."],
-    ["billing-refunds", "What happens after a refund or dispute?", "Credit spending is paused for billing review, the financial event is shown in billing history, and no silent balance mutation is performed."],
-    ["account-deletion", "What does account deletion remove?", "Any Stripe subscription and customer are removed first, then local assets, projects, credits, sessions, keys, and connected identities are deleted."],
-    ["api-audit", "Can I audit API use?", "Yes. Scoped API keys and recent request status, latency, and request IDs are available inside Studio."],
-    ["independent-product", "Is this an official Qwen product?", "No. This is an independent third-party product and is not affiliated with or endorsed by Alibaba or the Qwen team."],
-  ];
 
   return (
     <>
@@ -349,10 +336,10 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Ca
             <p>Nothing is expanded until you ask for it. Start with account access, credits, model availability, or billing.</p>
           </header>
           <div className="faq-list">
-            {faqs.map(([id, question, answer]) => (
-              <details className="collapse collapse-plus faq-item" id={`faq-${id}`} key={id}>
-                <summary className="collapse-title">{question}</summary>
-                <div className="collapse-content"><p>{answer}</p></div>
+            {homeFaqs.map((faq) => (
+              <details className="collapse collapse-plus faq-item" id={`faq-${faq.id}`} key={faq.id}>
+                <summary className="collapse-title">{faq.question}</summary>
+                <div className="collapse-content"><p>{faq.answer}</p></div>
               </details>
             ))}
           </div>
@@ -415,7 +402,7 @@ export function ModelsPage({ catalog, onNavigate }: { catalog: Catalog; onNaviga
       : provider === "kie-ai"
         ? "Kie.ai"
       : "Not assigned";
-  return <main className="content-page"><PageIntro eyebrow="Model catalog" title="Qwen Image 3 model status, without the fog." copy="No verified Qwen Image 3 provider is available here today. Implemented providers and roadmap models remain clearly separated by their current verification status." /><div className="model-table card card-border"><div className="overflow-x-auto"><table className="table"><thead><tr><th>Model</th><th>Provider</th><th>Status</th><th>Speed</th><th>Cost</th></tr></thead><tbody>{catalog.models.map((model) => <tr key={model.id}><td><strong>{model.name}</strong><small>{model.id}</small></td><td>{providerLabel(model.provider)}</td><td><span className={`badge ${model.status === "Available" ? "badge-success badge-soft" : "badge-warning badge-soft"}`}>{model.status}</span></td><td>{model.speed}</td><td>{model.cost}</td></tr>)}</tbody></table></div></div><div className="content-cta card card-border"><div><h2>One contract across providers.</h2><p>Create a key in Studio and call the same generation endpoint as models are approved.</p></div><button className="btn btn-primary" type="button" onClick={() => onNavigate("/api")}>Read API guide <ArrowRight size={15} /></button></div></main>;
+  return <main className="content-page"><PageIntro eyebrow="Model catalog" title="Qwen Image 3 model status, without the fog." copy="Qwen-Image-3.0 was officially announced on July 21, 2026, but no Qwen Image 3 provider is connected or accepted here. The official model and this site's available Qwen Image 2 runtime remain clearly separated." /><div className="model-table card card-border"><div className="overflow-x-auto"><table className="table"><thead><tr><th>Model</th><th>Provider</th><th>Status</th><th>Speed</th><th>Cost</th></tr></thead><tbody>{catalog.models.map((model) => <tr key={model.id}><td><strong>{model.name}</strong><small>{model.id}</small></td><td>{providerLabel(model.provider)}</td><td><span className={`badge ${model.status === "Available" ? "badge-success badge-soft" : "badge-warning badge-soft"}`}>{model.status}</span></td><td>{model.speed}</td><td>{model.cost}</td></tr>)}</tbody></table></div></div><div className="content-cta card card-border"><div><h2>One contract across providers.</h2><p>Create a key in Studio and call the same generation endpoint as models are approved.</p></div><button className="btn btn-primary" type="button" onClick={() => onNavigate("/api")}>Read API guide <ArrowRight size={15} /></button></div></main>;
 }
 
 export function PricingPage({ catalog, onCheckout }: { catalog: Catalog; onCheckout: (offerId: BillingOffer["id"]) => Promise<void> }) {
@@ -583,16 +570,6 @@ export function RefundPolicyPage() {
       </div>
     </main>
   );
-}
-
-export function GuidesPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const guides: Array<{ title: string; copy: string; duration: string; Icon: typeof BookOpen }> = [
-    { title: "Five-minute first image", copy: "Go from a one-line idea to a downloadable result using recommended defaults.", duration: "4 min", Icon: WandSparkles },
-    { title: "Prompt anatomy", copy: "Understand subject, setting, composition, light, style, and constraints.", duration: "7 min", Icon: BookOpen },
-    { title: "Choosing image quality", copy: "Know when Standard, High, and Ultra are worth their credit cost.", duration: "5 min", Icon: Gauge },
-    { title: "Private creative workflow", copy: "Organize projects, favorites, history, and API keys safely in Studio.", duration: "8 min", Icon: ShieldCheck },
-  ];
-  return <main className="content-page"><PageIntro eyebrow="Guides" title="Learn a repeatable AI image workflow." copy="Short, practical English guides designed for a first-time creator and useful enough for repeat production." /><div className="guide-grid">{guides.map(({ title, copy, duration, Icon }) => <article className="card card-border guide-card" key={title}><div className="card-body"><Icon /><span>{duration}</span><h2 className="card-title">{title}</h2><p>{copy}</p><div className="card-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => onNavigate("/")}>Try the workflow <ArrowRight size={14} /></button></div></div></article>)}</div></main>;
 }
 
 export function ApiPage({ models, onNavigate }: { models: Catalog["models"]; onNavigate: (path: string) => void }) {

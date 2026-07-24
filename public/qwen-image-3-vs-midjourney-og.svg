@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#080909"/>
+  <path d="M0 0h1200v12H0z" fill="#f59e0b"/>
+  <circle cx="92" cy="88" r="22" fill="#f59e0b"/>
+  <text x="132" y="100" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="700">QWEN IMAGE 3 GENERATOR HUB</text>
+  <text x="72" y="218" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="76" font-weight="700" letter-spacing="-4">Qwen Image 3</text>
+  <text x="72" y="302" fill="#f59e0b" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" letter-spacing="-3">vs Midjourney</text>
+  <text x="74" y="356" fill="#a9aaa6" font-family="Arial,Helvetica,sans-serif" font-size="25">Official documentation compared — not a fabricated image benchmark</text>
+  <g transform="translate(72 430)">
+    <rect width="1056" height="116" rx="18" fill="#111313" stroke="#2a2b2b"/>
+    <g fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700">
+      <text x="30" y="45">4.5k-token briefs</text>
+      <text x="300" y="45">~10px text</text>
+      <text x="530" y="45">12 languages</text>
+      <text x="790" y="45">Pricing + API</text>
+    </g>
+    <g fill="#8b8e89" font-family="Arial,Helvetica,sans-serif" font-size="17">
+      <text x="30" y="79">Dense layouts</text>
+      <text x="300" y="79">Proofreading required</text>
+      <text x="530" y="79">Native rendering claim</text>
+      <text x="790" y="79">Source-led comparison</text>
+    </g>
+  </g>
+  <text x="72" y="592" fill="#6f716e" font-family="Arial,Helvetica,sans-serif" font-size="17">Independent third-party analysis · Updated July 2026</text>
+</svg>

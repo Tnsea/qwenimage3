@@ -102,7 +102,7 @@ Current resources:
 - Pages fallback: `https://qwen-image-3.pages.dev`
 - D1 database: `qwen-image-3-production`
 - R2 bucket: `qwen-image-3-assets`
-- Billing: disabled
+- Billing: enabled for new Checkout only by the explicit July 24, 2026 repository-owner acceptance decision; this is not production approval
 - Transactional account email and GitHub OAuth: disabled; Cloudflare Email Routing operational alerts: enabled
 - Google OAuth: enabled with Google Auth Platform publishing status `Production` for external Google accounts
 - Canonical generation provider: Kie.ai `qwen2/text-to-image`

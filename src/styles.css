@@ -10,6 +10,7 @@
 @import "./styles/decision-sections.css";
 @import "./styles/site-footer.css";
 @import "./styles/trust-pages.css";
+@import "./styles/content-pages.css";
 
 @plugin "daisyui" {
   themes: qwen --default, qwen-light;

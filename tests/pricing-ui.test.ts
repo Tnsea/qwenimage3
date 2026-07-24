@@ -5,7 +5,7 @@ import test from "node:test";
 test("pricing defaults to yearly and exposes three account-based plans safely", () => {
   const marketing = readFileSync(new URL("../src/components/Marketing.tsx", import.meta.url), "utf8");
   const homeSections = marketing.slice(marketing.indexOf("export function HomeSections"), marketing.indexOf("function PageIntro"));
-  const pricingPage = marketing.slice(marketing.indexOf("export function PricingPage"), marketing.indexOf("export function GuidesPage"));
+  const pricingPage = marketing.slice(marketing.indexOf("export function PricingPage"), marketing.indexOf("export function BillingTermsPage"));
 
   assert.match(marketing, /function PricingPlanGrid/);
   assert.match(marketing, /catalog\.plans\.map/);
