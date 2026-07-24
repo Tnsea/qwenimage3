@@ -26,18 +26,10 @@
   gap: 6px;
 }
 
-.nav-register-button.btn,
-.auth-submit.btn {
+.nav-register-button.btn {
   border: 0;
   background: var(--color-primary);
   color: var(--color-primary-content);
-}
-
-.auth-secondary.btn {
-  min-height: 32px;
-  justify-self: center;
-  color: color-mix(in srgb, var(--color-base-content) 66%, var(--color-base-100));
-  font-size: 11px;
 }
 
 .auth-verification {
@@ -50,22 +42,6 @@
   align-items: flex-start;
   grid-template-columns: auto 1fr;
   font-size: 12px;
-}
-
-.auth-social {
-  margin-top: 15px;
-}
-
-.auth-social .divider {
-  margin-block: 10px;
-  color: color-mix(in srgb, var(--color-base-content) 66%, var(--color-base-100));
-  font-size: 10px;
-}
-
-.auth-social > div:last-child {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
 }
 
 .credit-nav-button.btn {
@@ -183,45 +159,16 @@
   line-height: 1.6;
 }
 
-.auth-tabs.tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-top: 24px;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--color-base-content) 16%, transparent);
-  background: var(--color-base-200);
-}
-
-.auth-tabs .tab {
-  height: 38px;
-  color: color-mix(in srgb, var(--color-base-content) 66%, var(--color-base-100));
-  font-size: 12px;
-}
-
-.auth-tabs .tab.tab-active {
-  background: var(--color-base-300);
-  color: var(--color-base-content);
-}
-
-.auth-form {
-  display: grid;
-  gap: 14px;
-  margin-top: 20px;
-}
-
-.auth-form label,
 .studio-form-grid label {
   display: grid;
   gap: 7px;
 }
 
-.auth-form label > span,
 .studio-form-grid label > span {
   color: color-mix(in srgb, var(--color-base-content) 66%, var(--color-base-100));
   font-size: 11px;
 }
 
-.auth-form .input,
 .studio-form-grid .input {
   width: 100%;
   border: 1px solid color-mix(in srgb, var(--color-base-content) 18%, transparent);
@@ -229,26 +176,34 @@
   color: var(--color-base-content);
 }
 
-.auth-form .input::placeholder,
 .studio-form-grid .input::placeholder {
   color: color-mix(in srgb, var(--color-base-content) 66%, var(--color-base-100));
 }
 
-.auth-form .input:focus,
 .studio-form-grid .input:focus {
   border-color: color-mix(in srgb, var(--color-base-content) 58%, transparent);
   outline: none;
 }
 
-.auth-error.alert {
-  padding: 11px 13px;
-  font-size: 12px;
+.auth-provider {
+  margin-top: 24px;
 }
 
-.auth-submit.btn {
-  min-height: 46px;
-  margin-top: 2px;
-  gap: 9px;
+.auth-google-button.btn {
+  width: 100%;
+  min-height: 48px;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.auth-google-button.btn span:not(.loading) {
+  flex: 1;
+  text-align: left;
+}
+
+.auth-provider-status.alert {
+  padding: 12px 14px;
+  font-size: 12px;
 }
 
 .auth-trust {

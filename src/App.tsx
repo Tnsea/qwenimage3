@@ -26,8 +26,6 @@ export default function App() {
   const [session, setSession] = useState<SessionState>(emptySession);
   const [catalog, setCatalog] = useState<Catalog>(emptyCatalog);
   const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [resetToken, setResetToken] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [initialPrompt, setInitialPrompt] = useState("");
   const [notice, setNotice] = useState("");
@@ -59,9 +57,10 @@ export default function App() {
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     if (path === "/reset-password") {
-      setResetToken(query.get("token") ?? "");
-      setAuthMode("login");
+      window.history.replaceState({}, "", "/");
+      setPath("/");
       setAuthOpen(true);
+      setNotice("Password reset is not needed. Continue with Google.");
       return;
     }
     if (path === "/verify-email") {
@@ -74,7 +73,6 @@ export default function App() {
         .then((payload) => {
           if (payload.session) setSession(payload.session);
           else {
-            setAuthMode("login");
             setAuthOpen(true);
           }
           window.history.replaceState({}, "", "/");
@@ -91,7 +89,7 @@ export default function App() {
     } else if (query.has("oauth_error")) {
       window.history.replaceState({}, "", "/");
       setPath("/");
-      setStartupError("Social sign-in could not be completed. Please try again or use email and password.");
+      setStartupError("Google sign-in could not be completed. Please try again.");
       setAuthOpen(true);
     }
   }, [path]);
@@ -119,9 +117,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function openAuth(mode: "login" | "register") {
-    setResetToken("");
-    setAuthMode(mode);
+  function openAuth() {
     setAuthOpen(true);
   }
 
@@ -140,13 +136,13 @@ export default function App() {
 
   let page: React.ReactNode;
   if (path.startsWith("/studio")) {
-    page = <Studio path={path} session={session} models={catalog.models} onNavigate={navigate} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onLogout={logout} />;
+    page = <Studio path={path} session={session} models={catalog.models} onNavigate={navigate} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onLogout={logout} />;
   } else if (path === "/examples") {
     page = <ExamplesPage catalog={catalog} onUsePrompt={usePrompt} />;
   } else if (path === "/models") {
     page = <ModelsPage catalog={catalog} onNavigate={navigate} />;
   } else if (path === "/pricing") {
-    page = <PricingPage catalog={catalog} onRegister={() => session.user ? navigate("/studio/billing") : openAuth("register")} />;
+    page = <PricingPage catalog={catalog} onRegister={() => session.user ? navigate("/studio/billing") : openAuth()} />;
   } else if (path === "/guides") {
     page = <GuidesPage onNavigate={navigate} />;
   } else if (path === "/api") {
@@ -165,8 +161,8 @@ export default function App() {
     page = (
       <main className="home-main">
         <HomeHero />
-        <GeneratorWorkspace session={session} models={catalog.models} initialPrompt={initialPrompt} onRequireAuth={() => openAuth("login")} onSessionRefresh={refreshSession} onGenerationCreated={() => navigate("/studio/history")} />
-        <HomeSections catalog={catalog} onNavigate={navigate} onUsePrompt={usePrompt} onRegister={() => openAuth("register")} />
+        <GeneratorWorkspace session={session} models={catalog.models} initialPrompt={initialPrompt} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onGenerationCreated={() => navigate("/studio/history")} />
+        <HomeSections catalog={catalog} onNavigate={navigate} onUsePrompt={usePrompt} onRegister={openAuth} />
       </main>
     );
   } else {
@@ -175,22 +171,12 @@ export default function App() {
 
   return (
     <div className={`page-shell ${theme === "light" ? "light-mode" : ""}`} data-theme={theme === "dark" ? "qwen" : "qwen-light"}>
-      {(!path.startsWith("/studio") || !session.user) && <Header path={path} session={session} theme={theme} mobileOpen={mobileOpen} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onMobile={() => setMobileOpen((value) => !value)} onSignIn={() => openAuth("login")} onRegister={() => openAuth("register")} onLogout={() => void logout()} />}
+      {(!path.startsWith("/studio") || !session.user) && <Header path={path} session={session} theme={theme} mobileOpen={mobileOpen} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onMobile={() => setMobileOpen((value) => !value)} onSignIn={openAuth} onRegister={openAuth} onLogout={() => void logout()} />}
       {startupError && <div role="alert" className="alert alert-error global-alert"><span>{startupError}</span></div>}
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
       {!path.startsWith("/studio") && <SiteFooter onNavigate={navigate} />}
-      <AuthDialog open={authOpen} initialMode={authMode} resetToken={resetToken} onClose={() => setAuthOpen(false)} onResetComplete={() => {
-        window.history.replaceState({}, "", "/");
-        setPath("/");
-        setResetToken("");
-        setNotice("Password updated. Sign in with your new password.");
-      }} onSuccess={(nextSession) => {
-        setSession(nextSession);
-        setAuthOpen(false);
-        navigate("/studio");
-        setNotice("Account ready. Your credits are available.");
-      }} />
+      <AuthDialog open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

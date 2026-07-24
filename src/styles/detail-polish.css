@@ -272,7 +272,6 @@
 
 .prompt-field.textarea,
 .style-fieldset .select,
-.auth-form .input,
 .studio-form-grid :where(.input, .textarea, .select),
 .support-form-grid :where(.input, .textarea, .select) {
   border-color: var(--ui-border);
@@ -404,15 +403,13 @@
     var(--ui-inner-highlight);
 }
 
-.pricing-tabs.tabs,
-.auth-tabs.tabs {
+.pricing-tabs.tabs {
   border: 1px solid var(--ui-border);
   background: color-mix(in srgb, var(--ui-surface-raised) 82%, transparent);
   box-shadow: var(--ui-inner-highlight);
 }
 
-.pricing-tabs .tab.tab-active,
-.auth-tabs .tab.tab-active {
+.pricing-tabs .tab.tab-active {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.065), transparent),
     var(--ui-surface-hover);
