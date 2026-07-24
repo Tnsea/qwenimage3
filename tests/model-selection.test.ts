@@ -12,6 +12,9 @@ test("model selection is sent by the UI and enforced by both generation backends
   assert.match(generator, /disabled=\{!model\.available\}/);
   assert.match(generator, /JSON\.stringify\(\{ prompt: requestedPrompt, modelId,/);
   assert.match(marketing, /<th>Provider<\/th>/);
+  const modelsPage = marketing.slice(marketing.indexOf("export function ModelsPage"), marketing.indexOf("export function PricingPage"));
+  assert.doesNotMatch(modelsPage, /<th>Best for<\/th>/);
+  assert.doesNotMatch(modelsPage, /\{model\.bestFor\}/);
   assert.match(marketing, /Not assigned/);
   assert.doesNotMatch(marketing, /working local preview/);
   assert.match(marketing, /models\.find\(\(model\) => model\.available\)\?\.id/);
