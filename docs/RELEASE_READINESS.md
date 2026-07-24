@@ -2,7 +2,7 @@
 
 Snapshot: July 24, 2026
 
-Overall state: **BLOCKED FOR EXTERNAL BETA AND PUBLIC BILLING**
+Overall state: **CHECKOUT ENABLED IN ACCEPTANCE; BLOCKED FOR EXTERNAL BETA AND PRODUCTION APPROVAL**
 
 The application is locally functional and verified. This file is the authoritative list of remaining launch gates; README and product copy must not convert a pending item into a current guarantee.
 
@@ -41,7 +41,7 @@ Limitations of this evidence:
 - no formal accessibility, browser-matrix, load, recovery, or external security review exists.
 - Stripe's default Sandbox standard secret was rotated by the account owner after setup. The Worker continues to use the separate restricted key.
 
-## P0 — Public Billing Blockers
+## P0 — Production Billing Approval Blockers
 
 ### BIL-001: External-first account deletion — Stripe Sandbox acceptance complete
 
@@ -89,9 +89,9 @@ Limitations of this evidence:
 
 **External acceptance:** Worker `7bfce1bd-6785-4e60-a30e-610ea5346ba1` serves the approved copy on both canonical policy routes, the server requires current-version acceptance before Checkout, and the external alert test is recorded as Delivered. The scheduled path then completed at `2026-07-23T16:00:13.104Z` with zero failed/stale events, zero open/unrecovered reviews, and no alert error.
 
-**Remaining:** launch-region legal/commercial review still applies. The non-negative partial-recovery path is covered by the Worker integration suite; a future real partial Stripe refund should be added to external acceptance before relying on partial refunds operationally. Canonical Checkout is disabled while these gates remain open.
+**Remaining:** launch-region legal/commercial review still applies. The non-negative partial-recovery path is covered by the Worker integration suite; a future real partial Stripe refund should be added to external acceptance before relying on partial refunds operationally. The repository owner explicitly enabled canonical acceptance Checkout on July 24, 2026; that decision does not close these production-approval gates.
 
-Billing remains fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance deployment. The switch blocks new Checkout offers while configured webhook verification and Stripe-side cleanup continue so already-created financial state can drain safely.
+Billing remains fail-closed by default. The canonical acceptance deployment uses an explicit repository-owner `BILLING_ENABLED=true` override; configured webhook verification and Stripe-side cleanup continue independently of the switch. The override is limited to acceptance operation and is not a Ready or production-approval decision.
 
 ## P1 — External Beta Blockers
 
@@ -160,13 +160,14 @@ Billing remains fail-closed behind `BILLING_ENABLED=false` on the canonical acce
 | `OPS-001` | Cloudflare invocation logs and aggregate billing-health email alerts are active; broader metrics, tracing, financial reconciliation, and on-call supervision are absent | Production observability and on-call actions |
 | `OPS-002` | The current Cloudflare custom-domain acceptance revision and Worker are recorded in the deployment section below; a pre-migration D1 export, forward migrations, alert evidence, GA4 installation evidence, and rollback Worker identifiers are retained. Restore/rollback execution remains unverified | CI evidence, health supervision, backup/restore, and rollback drill |
 | `UI-001` | Studio history exposes authenticated download, favorite, variation, failed-generation retry, and confirmed permanent removal actions; failed records retain the explicit no-charge state | Accessibility acceptance for failure announcements, confirmation, and focus |
-| `WEB-001` | Client/API routing, account-gated generation, direct Studio-history handoff, signed-in pricing, Checkout-disabled behavior, legacy Prompts redirect, and one historical signed-in provider result have acceptance evidence | Complete the browser matrix, error routes, Studio action smoke, and rollback acceptance |
+| `WEB-001` | Client/API routing, account-gated generation, direct Studio-history handoff, signed-in pricing, Checkout gate behavior, legacy Prompts redirect, and one historical signed-in provider result have acceptance evidence | Complete the browser matrix, error routes, Studio action smoke, and rollback acceptance |
 
 ## Launch Decision Rules
 
 - **Wrangler demo:** allowed with the deterministic preview provider, local D1/R2 emulation, no real billing, and explicit development labeling.
 - **External beta:** prohibited until every P1 item and applicable legal decision is closed.
-- **Public billing:** prohibited until every P0 item passes Stripe test-mode acceptance and reconciliation evidence.
+- **Acceptance Checkout:** may be externally reachable only through an explicit owner/operator decision recorded with the committed configuration, deployed Worker version, and live health/catalog verification. The current July 24, 2026 decision applies only to the canonical acceptance environment.
+- **Production-approved public billing:** prohibited until every P0 item, applicable legal/commercial decision, reconciliation control, and release marker is complete. Acceptance Checkout enablement does not satisfy this rule.
 - **Production launch:** prohibited until all P0/P1 items and the selected P2 infrastructure gates are closed, with a committed revision, CI, deployment marker, and canonical live verification.
 
 ## Required Decision Record

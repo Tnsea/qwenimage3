@@ -9,7 +9,7 @@ Proposed effective date: July 23, 2026
 Authoritative user-visible source: [`src/billing-policy.ts`](../src/billing-policy.ts)
 Approved source SHA-256: `212c2d85377211f74cb617f190fda96500ad0f24e18d111a16b7902abc307bbf`
 
-This record covers product-copy approval, not legal advice or a launch-region legal review. The exact English copy is approved and deployed; canonical public billing remains disabled until the remaining release gates pass.
+This record covers product-copy approval, not legal advice or a launch-region legal review. The exact English copy is approved and deployed. Canonical acceptance Checkout is enabled by an explicit repository-owner decision on July 24, 2026; that operating decision does not constitute legal review or production approval.
 
 ## Surfaces under review
 

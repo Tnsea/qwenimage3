@@ -2,7 +2,7 @@
 
 > - Document status: Implementation-aligned draft v1.3
 > - Last verified: July 24, 2026
-> - Release status: Cloudflare custom-domain acceptance environment deployed and smoke-tested; production launch and public billing blocked
+> - Release status: Cloudflare custom-domain acceptance environment deployed and smoke-tested; Checkout enabled by explicit owner decision; production approval blocked
 > - Scope: English web MVP, accounts, Studio, credits, billing adapter, and developer API
 > - Positioning: Independent third-party product; not affiliated with or endorsed by Alibaba or the Qwen team
 
@@ -196,7 +196,7 @@ Implemented adapter flow:
 13. The 15-minute schedule deduplicates aggregate billing-health alerts, sends reminders and recovery messages, and audits every delivery.
 14. The Customer Portal manages the external subscription after a customer exists.
 
-Billing is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance Worker. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the switch, the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. Policy version `2026-07-23` has product-owner approval and is deployed; Cloudflare accepted and logged a real test alert to the verified destination. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the other legal, provider, reconciliation, and release gates.
+Billing is fail-closed by default, with `BILLING_ENABLED=true` recorded as an explicit repository-owner override for the canonical acceptance Worker on July 24, 2026. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the switch, the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. Configured webhook settlement and Stripe-side cleanup remain active independently of the switch. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. Policy version `2026-07-23` has product-owner approval and is deployed; Cloudflare accepted and logged a real test alert to the verified destination. Checkout enablement is an acceptance-environment operating decision, not production approval; [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the other legal, provider, reconciliation, and release gates.
 
 ### 5.6 Developer API
 
@@ -345,7 +345,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 
 | ID | Decision | Owner | Required before |
 |---|---|---|---|
-| `TBD-BUSINESS-001` | Launch countries, tax handling, refunds, disputes, and final credit-expiry policy | Product + Finance + Legal | Public billing |
+| `TBD-BUSINESS-001` | Launch countries, tax handling, refunds, disputes, and final credit-expiry policy | Product + Finance + Legal | Production-approved public billing |
 | `TBD-MODEL-001` | Approved production model ID, provider contract, regions, license, SLA, and whether a future Qwen Image 3 offering exists | AI + Legal | Real provider launch |
 | `TBD-LEGAL-001` | Launch countries, privacy obligations, residency, age limits, commercial-use disclosure, and provider data use | Legal | External beta |
 | `TBD-RETENTION-001` | Starter, paid, backup, and billing-record deletion periods | Product + Legal + Infrastructure | External beta |
@@ -383,7 +383,7 @@ Closed decisions:
 - [ ] Content inventory and FAQ meet the MVP target.
 - [ ] Legal, privacy, provider-license, commercial-use, and launch-region decisions are approved.
 
-### Required before public billing
+### Required before production-approved public billing
 
 - [x] Account deletion cancels external subscriptions/customers first and passed active, trialing, past-due, already-canceled, cancel-at-period-end, and late-webhook Sandbox cases.
 - [x] Webhook processing recovers missing orders, out-of-order financial events, failed renewals, and deleted-account races.
