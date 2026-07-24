@@ -78,9 +78,9 @@ export function SiteFooter({ onNavigate }: SiteFooterProps) {
         </div>
 
         <div
-          className="mt-6 flex flex-wrap items-center justify-center gap-3"
+          className="mt-6 flex flex-col items-center justify-center gap-3"
           role="group"
-          aria-label="Featured listing"
+          aria-label="Featured listings"
         >
           <a
             className="inline-flex rounded-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-base-content"
@@ -93,6 +93,21 @@ export function SiteFooter({ onNavigate }: SiteFooterProps) {
               alt="Featured on Findly.tools"
               width={150}
               height={47}
+              decoding="async"
+            />
+          </a>
+          <a
+            className="inline-flex rounded-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-base-content"
+            href="https://softwarebolt.com/product/qwen-image-3"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <img
+              src="https://softwarebolt.com/assets/images/badge-dark.png"
+              alt="Software Bolt"
+              width={203}
+              height={54}
+              loading="lazy"
               decoding="async"
             />
           </a>

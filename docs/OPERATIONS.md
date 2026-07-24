@@ -167,7 +167,7 @@ Acceptance evidence on July 23, 2026: Worker version `48f7704c-0cc7-4f25-9ae6-9e
 
 Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. Reviewed GA4 support is loaded by the client and limited by CSP to the exact Google Tag Manager script host plus the primary and regional Google Analytics collection hosts. Inline scripts remain blocked.
 
-The homepage recognition badge remains an image-only embed. CSP permits its asset from the exact `findly.tools` host without granting that host script or connection access.
+Homepage recognition badges remain image-only embeds. CSP permits their assets from the exact `findly.tools` and `softwarebolt.com` hosts without granting either host script or connection access.
 
 ### GA4 page-view analytics
 
