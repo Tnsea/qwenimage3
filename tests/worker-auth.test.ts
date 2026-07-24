@@ -57,11 +57,12 @@ test("Worker HTML is immutable to edge transforms so Cloudflare cannot inject an
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "public, max-age=0, must-revalidate, no-transform");
   const csp = response.headers.get("content-security-policy") ?? "";
-  assert.match(csp, /img-src 'self' data: blob: https:\/\/www\.google-analytics\.com https:\/\/region1\.google-analytics\.com https:\/\/startupfa\.me https:\/\/findly\.tools/);
+  assert.match(csp, /img-src 'self' data: blob: https:\/\/www\.google-analytics\.com https:\/\/region1\.google-analytics\.com https:\/\/findly\.tools/);
   assert.match(csp, /script-src 'self' https:\/\/www\.googletagmanager\.com/);
   assert.match(csp, /connect-src 'self' https:\/\/www\.google-analytics\.com https:\/\/region1\.google-analytics\.com/);
+  assert.doesNotMatch(csp, /startupfa\.me/);
   assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
-  assert.doesNotMatch(csp, /(?:script-src|connect-src)[^;]*(?:startupfa\.me|findly\.tools)/);
+  assert.doesNotMatch(csp, /(?:script-src|connect-src)[^;]*findly\.tools/);
   assert.doesNotMatch(await response.text(), /cloudflareinsights|beacon\.min\.js/);
 });
 

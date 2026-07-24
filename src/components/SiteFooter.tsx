@@ -80,24 +80,8 @@ export function SiteFooter({ onNavigate }: SiteFooterProps) {
         <div
           className="mt-6 flex flex-wrap items-center justify-center gap-3"
           role="group"
-          aria-label="Featured listings"
+          aria-label="Featured listing"
         >
-          <a
-            className="inline-flex rounded-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-base-content"
-            href="https://startupfa.me/s/qwen-image-3-2?utm_source=qwen-image-3.net"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {/* Startup Fame supplies the branded alt text shown in its embed code. */}
-            {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
-            <img
-              src="https://startupfa.me/badges/featured-badge-small.webp"
-              alt="Qwen Image Generator - Featured on Startup Fame"
-              width={224}
-              height={36}
-              decoding="async"
-            />
-          </a>
           <a
             className="inline-flex rounded-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-base-content"
             href="https://findly.tools/https-qwen-image-3-net?utm_source=https-qwen-image-3-net"
