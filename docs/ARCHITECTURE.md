@@ -29,7 +29,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | Search entry document | `vite.config.ts`, `src/prerender.tsx`, `src/seo.ts`, `worker/index.ts`, `index.html` | Build-time homepage prerender plus a shared public-route registry; the Worker rewrites canonical and `og:url` metadata to each requested sitemap URL before the first response |
 | Navigation | `src/components/Header.tsx` | Desktop/mobile public routes and signed-in account actions |
 | Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, and successful handoff to private Studio history without inline result galleries |
-| Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, recovery, and dynamically configured OAuth entry |
+| Authentication UI | `src/components/AuthDialog.tsx` | Google-only customer sign-in entry with runtime availability detection |
 | Studio | `src/components/Studio.tsx` | Responsive authenticated shell, aggregate overview, projects, history, credits, billing/payments, keys, private support conversations, profile, settings, and deletion confirmation |
 | Canonical API | `worker/index.ts` | Same-origin routes, authentication, ownership, credits, generation, billing, maintenance, and HTTP composition |
 | Credit service | `worker/credits.ts` | Exactly-once grants plus atomic reservation, settlement, and refund statements |
@@ -120,12 +120,12 @@ D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, res
 
 The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale account reservations, drains legacy guest assets, and processes R2 cleanup compensation. Generation execution remains synchronous and has no durable queue.
 
-### Registration and verification
+### Customer sign-in and retained credential routes
 
-1. Registration creates the user, credit account, billing row, and one idempotent 20-credit welcome grant.
-2. Registration creates the account session immediately.
-3. A one-time verification token replaces any older active token and is delivered through Resend when configured.
-4. Token consumption marks the address verified for recovery trust and developer-key access; it does not grant additional credits.
+1. The customer-facing authentication dialog exposes Google only and checks runtime availability before offering the OAuth entry.
+2. The callback verifies browser-bound state and PKCE, requires a verified provider email, creates or resolves the account, grants the idempotent 20-credit welcome amount, and creates a session.
+3. Email/password registration, login, verification, and recovery endpoints remain in the Worker and pass local integration tests, but no customer-facing UI exposes them and the canonical acceptance runtime has no transactional account-email provider.
+4. In those retained routes, one-time verification tokens replace older active tokens; consumption marks the address verified without granting additional credits.
 
 ### Billing
 
@@ -150,7 +150,7 @@ The 15-minute maintenance pass marks stale processing generations failed, settle
 - The retained container runs the legacy Node/SQLite comparison adapter and is local-only.
 - Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production` and private R2 bucket `qwen-image-3-assets` are bound. `https://qwen-image-3.pages.dev` remains a fallback.
 - Committed account-required revision `dd38e44df4691b8c733d52c9da42f9a85784916b` is deployed as Worker `e9315acd-5b98-462d-b4ed-dcc7bc0845d8`; prior Worker `9d3a16f1-807c-4414-bddd-b5d26b80073e` is the recorded code rollback point. Successful client generations hand off directly to private Studio history without inline result/recent galleries. Studio history retains authenticated download, favorite, variation, failed-generation retry, and confirmed permanent removal controls. The canonical catalog and prerendered HTML omit the inactive local preview model, and the Models table presents only Model, Provider, Status, Speed, and Cost; the deterministic adapter remains selected only by local development and the separately deployed Pages fallback at `https://623d913e.qwen-image-3.pages.dev`. The duplicate Prompts page and its navigation, footer, canonical, and sitemap entries are removed; legacy `/prompts` requests permanently redirect to `/examples`. The deployed Worker, catalog, and `/models` browser render passed read-only smoke, while a new signed-in generation was not spent for this UI-only deployment. The Kie.ai Qwen Image 2 path previously completed both a direct Worker acceptance task and one signed-in product request with four-credit settlement, private R2 persistence, and browser rendering. Paid Starter receives original, watermark-free exports while retaining the standard queue; Creator and Professional retain both original exports and VIP priority. Failure/timeout behavior and provider commercial approval remain open.
-- Google OAuth completed one acceptance sign-in and its external Google Auth Platform application is published with status `Production`. Public billing, production email, GitHub OAuth, and Alibaba Qwen execution remain disabled/unverified; the Kie.ai Worker-side result does not approve production use, and neither the OAuth publishing label nor the custom domain approves a production launch.
+- Google OAuth is the only customer-facing sign-in method. It completed one acceptance sign-in and its external Google Auth Platform application is published with status `Production`. Retained email/password and GitHub routes are not offered in the UI; public billing, production email, GitHub OAuth, and Alibaba Qwen execution remain disabled/unverified. The Kie.ai Worker-side result does not approve production use, and neither the OAuth publishing label nor the custom domain approves a production launch.
 
 ## Target Evolution
 

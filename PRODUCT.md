@@ -48,11 +48,11 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering | Failure/timeout recovery, backup-deletion telemetry, and production monitoring |
 | Real image provider | **Kie.ai signed-in success path externally verified once** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
 | Qwen Image 3 | **Blocked**; no verified provider integration or official release source is recorded | Official source plus implemented and accepted provider adapter |
-| Email/password accounts | **Verified locally** | Production mail delivery and security review |
-| Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub external verification pending** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance |
+| Account access | **Google-only in the customer-facing acceptance UI**; retained email/password, verification, and recovery APIs are locally verified but not exposed as sign-in options | Google denial/failure acceptance, production account-recovery decision, and security review |
+| Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub adapter implemented but not offered and externally unverified** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance before any UI enablement |
 | Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
 | Credits | **Verified locally, in the isolated Sandbox, and once in the Cloudflare acceptance flow** for generation reservation/settlement; non-negative billing-loss recovery and aggregate billing-health alert delivery also passed | Reconciliation monitoring |
-| Studio | **Verified locally** for login-directed responsive workspace, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
+| Studio | **Verified locally** for login-directed responsive workspace, persistent light/dark theme control, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
 | Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
@@ -67,7 +67,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | `/` | Homepage and generator entry; successful signed-in generations hand off directly to private Studio history instead of rendering inline results, followed by product sections, pricing preview, and FAQ |
 | `/examples` | Eight unique curated cards |
 | `/models` | Configured Qwen 2.0 adapter and Qwen Image 3 roadmap status |
-| `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default, and each checkout is enabled only when the Stripe gate, matching environment Price ID, and active D1 Price version all pass |
+| `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default. When an environment explicitly enables a configured offer, selection records the disclosed current-policy confirmation and starts Stripe Checkout; an unauthenticated selection resumes after Google sign-in |
 | `/privacy` | Pre-release privacy and data notice covering account, creative, billing, support, analytics, provider, retention, export, and deletion boundaries without claiming launch-region legal approval |
 | `/terms` | Approved versioned Billing Terms for subscriptions, credits, renewal, cancellation, payment review, and account deletion |
 | `/refund-policy` | Approved versioned Refund Policy covering eligibility, subscriptions, credit packs, disputes, and private support requests |
@@ -136,26 +136,24 @@ Current rules:
 
 Completed and failed records render in Studio history. Completed cards expose download, favorite, variation, and permanent removal; failed cards expose an explicit no-charge state, retry, and removal.
 
-### 5.2 Registration, verification, and login
+### 5.2 Account access and retained credential routes
 
 ```mermaid
 flowchart LR
-  A[Visitor] --> B[Register or sign in]
-  B --> C[Grant 20 welcome credits once]
-  C --> D[Create 30-day account session]
-  D --> E{Email verified?}
-  E -->|No| F[Offer one-time verification]
-  E -->|Yes| G[Enable verified developer access]
-  F --> H[Open Studio]
-  G --> H
+  A[Visitor] --> B[Continue with Google]
+  B --> C[Verify OAuth state, PKCE, and provider email]
+  C --> D[Create or resolve account]
+  D --> E[Grant 20 welcome credits once]
+  E --> F[Create 30-day account session]
+  F --> G[Open Studio]
 ```
 
-- Email/password registration creates an unverified account and signed-in session.
-- Verification tokens expire after 24 hours; reset tokens expire after 60 minutes.
+- The canonical customer UI currently exposes Google sign-in only. Google provides the verified email used for account identity and developer access.
+- Email/password registration, verification, login, and recovery routes remain implemented and locally tested in the Worker, but they are not exposed as customer-facing sign-in options and production account email is disabled.
+- In the retained credential routes, verification tokens expire after 24 hours and reset tokens expire after 60 minutes.
 - The 20-credit welcome grant is issued once at registration; the first subsequent login safely backfills it for an older account that never received a signup grant.
-- Email verification protects recovery and remains required for developer-key issuance; it does not gate welcome credits.
-- Password reset revokes all account sessions.
-- Password change keeps the current session and revokes other sessions.
+- For retained email/password accounts, email verification protects recovery and remains required for developer-key issuance; it does not gate welcome credits.
+- Retained password reset revokes all account sessions, while password change keeps the current session and revokes other sessions.
 - Google and GitHub OAuth use state and PKCE and require a verified provider email.
 - OAuth access tokens are used only for profile exchange and are not persisted.
 
@@ -189,7 +187,7 @@ Implemented adapter flow:
 4. Professional is USD 59.90/month for 5,000 credits or USD 599/year for 60,000 credits.
 5. One-time packs are USD 12/400 credits, USD 30/1,200 credits, and USD 60/3,000 credits.
 6. Monthly invoices grant the monthly allowance; yearly invoices grant the full annual allowance once after payment.
-7. A verified user selects a server-defined offer, and the server creates or reuses a Stripe Customer before Stripe-hosted Checkout.
+7. A verified user selects a server-defined offer on `/pricing`; the client records the clearly disclosed current policy confirmation and immediately creates or reuses a Stripe Customer before redirecting to Stripe-hosted Checkout. An unauthenticated selection resumes after Google sign-in without a second purchase click.
 8. A signed webhook claims a retryable event state, validates the exact immutable Price version, amount, currency, Customer, subscription, invoice reason, and PaymentIntent, then records completion only after fulfillment.
 9. Refunds and disputes update financial status and pause credit spending for review.
 10. Actionable Radar early fraud warnings resolve to a known local PaymentIntent, create a separate risk record, and pause credit spending without being treated as a refund or dispute.
@@ -198,7 +196,7 @@ Implemented adapter flow:
 13. The 15-minute schedule deduplicates aggregate billing-health alerts, sends reminders and recovery messages, and audits every delivery.
 14. The Customer Portal manages the external subscription after a customer exists.
 
-Billing remains disabled by default behind `BILLING_ENABLED`. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. Policy version `2026-07-23` has product-owner approval and is deployed; Cloudflare accepted and logged a real test alert to the verified destination. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the other legal, provider, reconciliation, and release gates.
+Billing is fail-closed behind `BILLING_ENABLED=false` on the canonical acceptance Worker. The old launch and pack Price versions are retained but retired for historical reconciliation. New Checkout requires the switch, the current Price ID environment variable, a matching active D1 price-version row, and account acceptance of the current billing-policy version. The switch prevents new Checkout creation while configured webhook settlement and Stripe-side cleanup continue. The isolated Sandbox has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewals, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and authenticated risk resolution. Policy version `2026-07-23` has product-owner approval and is deployed; Cloudflare accepted and logged a real test alert to the verified destination. [Release Readiness](./docs/RELEASE_READINESS.md) remains blocked on the other legal, provider, reconciliation, and release gates.
 
 ### 5.6 Developer API
 
@@ -314,8 +312,8 @@ The current production-mode bundle passes the JavaScript size target locally. No
 
 - English responsive public interface and navigation.
 - Worker-backed account-gated generation, download, credit settlement, and history.
-- Email/password authentication, verification, recovery, and sessions.
-- Google and GitHub OAuth adapters.
+- Google-only customer account access plus session management.
+- Retained, locally verified email/password authentication, verification, and recovery routes, and Google/GitHub OAuth adapters.
 - Projects, favorites, account export, and externally checkpointed deletion.
 - Credit ledger and generation reserve/settle/refund.
 - Hashed API keys and synchronous idempotent developer generation.
@@ -355,7 +353,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 
 Closed decisions:
 
-- `DEC-AUTH-001`: MVP uses email/password with one-time verification and recovery; Google/GitHub OAuth are optional configured methods. Phone authentication is deferred.
+- `DEC-AUTH-001`: The canonical acceptance UI uses Google-only account access. Email/password and GitHub routes remain implemented but are not customer-facing until their recovery, delivery, and external-acceptance paths are explicitly approved. Phone authentication is deferred.
 - `DEC-I18N-001`: MVP is English-only with no language switch. Additional locales are post-MVP and require separate review.
 - `DEC-BILLING-001`: The product uses three subscription tiers, monthly/yearly billing with yearly selected by default, 4/8/16 generation costs, and the fixed prices and allowances documented in section 5.5.
 

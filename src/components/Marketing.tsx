@@ -8,7 +8,7 @@ import {
   termsSections,
 } from "../billing-policy";
 import { exampleMedia } from "../exampleMedia";
-import type { Catalog } from "../types";
+import type { BillingOffer, Catalog } from "../types";
 
 export type { Catalog } from "../types";
 
@@ -31,14 +31,18 @@ function PricingPlanGrid({
   catalog,
   billingPeriod,
   billingNoteId,
+  checkoutConfirmationId,
   disableUnavailable,
+  busyOfferId,
   onAction,
 }: {
   catalog: Catalog;
   billingPeriod: BillingPeriod;
   billingNoteId: string;
+  checkoutConfirmationId?: string;
   disableUnavailable: boolean;
-  onAction: (planId: Catalog["plans"][number]["id"]) => void;
+  busyOfferId?: BillingOffer["id"] | null;
+  onAction: (offerId: BillingOffer["id"]) => void | Promise<void>;
 }) {
   const isYearly = billingPeriod === "yearly";
 
@@ -49,9 +53,11 @@ function PricingPlanGrid({
         const credits = isYearly ? plan.yearlyCredits : plan.monthlyCredits;
         const standardImages = credits / 4;
         const configured = isYearly ? plan.yearlyConfigured : plan.monthlyConfigured;
+        const offerId = `${plan.id}_${isYearly ? "yearly" : "monthly"}` as BillingOffer["id"];
         const effectiveMonthly = isYearly ? plan.yearlyAmountCents / 12 : plan.monthlyAmountCents;
         const costPerCredit = amountCents / credits / 100;
-        const actionDisabled = disableUnavailable && !configured;
+        const actionBusy = busyOfferId === offerId;
+        const actionDisabled = (disableUnavailable && !configured) || Boolean(busyOfferId);
 
         return (
           <article
@@ -86,13 +92,14 @@ function PricingPlanGrid({
                 className={`btn pricing-plan-action ${plan.recommended ? "plan-primary-action" : "btn-outline"}`}
                 type="button"
                 disabled={actionDisabled}
-                aria-describedby={billingNoteId}
-                onClick={() => onAction(plan.id)}
+                aria-describedby={[billingNoteId, checkoutConfirmationId].filter(Boolean).join(" ")}
+                onClick={() => void onAction(offerId)}
               >
+                {actionBusy && <span className="loading loading-spinner loading-xs" />}
                 {disableUnavailable
                   ? configured ? `Choose ${plan.name}` : "Checkout not enabled"
                   : `View ${plan.name}`}
-                {!actionDisabled && <ArrowRight size={14} />}
+                {!actionDisabled && !actionBusy && <ArrowRight size={14} />}
               </button>
               <div className="pricing-feature-heading">Included</div>
               <ul className="plan-feature-list">
@@ -411,20 +418,39 @@ export function ModelsPage({ catalog, onNavigate }: { catalog: Catalog; onNaviga
   return <main className="content-page"><PageIntro eyebrow="Model catalog" title="Qwen Image 3 model status, without the fog." copy="No verified Qwen Image 3 provider is available here today. Implemented providers and roadmap models remain clearly separated by their current verification status." /><div className="model-table card card-border"><div className="overflow-x-auto"><table className="table"><thead><tr><th>Model</th><th>Provider</th><th>Status</th><th>Speed</th><th>Cost</th></tr></thead><tbody>{catalog.models.map((model) => <tr key={model.id}><td><strong>{model.name}</strong><small>{model.id}</small></td><td>{providerLabel(model.provider)}</td><td><span className={`badge ${model.status === "Available" ? "badge-success badge-soft" : "badge-warning badge-soft"}`}>{model.status}</span></td><td>{model.speed}</td><td>{model.cost}</td></tr>)}</tbody></table></div></div><div className="content-cta card card-border"><div><h2>One contract across providers.</h2><p>Create a key in Studio and call the same generation endpoint as models are approved.</p></div><button className="btn btn-primary" type="button" onClick={() => onNavigate("/api")}>Read API guide <ArrowRight size={15} /></button></div></main>;
 }
 
-export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegister: () => void }) {
+export function PricingPage({ catalog, onCheckout }: { catalog: Catalog; onCheckout: (offerId: BillingOffer["id"]) => Promise<void> }) {
   const [billingView, setBillingView] = useState<"plans" | "credits">("plans");
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>("yearly");
+  const [busyOfferId, setBusyOfferId] = useState<BillingOffer["id"] | null>(null);
+  const [checkoutError, setCheckoutError] = useState("");
   const isYearly = billingPeriod === "yearly";
+
+  async function startCheckout(offerId: BillingOffer["id"]) {
+    setBusyOfferId(offerId);
+    setCheckoutError("");
+    try {
+      await onCheckout(offerId);
+    } catch (reason) {
+      setCheckoutError(reason instanceof Error ? reason.message : "Could not start Stripe Checkout.");
+    } finally {
+      setBusyOfferId(null);
+    }
+  }
 
   return (
     <main className="content-page pricing-page">
       <PageIntro eyebrow="Simple, honest pricing" title="Pay for a clear image allowance." copy="Choose monthly flexibility or save two months with yearly billing. Every plan is account-based, private by default, and protected by automatic credit recovery after failures." />
+      {checkoutError && <div role="alert" className="alert alert-error alert-soft"><span>{checkoutError}</span></div>}
       {catalog.creditPacks.length > 0 && (
         <div role="tablist" className="tabs tabs-box pricing-tabs pricing-view-tabs" aria-label="Pricing options">
           <button role="tab" type="button" className={`tab ${billingView === "plans" ? "tab-active" : ""}`} aria-selected={billingView === "plans"} onClick={() => setBillingView("plans")}>Plans</button>
           <button role="tab" type="button" className={`tab ${billingView === "credits" ? "tab-active" : ""}`} aria-selected={billingView === "credits"} onClick={() => setBillingView("credits")}>Credit packs</button>
         </div>
       )}
+      <div className="pricing-trust-note" id="pricing-checkout-confirmation">
+        <ShieldCheck size={16} />
+        <span>By selecting a paid plan or credit pack, you confirm that you have read and agree to the current Billing Terms and Refund Policy. We record that confirmation before opening Stripe Checkout.</span>
+      </div>
 
       {billingView === "plans" ? (
         <>
@@ -461,8 +487,10 @@ export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegis
             catalog={catalog}
             billingPeriod={billingPeriod}
             billingNoteId="billing-period-note"
+            checkoutConfirmationId="pricing-checkout-confirmation"
             disableUnavailable
-            onAction={onRegister}
+            busyOfferId={busyOfferId}
+            onAction={startCheckout}
           />
 
           <div className="pricing-trust-note">
@@ -472,7 +500,7 @@ export function PricingPage({ catalog, onRegister }: { catalog: Catalog; onRegis
         </>
       ) : (
         <div className="credit-pack-grid">
-          {catalog.creditPacks.map((offer) => <article className={`card plan-decision credit-pack-card ${offer.id === "credits_3000" ? "is-featured" : ""}`} key={offer.id}><div className="card-body"><span className="plan-eyebrow">{offer.id === "credits_3000" ? "Best one-time value" : "Flexible top-up"}</span><div className="plan-decision-top"><h2>{offer.name}</h2><div className="plan-price">{offer.priceLabel}</div></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="plan-feature-list">{offer.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>{offer.configured ? <button className="btn plan-primary-action" type="button" onClick={onRegister}>Buy in Studio <ArrowRight size={14} /></button> : <div className="plan-availability" role="status">Paid checkout is not enabled in this environment.</div>}</div></article>)}
+          {catalog.creditPacks.map((offer) => <article className={`card plan-decision credit-pack-card ${offer.id === "credits_3000" ? "is-featured" : ""}`} key={offer.id}><div className="card-body"><span className="plan-eyebrow">{offer.id === "credits_3000" ? "Best one-time value" : "Flexible top-up"}</span><div className="plan-decision-top"><h2>{offer.name}</h2><div className="plan-price">{offer.priceLabel}</div></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="plan-feature-list">{offer.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>{offer.configured ? <button className="btn plan-primary-action" type="button" disabled={Boolean(busyOfferId)} aria-describedby="pricing-checkout-confirmation" onClick={() => void startCheckout(offer.id)}>{busyOfferId === offer.id && <span className="loading loading-spinner loading-xs" />}Buy with Stripe{busyOfferId !== offer.id && <ArrowRight size={14} />}</button> : <div className="plan-availability" role="status">Paid checkout is not enabled in this environment.</div>}</div></article>)}
         </div>
       )}
 

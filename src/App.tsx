@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, FileQuestion } from "lucide-react";
 import { api } from "./api";
 import { initializeAnalytics, trackPageView } from "./analytics";
+import { BILLING_TERMS_VERSION } from "./billing-policy";
 import { parseCatalog } from "./catalog";
 import { AuthDialog } from "./components/AuthDialog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
@@ -12,7 +13,7 @@ import { SiteFooter } from "./components/SiteFooter";
 import { Studio } from "./components/Studio";
 import { IndependentStatusPage, PrivacyDataPage, SupportPage } from "./components/TrustPages";
 import { CANONICAL_SITE_ORIGIN, legacyPublicRedirectPath, publicCanonicalUrl } from "./seo";
-import type { SessionState } from "./types";
+import type { BillingOfferId, SessionState } from "./types";
 
 const emptySession: SessionState = {
   user: null,
@@ -20,6 +21,23 @@ const emptySession: SessionState = {
 };
 
 const emptyCatalog: Catalog = { plans: [], prompts: [], models: [], promotion: null, creditPacks: [] };
+const pendingCheckoutStorageKey = "qwen-pending-checkout-offer";
+const activeCheckoutOfferIds = new Set<BillingOfferId>([
+  "starter_monthly",
+  "starter_yearly",
+  "creator_monthly",
+  "creator_yearly",
+  "professional_monthly",
+  "professional_yearly",
+  "credits_400",
+  "credits_1200",
+  "credits_3000",
+]);
+
+function pendingCheckoutOffer() {
+  const offerId = window.sessionStorage.getItem(pendingCheckoutStorageKey) as BillingOfferId | null;
+  return offerId && activeCheckoutOfferIds.has(offerId) ? offerId : null;
+}
 
 export default function App() {
   const [path, setPath] = useState(() => legacyPublicRedirectPath(window.location.pathname) ?? window.location.pathname);
@@ -83,10 +101,25 @@ export default function App() {
       return;
     }
     if (query.get("oauth") === "success") {
-      void refreshSession();
-      window.history.replaceState({}, "", path);
-      setNotice("Secure social sign-in complete.");
+      void refreshSession()
+        .then(async () => {
+          const offerId = pendingCheckoutOffer();
+          window.history.replaceState({}, "", path);
+          if (offerId) {
+            window.sessionStorage.removeItem(pendingCheckoutStorageKey);
+            await createPricingCheckout(offerId);
+            return;
+          }
+          setNotice("Secure social sign-in complete.");
+        })
+        .catch((reason: Error) => {
+          window.sessionStorage.removeItem(pendingCheckoutStorageKey);
+          window.history.replaceState({}, "", "/pricing");
+          setPath("/pricing");
+          setStartupError(reason.message);
+        });
     } else if (query.has("oauth_error")) {
+      window.sessionStorage.removeItem(pendingCheckoutStorageKey);
       window.history.replaceState({}, "", "/");
       setPath("/");
       setStartupError("Google sign-in could not be completed. Please try again.");
@@ -121,6 +154,32 @@ export default function App() {
     setAuthOpen(true);
   }
 
+  function closeAuth() {
+    window.sessionStorage.removeItem(pendingCheckoutStorageKey);
+    setAuthOpen(false);
+  }
+
+  async function createPricingCheckout(offerId: BillingOfferId) {
+    await api("/api/billing/terms/accept", {
+      method: "POST",
+      body: JSON.stringify({ version: BILLING_TERMS_VERSION, confirmed: true }),
+    });
+    const payload = await api<{ url: string }>("/api/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ offerId }),
+    });
+    window.location.assign(payload.url);
+  }
+
+  async function startPricingCheckout(offerId: BillingOfferId) {
+    if (!session.user) {
+      window.sessionStorage.setItem(pendingCheckoutStorageKey, offerId);
+      openAuth();
+      return;
+    }
+    await createPricingCheckout(offerId);
+  }
+
   async function logout() {
     await api<void>("/api/auth/logout", { method: "POST" });
     await refreshSession();
@@ -136,13 +195,13 @@ export default function App() {
 
   let page: React.ReactNode;
   if (path.startsWith("/studio")) {
-    page = <Studio path={path} session={session} models={catalog.models} onNavigate={navigate} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onLogout={logout} />;
+    page = <Studio path={path} session={session} models={catalog.models} theme={theme} onNavigate={navigate} onTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onLogout={logout} />;
   } else if (path === "/examples") {
     page = <ExamplesPage catalog={catalog} onUsePrompt={usePrompt} />;
   } else if (path === "/models") {
     page = <ModelsPage catalog={catalog} onNavigate={navigate} />;
   } else if (path === "/pricing") {
-    page = <PricingPage catalog={catalog} onRegister={() => session.user ? navigate("/studio/billing") : openAuth()} />;
+    page = <PricingPage catalog={catalog} onCheckout={startPricingCheckout} />;
   } else if (path === "/guides") {
     page = <GuidesPage onNavigate={navigate} />;
   } else if (path === "/api") {
@@ -176,7 +235,7 @@ export default function App() {
       {notice && <div className="toast toast-end app-toast"><div role="status" className="alert alert-success"><span>{notice}</span><button className="btn btn-ghost btn-xs" onClick={() => setNotice("")}>Dismiss</button></div></div>}
       {page}
       {!path.startsWith("/studio") && <SiteFooter onNavigate={navigate} />}
-      <AuthDialog open={authOpen} onClose={() => setAuthOpen(false)} />
+      <AuthDialog open={authOpen} onClose={closeAuth} />
     </div>
   );
 }

@@ -28,8 +28,24 @@ test("pricing defaults to yearly and exposes three account-based plans safely", 
   assert.doesNotMatch(pricingPage, /Generate as guest|No account needed|Everything in Guest/);
   assert.match(pricingPage, /20 welcome credits/);
   assert.match(pricingPage, /Know the billing terms before you buy/);
+  assert.match(pricingPage, /By selecting a paid plan or credit pack/);
+  assert.match(pricingPage, /onCheckout/);
+  assert.match(pricingPage, /startCheckout\(offer\.id\)/);
+  assert.match(pricingPage, /Buy with Stripe/);
   assert.match(pricingPage, /href="\/terms"/);
   assert.match(pricingPage, /href="\/refund-policy"/);
+});
+
+test("pricing selection records policy acceptance and opens Stripe Checkout without a second purchase click", () => {
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /qwen-pending-checkout-offer/);
+  assert.match(app, /\/api\/billing\/terms\/accept/);
+  assert.match(app, /\/api\/billing\/checkout/);
+  assert.match(app, /window\.location\.assign\(payload\.url\)/);
+  assert.match(app, /await createPricingCheckout\(offerId\)/);
+  assert.match(app, /<PricingPage catalog=\{catalog\} onCheckout=\{startPricingCheckout\}/);
+  assert.doesNotMatch(app, /session\.user \? navigate\("\/studio\/billing"\)/);
 });
 
 test("Studio requires explicit current-version billing policy acceptance before Checkout", () => {

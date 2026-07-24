@@ -24,3 +24,16 @@ test("Studio history keeps every generation action after the handoff", () => {
   assert.match(studio, /\/api\/generations\/\$\{generation\.id\}.*method: "DELETE"/s);
   assert.match(studio, /Delete this generation and its private image permanently/);
 });
+
+test("Studio inherits the selected product theme and exposes an in-workspace theme control", () => {
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const studio = readFileSync(new URL("../src/components/Studio.tsx", import.meta.url), "utf8");
+  const workspaceStyles = readFileSync(new URL("../src/styles/workspace.css", import.meta.url), "utf8");
+
+  assert.match(app, /<Studio[\s\S]*theme=\{theme\}[\s\S]*onTheme=\{\(\) => setTheme/);
+  assert.match(studio, /data-theme=\{theme === "dark" \? "qwen" : "qwen-light"\}/);
+  assert.match(studio, /Switch Studio to light theme/);
+  assert.match(studio, /Switch Studio to dark theme/);
+  assert.match(workspaceStyles, /\.settings-verification\.alert\s*\{[\s\S]*grid-auto-flow:\s*row;[\s\S]*grid-template-columns:\s*auto minmax\(0,\s*1fr\);/);
+  assert.match(workspaceStyles, /\.settings-verification-actions \.btn\s*\{[\s\S]*width:\s*100%;/);
+});

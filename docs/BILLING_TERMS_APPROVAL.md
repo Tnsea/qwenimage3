@@ -9,14 +9,14 @@ Proposed effective date: July 23, 2026
 Authoritative user-visible source: [`src/billing-policy.ts`](../src/billing-policy.ts)
 Approved source SHA-256: `212c2d85377211f74cb617f190fda96500ad0f24e18d111a16b7902abc307bbf`
 
-This record covers product-copy approval, not legal advice or a launch-region legal review. The exact English copy is approved and deployed; public billing remains disabled until the remaining release gates pass.
+This record covers product-copy approval, not legal advice or a launch-region legal review. The exact English copy is approved and deployed; canonical public billing remains disabled until the remaining release gates pass.
 
 ## Surfaces under review
 
-- `/pricing` shows the automatic-renewal, cancellation, yearly-credit, refund-review, and payment-risk summary before sign-in.
+- `/pricing` shows the automatic-renewal, cancellation, yearly-credit, refund-review, and payment-risk summary before selection. Its offer buttons state that selection confirms the current policies, record that acceptance, and open Stripe Checkout directly; a pre-sign-in selection resumes after Google OAuth.
 - `/terms` shows the complete Billing Terms.
 - `/refund-policy` shows the complete Refund Policy.
-- `/studio/billing` requires an explicit checkbox for the current policy version before any Checkout button is enabled.
+- `/studio/billing` retains an explicit checkbox for purchases initiated inside Studio.
 - `POST /api/billing/terms/accept` records the account, policy version, time, coarse IP hint, and user agent.
 - `POST /api/billing/checkout` rejects a missing or obsolete acceptance and stores the accepted version/time on the Checkout attempt and Stripe metadata.
 

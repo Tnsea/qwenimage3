@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Plus, ReceiptText, RefreshCw, Send, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
+import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Moon, Plus, ReceiptText, RefreshCw, Send, Settings, ShieldCheck, Sun, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
 import { api } from "../api";
 import { BILLING_TERMS_VERSION, billingPolicySummary } from "../billing-policy";
 import type {
@@ -26,7 +26,9 @@ interface StudioProps {
   path: string;
   session: SessionState;
   models: CatalogModel[];
+  theme: "dark" | "light";
   onNavigate: (path: string) => void;
+  onTheme: () => void;
   onRequireAuth: () => void;
   onSessionRefresh: () => Promise<void>;
   onLogout: () => Promise<void>;
@@ -76,7 +78,7 @@ function ActivityIcon({ activity }: { activity: WorkspaceActivity }) {
   return <ImageIcon size={16} />;
 }
 
-export function Studio({ path, session, models, onNavigate, onRequireAuth, onSessionRefresh, onLogout }: StudioProps) {
+export function Studio({ path, session, models, theme, onNavigate, onTheme, onRequireAuth, onSessionRefresh, onLogout }: StudioProps) {
   const [overview, setOverview] = useState<WorkspaceOverview | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [generations, setGenerations] = useState<Generation[]>([]);
@@ -747,7 +749,7 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
     onNavigate(nextPath);
   };
 
-  return <div className="drawer lg:drawer-open studio-drawer" data-theme="qwen">
+  return <div className="drawer lg:drawer-open studio-drawer" data-theme={theme === "dark" ? "qwen" : "qwen-light"}>
     <input id="studio-drawer" type="checkbox" className="drawer-toggle" />
     <div className="drawer-content">
       <header className="studio-mobile-bar">
@@ -800,6 +802,10 @@ export function Studio({ path, session, models, onNavigate, onRequireAuth, onSes
         <div className="studio-sidebar-secondary">
           <button type="button" onClick={() => navigateFromShell("/")}><Home size={17} />Home</button>
           <button className={path.startsWith("/studio/profile") ? "is-active" : ""} type="button" onClick={() => navigateFromShell("/studio/profile")}><UserRound size={17} />Profile</button>
+          <button type="button" onClick={onTheme} aria-label={theme === "dark" ? "Switch Studio to light theme" : "Switch Studio to dark theme"}>
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
         </div>
         <div className="studio-sidebar-foot">
           <span className="studio-user-avatar">{session.user.name.slice(0, 1).toUpperCase()}</span>

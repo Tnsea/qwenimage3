@@ -13,9 +13,9 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 | Public UI | English homepage, sticky navigation, responsive generator, Examples, Models, Pricing, Guides, and API pages |
 | Search discovery | Homepage content is prerendered into the initial HTML; the Worker emits self-referencing canonical and `og:url` metadata for every public sitemap route, while JSON-LD, robots.txt, and sitemap.xml ship with the web build |
 | Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
-| Accounts | Email/password registration and login, one-time email verification, password recovery, session management, export, and fail-safe account deletion that cleans Stripe first when linked |
-| Social login | Google and GitHub authorization-code adapters with browser-bound state and PKCE; Google completed one real acceptance sign-in and its OAuth publishing status is Production, while GitHub remains unverified |
-| Studio | Login-directed responsive workspace with aggregate overview, creation, projects, history, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings |
+| Accounts | Customer-facing access is Google-only in the acceptance UI; the Worker retains locally tested email/password, verification, and recovery routes, plus session management, export, and fail-safe account deletion |
+| Social login | Google is the only customer-facing sign-in method; its authorization-code flow completed one real acceptance sign-in and its OAuth publishing status is Production. The GitHub adapter remains implemented but unverified and is not offered in the UI |
+| Studio | Login-directed responsive workspace with persistent light/dark theme control, aggregate overview, creation, projects, history, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings |
 | Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
 | Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
 | Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, versioned policy acceptance, scheduled external-alert delivery, and external cleanup before account deletion |
@@ -69,7 +69,7 @@ npm run cf:deploy
 - D1 stores identities, sessions, projects, credits, support conversations, rate limits, immutable Stripe Price-to-credit versions, event/order/payment records, and generation metadata.
 - R2 stores private generation source assets; access always passes through server ownership checks.
 - Unsubscribed-account exports are watermarked. Every active paid plan, including Starter, receives original exports; Creator and Professional additionally use the VIP queue.
-- `BILLING_ENABLED=false` remains deployed until Stripe test-mode acceptance and release gates pass.
+- `BILLING_ENABLED=false` keeps new Stripe Checkout creation disabled on the canonical acceptance Worker while signed webhook settlement and external account cleanup remain available for existing records. The isolated Sandbox remains the external Checkout acceptance surface.
 
 ## Legacy Container for Local Comparison
 
