@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Boxes, Download, FolderOpen, Heart, Image as ImageIcon, RefreshCw, Sparkles, Trash2, WandSparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Boxes, FolderOpen, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { api, ApiClientError } from "../api";
 import type { AspectRatio, CatalogModel, Generation, ImageQuality, ImageStyle, Project, SessionState } from "../types";
 
@@ -29,9 +29,10 @@ interface GeneratorWorkspaceProps {
   initialPrompt?: string;
   onRequireAuth: () => void;
   onSessionRefresh: () => Promise<void>;
+  onGenerationCreated: (generation: Generation) => void;
 }
 
-export function GeneratorWorkspace({ session, models, compact = false, initialPrompt = "", onRequireAuth, onSessionRefresh }: GeneratorWorkspaceProps) {
+export function GeneratorWorkspace({ session, models, compact = false, initialPrompt = "", onRequireAuth, onSessionRefresh, onGenerationCreated }: GeneratorWorkspaceProps) {
   const [prompt, setPrompt] = useState(initialPrompt);
   const [modelId, setModelId] = useState(() => models.find((model) => model.available)?.id ?? "");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -39,8 +40,6 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
   const [quality, setQuality] = useState<ImageQuality>("High");
   const [projectId, setProjectId] = useState<string>("");
   const [projects, setProjects] = useState<Project[]>([]);
-  const [generations, setGenerations] = useState<Generation[]>([]);
-  const [active, setActive] = useState<Generation | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
@@ -53,12 +52,6 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
   const maxPromptLength = selectedModel?.maxPromptLength || 1000;
   const canGenerate = !generating && (!session.user || (prompt.trim().length >= 3 && Boolean(selectedModel)));
   const promptId = compact ? "studio-prompt" : "prompt";
-
-  const loadGenerations = useCallback(async () => {
-    const payload = await api<{ generations: Generation[] }>("/api/generations?limit=12");
-    setGenerations(payload.generations);
-    setActive((current) => current && payload.generations.some((item) => item.id === current.id) ? current : payload.generations[0] ?? null);
-  }, []);
 
   useEffect(() => {
     if (initialPrompt) setPrompt(initialPrompt);
@@ -81,15 +74,12 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
 
   useEffect(() => {
     if (session.user) {
-      void loadGenerations().catch((reason: Error) => setError(reason.message));
       void api<{ projects: Project[] }>("/api/projects").then((payload) => setProjects(payload.projects.filter((project) => !project.archived))).catch((reason: Error) => setError(reason.message));
     } else {
-      setGenerations([]);
-      setActive(null);
       setProjects([]);
       setProjectId("");
     }
-  }, [loadGenerations, session.user]);
+  }, [session.user]);
 
   async function generate(promptOverride?: string) {
     if (!session.user) {
@@ -105,37 +95,13 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
         method: "POST",
         body: JSON.stringify({ prompt: requestedPrompt, modelId, aspectRatio, style, quality, projectId: projectId || null }),
       });
-      setActive(created);
-      setGenerations((items) => [created, ...items.filter((item) => item.id !== created.id)].slice(0, 12));
-      await onSessionRefresh();
+      onGenerationCreated(created);
+      void onSessionRefresh().catch(() => undefined);
     } catch (reason) {
       if (reason instanceof ApiClientError && reason.code === "UNAUTHENTICATED") onRequireAuth();
       setError(reason instanceof Error ? reason.message : "Generation failed.");
-      await loadGenerations().catch(() => undefined);
     } finally {
       setGenerating(false);
-    }
-  }
-
-  async function removeGeneration(event: React.MouseEvent, id: string) {
-    event.stopPropagation();
-    try {
-      await api<void>(`/api/generations/${id}`, { method: "DELETE" });
-      setGenerations((items) => items.filter((item) => item.id !== id));
-      if (active?.id === id) setActive(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete that generation.");
-    }
-  }
-
-  async function setFavorite(favorite: boolean) {
-    if (!active || !session.user) return onRequireAuth();
-    try {
-      await api(`/api/generations/${active.id}/favorite`, { method: "PATCH", body: JSON.stringify({ favorite }) });
-      setActive({ ...active, favorite });
-      setGenerations((items) => items.map((item) => item.id === active.id ? { ...item, favorite } : item));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update this favorite.");
     }
   }
 
@@ -241,36 +207,6 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
           </div>
         </div>
       </form>
-
-      {(generating || active) && <section className="creation-output" aria-live="polite">
-        <div className="creation-output-heading">
-          <div><span>Result</span>{active && <small>{active.model} · {active.aspectRatio} · {active.style} · {active.quality}</small>}</div>
-          {active?.imageUrl && !generating && <div className="creation-result-actions">
-            {session.user && <button className="btn btn-ghost btn-sm" type="button" onClick={() => void setFavorite(!active.favorite)}><Heart size={14} fill={active.favorite ? "currentColor" : "none"} />{active.favorite ? "Saved" : "Save"}</button>}
-            <button className="btn btn-ghost btn-sm" type="button" onClick={() => { setPrompt(active.prompt); void generate(active.prompt); }}><RefreshCw size={14} />Variation</button>
-            <a className="btn btn-sm" href={active.downloadUrl ?? active.imageUrl}><Download size={14} />Download</a>
-          </div>}
-        </div>
-
-        <div className={`creation-result-stage ${active?.imageUrl && !generating ? "has-image" : ""}`}>
-          {generating ? <div className="creation-result-placeholder"><RefreshCw size={24} className="spin-icon" /><strong>Creating your image</strong><p>{session.entitlements.priorityGeneration ? "Priority generation is in progress." : "Your request is in the generation queue."}</p></div>
-            : active?.imageUrl ? <img src={active.imageUrl} alt={`Generated result for: ${active.prompt.slice(0, 100)}`} />
-              : <div className="creation-result-placeholder"><ImageIcon size={24} /><strong>Generation failed safely</strong><p>No credits were charged.</p><button className="btn btn-sm" type="button" onClick={() => { setPrompt(active!.prompt); void generate(active!.prompt); }}><RefreshCw size={14} />Retry</button></div>}
-        </div>
-
-        {generations.length > 1 && <div className="creation-recent">
-          <div className="creation-recent-heading"><span>Recent</span><small>{generations.length} private images</small></div>
-          <div className="creation-recent-grid">
-            {generations.slice(0, 8).map((item) => <div className={`recent-item ${active?.id === item.id ? "is-active" : ""} ${item.status === "failed" ? "is-failed" : ""}`} key={item.id}>
-              <button className="recent-open" type="button" onClick={() => setActive(item)} aria-label={`Open ${item.status} generation: ${item.prompt}`}>
-                {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <span className="recent-status"><ImageIcon size={16} /><small>{item.status}</small></span>}
-              </button>
-              <button className="recent-delete" type="button" onClick={(event) => void removeGeneration(event, item.id)} aria-label="Delete generation"><Trash2 size={12} /></button>
-              {item.favorite && <Heart className="recent-favorite" size={12} fill="currentColor" />}
-            </div>)}
-          </div>
-        </div>}
-      </section>}
     </section>
   );
 }

@@ -27,7 +27,7 @@ The browser never calls Qwen, Stripe, OAuth token endpoints, or email providers 
 | React application | `src/App.tsx` | Client routing, session bootstrap, theme, page composition, verification/reset callbacks |
 | Search entry document | `vite.config.ts`, `src/prerender.tsx`, `src/seo.ts`, `worker/index.ts`, `index.html` | Build-time homepage prerender plus a shared public-route registry; the Worker rewrites canonical and `og:url` metadata to each requested sitemap URL before the first response |
 | Navigation | `src/components/Header.tsx` | Desktop/mobile public routes and signed-in account actions |
-| Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, result/history actions |
+| Generator workspace | `src/components/GeneratorWorkspace.tsx` | Prompt/settings UI, synchronous submission, and successful handoff to private Studio history without inline result galleries |
 | Authentication UI | `src/components/AuthDialog.tsx` | Login, registration, recovery, and dynamically configured OAuth entry |
 | Studio | `src/components/Studio.tsx` | Responsive authenticated shell, aggregate overview, projects, history, credits, billing/payments, keys, private support conversations, profile, settings, and deletion confirmation |
 | Canonical API | `worker/index.ts` | Same-origin routes, authentication, ownership, credits, generation, billing, maintenance, and HTTP composition |

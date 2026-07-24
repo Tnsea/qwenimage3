@@ -55,7 +55,7 @@
   ],
   "vars": {
     "APP_BASE_URL": "https://qwen-image-3.net",
-    "DEPLOY_REVISION": "codex-kie-qwen2-20260724",
+    "DEPLOY_REVISION": "studio-history-handoff-20260724",
     "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
     "STRIPE_TIMEOUT_MS": "15000",
     "BILLING_ENABLED": "false",

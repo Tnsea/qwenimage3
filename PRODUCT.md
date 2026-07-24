@@ -64,7 +64,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, prompts, and pr
 
 | Route | Current behavior |
 |---|---|
-| `/` | Homepage, generator, recent private history, product sections, pricing preview, and FAQ |
+| `/` | Homepage and generator entry; successful signed-in generations hand off directly to private Studio history instead of rendering inline results, followed by product sections, pricing preview, and FAQ |
 | `/examples` | Eight unique curated cards |
 | `/prompts` | Twelve reusable English prompt records |
 | `/models` | Local preview and configured Qwen 2.0 adapter status |
@@ -85,7 +85,7 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 | Route | Current behavior |
 |---|---|
-| `/studio` | Signed-in generation with optional project assignment; this is the default workspace landing route |
+| `/studio` | Signed-in generation with optional project assignment; successful requests open `/studio/history`, and this remains the default workspace landing route |
 | `/studio/new` | Backward-compatible alias for the signed-in generation workspace |
 | `/studio/overview` | Plan, balance, current-month usage, active-key count, recent work, and normalized account activity |
 | `/studio/projects` | Create, archive, and restore projects |

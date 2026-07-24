@@ -60,6 +60,7 @@ function PrerenderedHome() {
           models={prerenderedCatalog.models}
           onRequireAuth={noop}
           onSessionRefresh={async () => undefined}
+          onGenerationCreated={noop}
         />
         <HomeSections
           catalog={prerenderedCatalog}
