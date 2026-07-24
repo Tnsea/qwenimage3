@@ -25,21 +25,24 @@ export function createModelCatalog(runtime: ModelCatalogRuntime): CatalogModel[]
   const kieSelected = runtime.providerId === "kie-ai";
   const kieModelSupported = runtime.providerModel === KIE_QWEN_MODEL_ID;
   const kieAvailable = kieSelected && kieModelSupported && runtime.providerConfigured;
+  const localModels: CatalogModel[] = localAvailable
+    ? [{
+        id: "local-qwen-preview",
+        name: "Fast Preview",
+        provider: "local-preview",
+        available: true,
+        status: "Available",
+        speed: "< 1 sec",
+        cost: "4–16 account credits",
+        bestFor: "Fast composition and layout previews",
+        supportedAspectRatios: [...productAspectRatios],
+        supportedQualities: [...productQualities],
+        maxPromptLength: 1000,
+      }]
+    : [];
 
   return [
-    {
-      id: "local-qwen-preview",
-      name: "Fast Preview",
-      provider: "local-preview",
-      available: localAvailable,
-      status: localAvailable ? "Available" : "Development fallback",
-      speed: "< 1 sec",
-      cost: "4–16 account credits",
-      bestFor: "Fast composition and layout previews",
-      supportedAspectRatios: [...productAspectRatios],
-      supportedQualities: [...productQualities],
-      maxPromptLength: 1000,
-    },
+    ...localModels,
     {
       id: SUPPORTED_QWEN_MODEL_ID,
       name: "Qwen Image 2.0 Pro",

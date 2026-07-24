@@ -66,7 +66,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 |---|---|
 | `/` | Homepage and generator entry; successful signed-in generations hand off directly to private Studio history instead of rendering inline results, followed by product sections, pricing preview, and FAQ |
 | `/examples` | Eight unique curated cards |
-| `/models` | Local preview and configured Qwen 2.0 adapter status |
+| `/models` | Configured Qwen 2.0 adapter and Qwen Image 3 roadmap status |
 | `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default, and each checkout is enabled only when the Stripe gate, matching environment Price ID, and active D1 Price version all pass |
 | `/privacy` | Pre-release privacy and data notice covering account, creative, billing, support, analytics, provider, retention, export, and deletion boundaries without claiming launch-region legal approval |
 | `/terms` | Approved versioned Billing Terms for subscriptions, credits, renewal, cancellation, payment review, and account deletion |

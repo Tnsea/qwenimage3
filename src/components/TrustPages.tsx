@@ -168,11 +168,11 @@ const statusCards = [
     copy: "The Cloudflare custom-domain acceptance environment is deployed and smoke-tested. It is not an externally accepted production service.",
   },
   {
-    title: "Default image runtime",
-    badge: "Local preview",
-    badgeClass: "badge-info badge-soft",
+    title: "Canonical image runtime",
+    badge: "Kie.ai selected",
+    badgeClass: "badge-warning badge-soft",
     icon: ImageIcon,
-    copy: "The default provider is a deterministic local SVG preview. The Models page reports the runtime selected by current server configuration.",
+    copy: "The canonical acceptance Worker selects Kie.ai Qwen Image 2. One signed-in request completed successfully, while failure, timeout, moderation, commercial approval, and production approval remain pending.",
   },
   {
     title: "Qwen Image 3",

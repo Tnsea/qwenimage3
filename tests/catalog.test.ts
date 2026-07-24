@@ -76,7 +76,7 @@ test("catalog exposes only the configured provider model as selectable", () => {
   });
 
   assert.deepEqual(core.models.filter((model) => model.available).map((model) => model.id), ["qwen-image-2.0-pro"]);
-  assert.equal(core.models.find((model) => model.id === "local-qwen-preview")?.available, false);
+  assert.equal(core.models.some((model) => model.id === "local-qwen-preview"), false);
 });
 
 test("catalog exposes the configured Kie.ai Qwen2 model as selectable", () => {
@@ -95,6 +95,7 @@ test("catalog exposes the configured Kie.ai Qwen2 model as selectable", () => {
   assert.deepEqual(kie?.supportedAspectRatios, ["1:1", "16:9", "4:3", "9:16"]);
   assert.deepEqual(kie?.supportedQualities, ["Standard"]);
   assert.equal(kie?.maxPromptLength, 800);
+  assert.equal(core.models.some((model) => model.id === "local-qwen-preview"), false);
   assert.equal(core.models.find((model) => model.id === "qwen-image-2.0-pro")?.available, false);
 });
 

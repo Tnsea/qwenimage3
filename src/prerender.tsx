@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { createCatalogCore } from "./catalog";
+import { createCatalogCore, KIE_QWEN_MODEL_ID } from "./catalog";
 import { GeneratorWorkspace } from "./components/GeneratorWorkspace";
 import { Header } from "./components/Header";
 import { HomeHero } from "./components/HomeHero";
@@ -23,8 +23,8 @@ const prerenderedSession: SessionState = {
 
 const prerenderedCatalog: Catalog = {
   ...createCatalogCore({
-    providerId: "local-preview",
-    providerModel: "local-qwen-preview",
+    providerId: "kie-ai",
+    providerModel: KIE_QWEN_MODEL_ID,
     providerConfigured: true,
     creatorPriceLabel: "$29.90 / month",
     creatorCredits: 2000,

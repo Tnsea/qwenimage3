@@ -13,6 +13,7 @@ test("model selection is sent by the UI and enforced by both generation backends
   assert.match(generator, /JSON\.stringify\(\{ prompt: requestedPrompt, modelId,/);
   assert.match(marketing, /<th>Provider<\/th>/);
   assert.match(marketing, /Not assigned/);
+  assert.doesNotMatch(marketing, /working local preview/);
   assert.match(marketing, /models\.find\(\(model\) => model\.available\)\?\.id/);
   assert.doesNotMatch(marketing.slice(marketing.indexOf("export function ApiPage")), /"model":"local-qwen-preview"/);
   assert.match(worker, /"MODEL_UNAVAILABLE", "Choose an available image model\."/);
