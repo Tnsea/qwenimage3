@@ -1523,7 +1523,7 @@ app.use("*", async (c, next) => {
   c.set("requestId", requestId);
   await next();
   c.header("X-Request-Id", requestId);
-  c.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https://www.google-analytics.com https://region1.google-analytics.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.googletagmanager.com; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+  c.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https://www.google-analytics.com https://region1.google-analytics.com https://startupfa.me https://findly.tools; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.googletagmanager.com; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "DENY");

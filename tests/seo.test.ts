@@ -12,6 +12,7 @@ test("homepage build injects the real semantic page into the first-response docu
   const viteConfig = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
   const prerender = readFileSync(new URL("../src/prerender.tsx", import.meta.url), "utf8");
   const hero = readFileSync(new URL("../src/components/HomeHero.tsx", import.meta.url), "utf8");
+  const footer = readFileSync(new URL("../src/components/SiteFooter.tsx", import.meta.url), "utf8");
   const marketing = readFileSync(new URL("../src/components/Marketing.tsx", import.meta.url), "utf8");
 
   assert.match(viteConfig, /renderPrerenderedHome\(\)/);
@@ -23,6 +24,17 @@ test("homepage build injects the real semantic page into the first-response docu
   assert.match(hero, /20 welcome credits[\s\S]*Account required/);
   assert.match(hero, /Create an account to receive 20 welcome credits/);
   assert.match(hero, /aspect ratio, visual style, and[\s\S]*quality/);
+  assert.doesNotMatch(hero, /startupfa\.me|findly\.tools/);
+  assert.match(footer, /href="https:\/\/startupfa\.me\/s\/qwen-image-3-2\?utm_source=qwen-image-3\.net"/);
+  assert.match(footer, /src="https:\/\/startupfa\.me\/badges\/featured-badge-small\.webp"/);
+  assert.match(footer, /alt="Qwen Image Generator - Featured on Startup Fame"/);
+  assert.match(footer, /width=\{224\}[\s\S]*height=\{36\}/);
+  assert.match(footer, /rel="noopener noreferrer"/);
+  assert.match(footer, /href="https:\/\/findly\.tools\/https-qwen-image-3-net\?utm_source=https-qwen-image-3-net"/);
+  assert.match(footer, /src="https:\/\/findly\.tools\/badges\/findly-tools-badge-light\.svg"/);
+  assert.match(footer, /alt="Featured on Findly\.tools"/);
+  assert.match(footer, /width=\{150\}[\s\S]*height=\{47\}/);
+  assert.match(footer, /role="group"[\s\S]*aria-label="Featured listings"/);
   assert.doesNotMatch(hero, /provider currently configured/);
   assert.match(marketing, /<h2>Create private image results in one workspace\.<\/h2>/);
   assert.match(marketing, /select an available preview or provider model[\s\S]*aspect ratio[\s\S]*visual finish/);
@@ -36,6 +48,10 @@ test("entry document and discovery files expose complete crawl metadata", () => 
   const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   const robots = readFileSync(new URL("../public/robots.txt", import.meta.url), "utf8");
   const sitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
+  const startupFameVerification = readFileSync(
+    new URL("../public/b81f81d192314aaa87d9740a8b7f0f3a.txt", import.meta.url),
+    "utf8",
+  ).trim();
 
   assert.match(index, /<title>Qwen Image 3[^<]+<\/title>/);
   assert.match(index, /<meta name="description" content="[^"]{70,160}" \/>/);
@@ -48,6 +64,7 @@ test("entry document and discovery files expose complete crawl metadata", () => 
   assert.match(index, /<script type="application\/ld\+json">/);
   assert.match(robots, /Sitemap: https:\/\/qwen-image-3\.net\/sitemap\.xml/);
   assert.match(sitemap, /<loc>https:\/\/qwen-image-3\.net\/<\/loc>/);
+  assert.equal(startupFameVerification, "b81f81d192314aaa87d9740a8b7f0f3a");
 });
 
 test("every sitemap route resolves to its own public canonical", () => {
