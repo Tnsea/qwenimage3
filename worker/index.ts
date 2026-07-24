@@ -3061,17 +3061,18 @@ async function generationAsset(c: Context<WorkerContext>, download: boolean) {
   const object = await c.env.ASSETS_BUCKET.get(row.r2_key);
   if (!object) return errorResponse(c, 404, "NOT_FOUND", "Image not found.");
   const bytes = new Uint8Array(await object.arrayBuffer());
+  const paid = await hasPaidPlan(c.env, actor.userId);
   const vip = await isVip(c.env, actor.userId);
   const sourceMime = row.mime_type || object.httpMetadata?.contentType || "application/octet-stream";
-  const data = vip ? bytes : encoder.encode(watermarkedSvg(bytes, sourceMime, row.width, row.height));
-  const mimeType = vip ? sourceMime : "image/svg+xml";
-  const extension = vip ? sourceMime === "image/jpeg" ? "jpg" : sourceMime === "image/webp" ? "webp" : sourceMime === "image/svg+xml" ? "svg" : "png" : "svg";
+  const data = paid ? bytes : encoder.encode(watermarkedSvg(bytes, sourceMime, row.width, row.height));
+  const mimeType = paid ? sourceMime : "image/svg+xml";
+  const extension = paid ? sourceMime === "image/jpeg" ? "jpg" : sourceMime === "image/webp" ? "webp" : sourceMime === "image/svg+xml" ? "svg" : "png" : "svg";
   c.header("Content-Type", `${mimeType}${mimeType === "image/svg+xml" ? "; charset=utf-8" : ""}`);
   c.header("Cache-Control", "private, no-store");
   c.header("Vary", "Cookie, Authorization");
-  c.header("X-Export-Tier", vip ? "vip" : "free");
-  c.header("X-Export-Watermarked", vip ? "false" : "true");
-  c.header("Content-Disposition", `${download ? "attachment" : "inline"}; filename="qwen-image-3-${row.id}-${vip ? "original" : "watermarked"}.${extension}"`);
+  c.header("X-Export-Tier", vip ? "vip" : paid ? "starter" : "free");
+  c.header("X-Export-Watermarked", paid ? "false" : "true");
+  c.header("Content-Disposition", `${download ? "attachment" : "inline"}; filename="qwen-image-3-${row.id}-${paid ? "original" : "watermarked"}.${extension}"`);
   return c.body(data);
 }
 

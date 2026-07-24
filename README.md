@@ -68,7 +68,7 @@ npm run cf:deploy
 - A Cloudflare Worker custom domain serves the React bundle and same-origin Hono API.
 - D1 stores identities, sessions, projects, credits, support conversations, rate limits, immutable Stripe Price-to-credit versions, event/order/payment records, and generation metadata.
 - R2 stores private generation source assets; access always passes through server ownership checks.
-- Starter-account exports are watermarked and use the standard queue; Creator entitlements use the VIP queue and original exports.
+- Unsubscribed-account exports are watermarked. Every active paid plan, including Starter, receives original exports; Creator and Professional additionally use the VIP queue.
 - `BILLING_ENABLED=false` remains deployed until Stripe test-mode acceptance and release gates pass.
 
 ## Legacy Container for Local Comparison

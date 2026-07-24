@@ -31,7 +31,7 @@ const executionContext = {
   waitUntil() {},
 };
 
-function environment(database: D1Database) {
+function environment(database: D1Database, assetsBucket: Partial<R2Bucket> = {}) {
   return {
     APP_BASE_URL: "https://qwen-image-3.net",
     BILLING_ENABLED: "false",
@@ -40,7 +40,7 @@ function environment(database: D1Database) {
     FREE_QUEUE_DELAY_MS: "0",
     DB: database,
     ASSETS: { fetch: () => Promise.resolve(new Response("not used")) },
-    ASSETS_BUCKET: {},
+    ASSETS_BUCKET: assetsBucket,
   };
 }
 
@@ -51,7 +51,14 @@ async function json<T>(response: Response) {
 test("canonical Worker requires an account and grants 20 welcome credits exactly once", async () => {
   const { miniflare, database } = await createDatabase();
   try {
-    const env = environment(database);
+    const sourceBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const assetKey = "generations/users/starter/export.png";
+    const env = environment(database, {
+      get: async (key: string) => key === assetKey ? {
+        arrayBuffer: async () => sourceBytes.slice().buffer,
+        httpMetadata: { contentType: "image/png" },
+      } as R2ObjectBody : null,
+    });
     const session = await worker.fetch(
       new Request("https://qwen-image-3.net/api/session"),
       env as never,
@@ -119,6 +126,49 @@ test("canonical Worker requires an account and grants 20 welcome credits exactly
     ).first<{ count: number }>();
     assert.equal(grantRows?.count, 1);
 
+    const user = await database.prepare(
+      "SELECT id FROM users WHERE email_normalized = 'starter@example.com'",
+    ).first<{ id: string }>();
+    assert.ok(user);
+    const generationId = "starter-export-generation";
+    const createdAt = new Date().toISOString();
+    await database.prepare(`INSERT INTO generations (
+      id, owner_user_id, anonymous_session_id, project_id, prompt, aspect_ratio, style, quality,
+      status, width, height, r2_key, mime_type, provider, model, credit_cost, queue_tier,
+      queued_at, processing_started_at, favorite, created_at, updated_at
+    ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
+      .bind(
+        generationId,
+        user.id,
+        "A paid Starter export regression fixture",
+        "1:1",
+        "Photorealistic",
+        "Standard",
+        1,
+        1,
+        assetKey,
+        "image/png",
+        "local",
+        "local-qwen-preview",
+        4,
+        "free",
+        createdAt,
+        createdAt,
+        createdAt,
+        createdAt,
+      ).run();
+
+    const freeDownload = await worker.fetch(
+      new Request(`https://qwen-image-3.net/api/generations/${generationId}/download`, {
+        headers: { Cookie: sessionCookie },
+      }),
+      env as never,
+      executionContext as never,
+    );
+    assert.equal(freeDownload.headers.get("x-export-tier"), "free");
+    assert.equal(freeDownload.headers.get("x-export-watermarked"), "true");
+    assert.match(await freeDownload.text(), /data-export-watermark="free"/);
+
     await database.prepare(`UPDATE billing_accounts
       SET plan = 'creator', plan_tier = 'starter', billing_interval = 'month', status = 'active'
       WHERE user_id = (SELECT id FROM users WHERE email_normalized = 'starter@example.com')`).run();
@@ -140,6 +190,18 @@ test("canonical Worker requires an account and grants 20 welcome credits exactly
         watermarkedExports: false,
       },
     );
+    const starterDownload = await worker.fetch(
+      new Request(`https://qwen-image-3.net/api/generations/${generationId}/download`, {
+        headers: { Cookie: sessionCookie },
+      }),
+      env as never,
+      executionContext as never,
+    );
+    assert.equal(starterDownload.headers.get("x-export-tier"), "starter");
+    assert.equal(starterDownload.headers.get("x-export-watermarked"), "false");
+    assert.equal(starterDownload.headers.get("content-type"), "image/png");
+    assert.match(starterDownload.headers.get("content-disposition") ?? "", /-original\.png"/);
+    assert.deepEqual(new Uint8Array(await starterDownload.arrayBuffer()), sourceBytes);
 
     await database.prepare(`UPDATE billing_accounts
       SET plan_tier = 'creator'
@@ -152,6 +214,15 @@ test("canonical Worker requires an account and grants 20 welcome credits exactly
     const creatorEntitlements = (await json<{ entitlements: { priorityGeneration: boolean; watermarkedExports: boolean } }>(creatorSession)).entitlements;
     assert.equal(creatorEntitlements.priorityGeneration, true);
     assert.equal(creatorEntitlements.watermarkedExports, false);
+    const creatorDownload = await worker.fetch(
+      new Request(`https://qwen-image-3.net/api/generations/${generationId}/download`, {
+        headers: { Cookie: sessionCookie },
+      }),
+      env as never,
+      executionContext as never,
+    );
+    assert.equal(creatorDownload.headers.get("x-export-tier"), "vip");
+    assert.equal(creatorDownload.headers.get("x-export-watermarked"), "false");
   } finally {
     await miniflare.dispose();
   }

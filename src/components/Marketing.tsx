@@ -207,9 +207,10 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Ca
               <h3 className="card-title">Refine, organize, and download results</h3>
               <p>
                 Every generated image can become the starting point for a variation. Signed-in creators can save
-                favorites, group work into projects, and return through private history. Starter-account downloads
-                include a watermark; verified Creator entitlement unlocks original exports and the priority
-                generation queue. Failed requests automatically restore reserved credits.
+                favorites, group work into projects, and return through private history. Downloads made without an
+                active subscription include a watermark; every paid plan unlocks original exports, while Creator and
+                Professional also unlock the priority generation queue. Failed requests automatically restore
+                reserved credits.
               </p>
             </div>
           </article>
