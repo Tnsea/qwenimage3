@@ -45,14 +45,14 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | Capability | Current status | Production requirement |
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
-| Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering; durable standard/priority queue execution and polling pass locally | Canonical queue lifecycle, failure/timeout recovery, backup-deletion telemetry, and production monitoring |
-| Real image provider | **Kie.ai signed-in success path externally verified once** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
+| Account-gated generation | **Externally verified in acceptance** with signed-in durable queue submission, visible lifecycle states, persisted provider task ID, server-authoritative credit settlement, private R2 persistence, and browser rendering | Failure/timeout recovery, backup-deletion telemetry, and production monitoring |
+| Real image provider | **Kie.ai signed-in direct and durable-queue success paths externally verified** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
 | Qwen Image 3 | **Officially announced, unavailable here**; Qwen published the model on 2026-07-21 and Alibaba Cloud documents invite-only `qwen-image-3.0-pro`, but this product has no implemented, selected, or externally accepted Image 3 adapter | Implemented and accepted provider adapter, license, commercial approval, and production decision |
 | Account access | **Google-only in the customer-facing acceptance UI**; retained email/password, verification, and recovery APIs are locally verified but not exposed as sign-in options | Google denial/failure acceptance, production account-recovery decision, and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub adapter implemented but not offered and externally unverified** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance before any UI enablement |
 | Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
 | Credits | **Verified locally, in the isolated Sandbox, and once in the Cloudflare acceptance flow** for generation reservation/settlement; non-negative billing-loss recovery and aggregate billing-health alert delivery also passed | Reconciliation monitoring |
-| Studio | **Verified locally** for a continuous Create history with submitting/queued/generating/complete/failed states, persistent light/dark theme control, aggregate overview, projects, History, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, accessibility, and production operational analytics |
+| Studio | **Verified locally and in canonical acceptance** for a continuous Create history with submitting/generating/complete states; local coverage also proves queued/failed/refunded states. It retains theme control, overview, projects, History, favorites, credits, billing, payments, scoped keys, API activity, support, profile, and settings | Canonical terminal-failure, accessibility, support operations tooling, and production operational analytics |
 | Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
 | Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, asynchronous submission, and owned status reads | Per-key budgets, cancellation, webhooks, and production observability |
 | Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; an isolated export/import/count rehearsal passed | Restored-binding promotion, Worker rollback, full R2 restore, lifecycle approval, and retention telemetry |
@@ -338,7 +338,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 
 - Add broader financial reconciliation and availability supervision beyond the accepted billing-health email path.
 - Prove account retention against backup deletion and production telemetry.
-- Push the current acceptance revision, complete CI and review, merge the hardening branch, and then create the reviewed release marker.
+- Review and merge the pushed, CI-green hardening branch, then create the reviewed release marker.
 - Complete real provider, email, GitHub OAuth, and Google denial/failure acceptance.
 - Complete accessibility, browser, mobile, security, and container acceptance.
 - Approve legal, privacy, commercial-use, pricing, tax, and launch-region decisions.
