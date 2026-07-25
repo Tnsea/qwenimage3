@@ -32,6 +32,7 @@ Source-control evidence:
 - baseline commit `39b9e3a` is pushed to `Tnsea/qwenimage3`;
 - Studio action and cleanup commit `532215a`, canonical catalog cleanup commit `efe7104`, and model-table cleanup commit `dd38e44` are pushed on `codex/worker-online-hardening`;
 - durable-queue commit `cd2d2c5` is pushed, passed the full local release command, passed GitHub Actions run `30155611482`, and is deployed as acceptance Worker `90428382-3497-4f92-99be-39bf4f371a58`;
+- dependency-gate commit `379fdce` passed GitHub Actions run `30157392339`; pull request 1 was then merged to `main` as `cd35a7f`, and post-merge GitHub Actions run `30157438809` passed;
 - GitHub Actions run `30062662075` passed the full CI workflow with 99 tests and zero dependency-audit findings for pull request 1.
 
 Limitations of this evidence:
@@ -110,7 +111,7 @@ Billing remains fail-closed by default. The canonical acceptance deployment uses
 
 ### SCM-001: Committed baseline and CI established; reviewed release marker pending
 
-**Evidence:** baseline commit `39b9e3a` is pushed to `main` in `Tnsea/qwenimage3`. Draft pull request 1 tracks the hardening branch. Create-conversation commit `1d6e731` deployed as Worker `15017717-b14a-42e3-8a9f-c7a4afa7c96a`; follow-up `33640c8` passed GitHub Actions run `30154996131`. Durable-queue commit `cd2d2c5` passed the full local release command with 119 tests, passed GitHub Actions run `30155611482`, and deployed as Worker `90428382-3497-4f92-99be-39bf4f371a58`.
+**Evidence:** baseline commit `39b9e3a` is pushed to `main` in `Tnsea/qwenimage3`. Create-conversation commit `1d6e731` deployed as Worker `15017717-b14a-42e3-8a9f-c7a4afa7c96a`; follow-up `33640c8` passed GitHub Actions run `30154996131`. Durable-queue commit `cd2d2c5` passed the full local release command with 119 tests, passed GitHub Actions run `30155611482`, and deployed as Worker `90428382-3497-4f92-99be-39bf4f371a58`. Dependency-gate commit `379fdce` passed GitHub Actions run `30157392339`; pull request 1 was reviewed and merged to `main` as `cd35a7f`, and post-merge run `30157438809` passed.
 
 **Remaining:** review and merge the pull request, then deploy from the reviewed immutable revision instead of treating a pre-review acceptance deployment as a release.
 
