@@ -1,0 +1,557 @@
+/*
+ * Final visual polish layer.
+ * This file intentionally changes presentation only: no layout, content, or
+ * heading structure is defined here.
+ */
+
+:root {
+  --ui-duration-fast: 150ms;
+  --ui-duration-base: 220ms;
+  --ui-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ui-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-shell {
+  --ui-surface: #0d0f0f;
+  --ui-surface-raised: #121414;
+  --ui-surface-soft: rgba(255, 255, 255, 0.035);
+  --ui-surface-hover: rgba(255, 255, 255, 0.065);
+  --ui-border: rgba(255, 255, 255, 0.105);
+  --ui-border-strong: rgba(255, 255, 255, 0.19);
+  --ui-border-accent: rgba(139, 111, 240, 0.58);
+  --ui-text-strong: #f3f3f0;
+  --ui-text-muted: #92938f;
+  --ui-focus: rgba(165, 138, 246, 0.92);
+  --ui-focus-soft: rgba(139, 111, 240, 0.2);
+  --ui-shadow-card: 0 22px 54px rgba(0, 0, 0, 0.22);
+  --ui-shadow-card-hover: 0 28px 70px rgba(0, 0, 0, 0.3);
+  --ui-shadow-menu: 0 22px 64px rgba(0, 0, 0, 0.48);
+  --ui-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.page-shell.light-mode {
+  --ui-surface: #faf9f6;
+  --ui-surface-raised: #ffffff;
+  --ui-surface-soft: rgba(34, 35, 33, 0.035);
+  --ui-surface-hover: rgba(34, 35, 33, 0.065);
+  --ui-border: rgba(34, 35, 33, 0.14);
+  --ui-border-strong: rgba(34, 35, 33, 0.24);
+  --ui-border-accent: rgba(112, 71, 235, 0.48);
+  --ui-text-strong: #1d1e1c;
+  --ui-text-muted: #676864;
+  --ui-focus: rgba(101, 64, 207, 0.9);
+  --ui-focus-soft: rgba(112, 71, 235, 0.15);
+  --ui-shadow-card: 0 20px 48px rgba(50, 43, 31, 0.085);
+  --ui-shadow-card-hover: 0 26px 62px rgba(50, 43, 31, 0.13);
+  --ui-shadow-menu: 0 22px 58px rgba(50, 43, 31, 0.16);
+  --ui-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+::selection {
+  background: rgba(139, 92, 246, 0.34);
+  color: #ffffff;
+}
+
+.page-shell.light-mode ::selection {
+  background: rgba(112, 71, 235, 0.22);
+  color: #181917;
+}
+
+.page-shell :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 3px;
+}
+
+.page-shell :where(.input, .textarea, .select):focus,
+.page-shell :where(.input, .textarea, .select):focus-visible {
+  border-color: var(--ui-border-accent);
+  outline: 0;
+  box-shadow:
+    0 0 0 3px var(--ui-focus-soft),
+    var(--ui-inner-highlight);
+}
+
+.page-shell :where(.btn, .tab, .menu a, .menu button, .collapse-title, summary) {
+  transition:
+    color var(--ui-duration-fast) var(--ui-ease-standard),
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard),
+    opacity var(--ui-duration-fast) var(--ui-ease-standard),
+    transform var(--ui-duration-fast) var(--ui-ease-out);
+}
+
+.page-shell :where(.input, .textarea, .select) {
+  transition:
+    color var(--ui-duration-fast) var(--ui-ease-standard),
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.page-shell :where(.input, .textarea, .select):hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+}
+
+.page-shell :where(.input, .textarea)::placeholder {
+  color: color-mix(in srgb, var(--ui-text-muted) 82%, transparent);
+  opacity: 1;
+}
+
+.page-shell .btn:not(:disabled):active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.page-shell .btn:disabled,
+.page-shell .btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  filter: saturate(0.7);
+  opacity: 0.52;
+}
+
+.page-shell :where(.btn-primary, .generate-button, .studio-primary-action) {
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.page-shell.light-mode :where(.btn-primary, .generate-button, .studio-primary-action) {
+  box-shadow:
+    0 9px 22px rgba(31, 29, 25, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.site-header {
+  border-bottom-color: var(--ui-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent),
+    rgba(8, 9, 9, 0.9);
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.28),
+    0 14px 44px rgba(0, 0, 0, 0.12);
+}
+
+.page-shell.light-mode .site-header {
+  border-bottom-color: var(--ui-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.12)),
+    rgba(248, 247, 243, 0.9);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.82),
+    0 14px 42px rgba(50, 43, 31, 0.055);
+}
+
+.brand-mark {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+    0 8px 24px rgba(112, 71, 235, 0.24);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-base) var(--ui-ease-out),
+    transform var(--ui-duration-base) var(--ui-ease-out);
+}
+
+.brand-favicon {
+  border: 1px solid var(--ui-border);
+  border-radius: 9px;
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.18),
+    var(--ui-inner-highlight);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-base) var(--ui-ease-out),
+    transform var(--ui-duration-base) var(--ui-ease-out);
+}
+
+.brand-link:hover .brand-favicon,
+.brand-link:focus-visible .brand-favicon {
+  border-color: var(--ui-border-strong);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.24),
+    var(--ui-inner-highlight);
+  transform: rotate(-2deg) scale(1.025);
+}
+
+.brand-link:hover .brand-mark,
+.brand-link:focus-visible .brand-mark {
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 10px 30px rgba(112, 71, 235, 0.34);
+  transform: rotate(-3deg) scale(1.025);
+}
+
+.nav-menu.menu li > a:hover,
+.nav-menu.menu li > a:focus-visible,
+.nav-menu.menu li > a.menu-active {
+  box-shadow: inset 0 0 0 1px var(--ui-border);
+}
+
+.nav-menu.menu li > a.menu-active {
+  background: var(--ui-surface-hover);
+  box-shadow:
+    inset 0 0 0 1px var(--ui-border),
+    inset 0 -2px 0 rgba(139, 111, 240, 0.72);
+}
+
+.nav-icon-button.btn:hover,
+.nav-icon-button.btn:focus-visible,
+.account-button.btn:hover,
+.account-dropdown[open] .account-button.btn {
+  box-shadow:
+    inset 0 0 0 1px var(--ui-border),
+    var(--ui-inner-highlight);
+}
+
+.account-menu.dropdown-content,
+.mobile-navigation-panel {
+  border-color: var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface-raised) 96%, transparent);
+  box-shadow: var(--ui-shadow-menu), var(--ui-inner-highlight);
+}
+
+.release-pill,
+.hero-benefits span,
+.model-status.badge,
+.workspace-entitlement .badge,
+.badge.badge-outline {
+  border-color: var(--ui-border);
+  box-shadow: var(--ui-inner-highlight);
+}
+
+.release-pill {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    color-mix(in srgb, var(--ui-surface-raised) 82%, transparent);
+}
+
+.hero-benefits span {
+  background: color-mix(in srgb, var(--ui-surface-raised) 78%, transparent);
+}
+
+.generator-shell.card {
+  border-color: var(--ui-border-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 18%),
+    color-mix(in srgb, var(--ui-surface) 97%, transparent);
+  box-shadow:
+    0 42px 100px rgba(0, 0, 0, 0.36),
+    0 12px 36px rgba(0, 0, 0, 0.16),
+    var(--ui-inner-highlight);
+}
+
+.page-shell.light-mode .generator-shell.card {
+  border-color: var(--ui-border-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent 20%),
+    color-mix(in srgb, var(--ui-surface) 97%, transparent);
+  box-shadow:
+    0 38px 90px rgba(50, 43, 31, 0.12),
+    0 10px 30px rgba(50, 43, 31, 0.055),
+    var(--ui-inner-highlight);
+}
+
+.generator-toolbar,
+.controls-panel {
+  border-color: var(--ui-border);
+}
+
+.generator-mark,
+.workspace-metric-icon,
+.studio-activity-icon,
+.settings-card-icon,
+.api-key-icon {
+  box-shadow:
+    var(--ui-inner-highlight),
+    0 10px 24px rgba(0, 0, 0, 0.14);
+}
+
+.prompt-field.textarea,
+.style-fieldset .select,
+.studio-form-grid :where(.input, .textarea, .select),
+.support-form-grid :where(.input, .textarea, .select) {
+  border-color: var(--ui-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 34%),
+    color-mix(in srgb, var(--ui-surface-raised) 90%, var(--color-base-100));
+  box-shadow: var(--ui-inner-highlight);
+}
+
+.example-chip.btn,
+.ratio-button.btn,
+.quality-button.btn {
+  border-color: var(--ui-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+    color-mix(in srgb, var(--ui-surface-raised) 88%, var(--color-base-100));
+  box-shadow: var(--ui-inner-highlight);
+}
+
+.example-chip.btn:hover,
+.ratio-button.btn:hover,
+.quality-button.btn:hover {
+  border-color: var(--ui-border-strong);
+  background-color: var(--ui-surface-hover);
+}
+
+.ratio-button.btn.is-selected,
+.quality-button.btn.is-selected {
+  border-color: var(--ui-border-accent);
+  background:
+    linear-gradient(180deg, rgba(139, 111, 240, 0.12), rgba(139, 111, 240, 0.045)),
+    var(--ui-surface-raised);
+  box-shadow:
+    inset 0 0 0 1px rgba(139, 111, 240, 0.09),
+    0 0 0 3px var(--ui-focus-soft);
+}
+
+.example-gallery-card,
+.support-ticket-button,
+.api-key-row {
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard),
+    transform var(--ui-duration-fast) var(--ui-ease-out);
+}
+
+.process-card.card,
+.prompt-preview-card.card,
+.library-card.card,
+.pricing-card.card,
+.guide-card.card,
+.project-card.card,
+.model-signal-card.card,
+.model-table.card,
+.seo-copy-card.card,
+.content-cta.card,
+.studio-panel,
+.studio-form-card.card,
+.settings-card.card,
+.billing-offer.card,
+.credit-pack-card.card,
+.pricing-compact-card.card,
+.pricing-creator-card.card,
+.pricing-comparison-strip,
+.studio-stats.stats,
+.studio-generation-card {
+  border-color: var(--ui-border);
+  box-shadow: var(--ui-inner-highlight);
+}
+
+.process-card.card,
+.prompt-preview-card.card,
+.library-card.card,
+.guide-card.card,
+.project-card.card,
+.model-signal-card.card,
+.seo-copy-card.card,
+.studio-panel,
+.studio-form-card.card,
+.settings-card.card,
+.billing-offer.card,
+.credit-pack-card.card,
+.studio-generation-card {
+  transition:
+    border-color var(--ui-duration-base) var(--ui-ease-standard),
+    background-color var(--ui-duration-base) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-base) var(--ui-ease-out),
+    transform var(--ui-duration-base) var(--ui-ease-out);
+}
+
+.prompt-art,
+.example-gallery-art,
+.library-media {
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.signal-line,
+.pricing-card ul,
+.pricing-comparison-strip,
+.studio-panel-heading,
+.settings-row,
+.api-key-row,
+.support-ticket-button,
+.table :where(th, td) {
+  border-color: var(--ui-border);
+}
+
+.pricing-card.pricing-featured,
+.pricing-creator-card.card,
+.credit-pack-card.is-featured,
+.billing-offer-featured {
+  border-color: var(--ui-border-accent);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(139, 111, 240, 0.07),
+    var(--ui-inner-highlight);
+}
+
+.page-shell.light-mode :where(
+  .pricing-card.pricing-featured,
+  .pricing-creator-card.card,
+  .credit-pack-card.is-featured,
+  .billing-offer-featured
+) {
+  box-shadow:
+    0 26px 64px rgba(50, 43, 31, 0.1),
+    0 0 0 1px rgba(112, 71, 235, 0.06),
+    var(--ui-inner-highlight);
+}
+
+.pricing-tabs.tabs {
+  border: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface-raised) 82%, transparent);
+  box-shadow: var(--ui-inner-highlight);
+}
+
+.pricing-tabs .tab.tab-active {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.065), transparent),
+    var(--ui-surface-hover);
+  box-shadow:
+    inset 0 0 0 1px var(--ui-border),
+    0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.faq-item.collapse {
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.faq-item.collapse:hover,
+.faq-item.collapse:focus-within,
+.faq-item.collapse:has(input:checked) {
+  background: var(--ui-surface-soft);
+}
+
+.faq-item.collapse:has(input:checked) {
+  border-bottom-color: var(--ui-border-strong);
+}
+
+.studio-sidebar {
+  border-right-color: var(--ui-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 22%),
+    color-mix(in srgb, var(--ui-surface) 98%, transparent);
+  box-shadow: 16px 0 44px rgba(0, 0, 0, 0.08);
+}
+
+.studio-sidebar .menu li > button.menu-active,
+.studio-sidebar .menu li > a.menu-active {
+  box-shadow:
+    inset 2px 0 0 #8b6ff0,
+    inset 0 0 0 1px var(--ui-border);
+}
+
+.model-table .table tbody tr,
+.billing-table tbody tr,
+.ledger-table tbody tr {
+  transition: background-color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.model-table .table tbody tr:hover,
+.billing-table tbody tr:hover,
+.ledger-table tbody tr:hover {
+  background: var(--ui-surface-soft);
+}
+
+.modal {
+  background: rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(12px) saturate(112%);
+}
+
+.modal-box {
+  border: 1px solid var(--ui-border-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.032), transparent 24%),
+    var(--ui-surface);
+  box-shadow:
+    0 34px 100px rgba(0, 0, 0, 0.5),
+    var(--ui-inner-highlight);
+}
+
+.page-shell.light-mode .modal-box {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), transparent 28%),
+    var(--ui-surface);
+  box-shadow:
+    0 32px 90px rgba(50, 43, 31, 0.2),
+    var(--ui-inner-highlight);
+}
+
+dialog[open].modal .modal-box,
+.modal.modal-open .modal-box {
+  animation: ui-modal-enter var(--ui-duration-base) var(--ui-ease-out) both;
+}
+
+.app-toast .alert,
+.global-alert,
+.studio-alert,
+.auth-error.alert,
+.billing-config-alert,
+.issued-key-alert {
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.2),
+    var(--ui-inner-highlight);
+}
+
+.site-footer {
+  border-top-color: var(--ui-border);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .page-shell :where(.btn-primary, .generate-button, .studio-primary-action):hover:not(:disabled) {
+    box-shadow:
+      0 14px 32px rgba(0, 0, 0, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.36);
+    transform: translateY(-1px);
+  }
+
+  .prompt-preview-card.card:hover,
+  .library-card.card:hover,
+  .guide-card.card:hover,
+  .project-card.card:hover,
+  .billing-offer.card:hover,
+  .credit-pack-card.card:hover {
+    border-color: var(--ui-border-strong);
+    box-shadow: var(--ui-shadow-card-hover), var(--ui-inner-highlight);
+    transform: translateY(-3px);
+  }
+
+  .example-gallery-card:hover,
+  .support-ticket-button:hover,
+  .api-key-row:hover {
+    border-color: var(--ui-border-strong);
+    background-color: var(--ui-surface-soft);
+  }
+}
+
+@keyframes ui-modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-shell *,
+  .page-shell *::before,
+  .page-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

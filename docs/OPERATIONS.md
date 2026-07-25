@@ -1,40 +1,55 @@
 # Operations
 
-Last verified: July 23, 2026
+Last verified: July 25, 2026
 
 This runbook covers local execution, the Cloudflare acceptance environment, and the remaining production gates. The custom-domain environment is deployed but is not an approved production launch.
 
-## Environment Matrix
+## Canonical Worker Environment
 
 | Variable | Local default | Required when | Security note |
 |---|---|---|---|
-| `PORT` | `8787` | Changing API port | Numeric listener port |
-| `HOST` | `127.0.0.1` | Container or network bind | Use `0.0.0.0` only behind intended network controls |
-| `DATABASE_PATH` | `./data/qwenimage.db` | Custom storage path | Back up the database and WAL consistently |
-| `APP_BASE_URL` | Local URL | Email links, OAuth, billing redirects | Must be the canonical HTTPS origin outside local development |
-| `CORS_ORIGINS` | `APP_BASE_URL` | Additional exact browser origins | Comma-separated exact origins; localhost is added only outside production |
-| `COOKIE_SECURE` | `false` | HTTPS deployment | Must be `true` on the public service |
-| `EXTERNAL_HTTP_TIMEOUT_MS` | `15000` | OAuth and email calls | Minimum effective value is one second |
-| `EMAIL_PROVIDER` | `console` | Select `console` or `resend` | Console is local-only |
-| `ALLOW_DEV_AUTH_TOKENS` | `true` | Local verification/recovery | Must be `false` on any public service |
+| `APP_BASE_URL` | Canonical acceptance URL in checked-in config | Email links, OAuth, billing redirects | Must be the exact HTTPS origin outside Wrangler-local development |
+| `DEPLOY_REVISION` | Fallback release label | Health/deployment correlation in local and legacy Pages runtimes | The canonical Worker reports its immutable Cloudflare version ID from `CF_VERSION_METADATA` |
+| `EXTERNAL_HTTP_TIMEOUT_MS` | `15000` | OAuth, email, generation, and asset calls | Effective range is 1–120 seconds |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Empty | Resend delivery | Keep in managed secrets |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Empty | Google sign-in | Callback origin must match `APP_BASE_URL` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Empty | GitHub sign-in | Callback origin must match `APP_BASE_URL` |
-| `GENERATION_PROVIDER` | `local` | Select `local` or `qwen` | `local` is a deterministic preview, not a real model |
+| `GENERATION_PROVIDER` | `local` | Select `local`, `qwen`, or `kie` | `local` is a deterministic preview, not a real model |
 | `DASHSCOPE_API_KEY` | Empty | Qwen provider | Server-side secret |
-| `QWEN_API_BASE_URL` | Empty | Qwen provider | Must identify the intended Model Studio workspace/region |
-| `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Model override | Require release-gate evidence before changing |
-| `QWEN_IMAGE_ALLOWED_HOSTS` | `aliyuncs.com` | Qwen asset download | Explicit suffix allowlist; DNS must also resolve publicly |
-| `BILLING_ENABLED` | `false` | Enable new Stripe Checkout offers | Keep false until test-mode and policy gates pass; signed webhooks and external cleanup remain active when credentials exist |
+| `QWEN_API_BASE_URL` | Empty | Qwen provider | HTTPS URL for the intended Model Studio workspace/region |
+| `QWEN_API_ALLOWED_HOST` | Empty | Qwen provider | Exact hostname of `QWEN_API_BASE_URL`; wildcards and suffix matching are not accepted |
+| `QWEN_MODEL_ID` | `qwen-image-2.0-pro` | Implemented model contract | Other values are rejected until a separate adapter and release gate are reviewed |
+| `QWEN_IMAGE_ALLOWED_HOSTS` | Empty | Qwen asset download | Comma-separated exact HTTPS hostnames; redirects are rejected |
+| `KIE_API_KEY` | Empty | Kie.ai provider | Dedicated server-side secret; use provider-side model and spend restrictions |
+| `KIE_API_BASE_URL` | `https://api.kie.ai` | Kie.ai provider | HTTPS API origin |
+| `KIE_API_ALLOWED_HOST` | `api.kie.ai` | Kie.ai provider | Exact hostname of `KIE_API_BASE_URL`; wildcards and suffix matching are rejected |
+| `KIE_MODEL_ID` | `qwen2/text-to-image` | Kie.ai provider | Exact reviewed adapter model; other values are rejected |
+| `KIE_IMAGE_ALLOWED_HOSTS` | Kie.ai result hosts | Kie.ai asset download | Comma-separated exact HTTPS hostnames; every redirect is revalidated |
+| `KIE_POLL_INTERVAL_MS` | `2000` | Kie.ai task polling | Effective range is 250 ms–10 seconds |
+| `KIE_MAX_POLL_MS` | `120000` | Kie.ai task polling | Bounded per-consumer poll window; transient queue retries resume the persisted task ID |
+| `BILLING_ENABLED` | `true` on the canonical acceptance Worker by explicit owner decision | Enable new Stripe Checkout offers | Default new public environments to false; record any owner override with the deployed Worker and verify health/catalog |
+| `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases; send an alert-delivery acceptance test | Managed secret of at least 32 characters; grants access only to `/api/operator/*` |
+| `OPS_ALERT_EMAIL` | Empty | Cloudflare Email Routing Worker binding for operational alerts | Checked-in binding name only; requires Email Routing and a verified destination before deployment |
+| `OPS_ALERT_TO` | Empty | External destination for billing-health alerts | Managed secret containing one verified Email Routing destination |
+| `OPS_ALERT_FROM` | `alerts@qwen-image-3.net` | Sender for billing-health alerts | Non-secret address on the configured Email Routing domain |
 | `STRIPE_TIMEOUT_MS` | `15000` | Stripe API calls | Minimum effective value is one second |
 | `STRIPE_SECRET_KEY` | Empty | Stripe API, Portal, and external cleanup | Use a restricted managed key; never commit it |
 | `STRIPE_WEBHOOK_SECRET` | Empty | Billing webhook | Rotate and store as a managed secret |
-| `STRIPE_PRICE_CREATOR_INTRO` | Empty | Seed the first launch-price version | The database catalog becomes the financial source of truth |
-| `STRIPE_PRICE_CREATOR_MONTHLY` | Empty | Seed the first standard Creator version | Never reuse a Stripe Price ID for different credits or money |
-| `STRIPE_PRICE_CREDITS_100` | Empty | Seed the first 100-credit version | Verify USD 7 one-time amount before seeding |
-| `STRIPE_PRICE_CREDITS_300` | Empty | Seed the first 300-credit version | Verify USD 18 one-time amount before seeding |
+| `STRIPE_PRICE_STARTER_MONTHLY` | Live Price ID configured | USD 9.90/month, 500 credits | Never reuse a Stripe Price ID for different credits or money |
+| `STRIPE_PRICE_STARTER_YEARLY` | Live Price ID configured | USD 99/year, 6,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_CREATOR_MONTHLY` | Live Price ID configured | USD 29.90/month, 2,000 credits | Never reuse the retired USD 10 Creator Price |
+| `STRIPE_PRICE_CREATOR_YEARLY` | Live Price ID configured | USD 299/year, 24,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_PROFESSIONAL_MONTHLY` | Live Price ID configured | USD 59.90/month, 5,000 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_PROFESSIONAL_YEARLY` | Live Price ID configured | USD 599/year, 60,000 annual credits | Yearly credits are granted as one annual allowance |
+| `STRIPE_PRICE_CREDITS_400` | Live Price ID configured | USD 12 one time, 400 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_CREDITS_1200` | Live Price ID configured | USD 30 one time, 1,200 credits | Match the D1 version exactly |
+| `STRIPE_PRICE_CREDITS_3000` | Live Price ID configured | USD 60 one time, 3,000 credits | Match the D1 version exactly |
 
-`NODE_ENV` is set by npm scripts and is not copied into `.env.example` as a user secret.
+`RESEND_API_KEY`, OAuth client secrets, `DASHSCOPE_API_KEY`, `KIE_API_KEY`, Stripe keys, the billing operator token, `OPS_ALERT_TO`, and the webhook secret belong in managed Worker secrets. Checked-in Wrangler configuration contains only non-secret variables and the `OPS_ALERT_EMAIL` binding name.
+
+The dedicated Live webhook destination is `https://qwen-image-3.net/api/billing/webhook`. It subscribes only to the Checkout, invoice, subscription, reversal, dispute, and `radar.early_fraud_warning.created` events handled by the Worker. The restricted runtime key needs read-only `Charges and Refunds` access so a Radar warning's Charge can be resolved to its PaymentIntent; it must not receive product/Price administration access after catalog setup.
+
+The variables `PORT`, `HOST`, `DATABASE_PATH`, `CORS_ORIGINS`, `COOKIE_SECURE`, `EMAIL_PROVIDER`, and `ALLOW_DEV_AUTH_TOKENS` apply only to the inactive Express/SQLite comparison adapter in `server/` and `.env.example`.
 
 ## Local Development
 
@@ -43,17 +58,16 @@ npm install
 npm run dev
 ```
 
-- Web: `http://127.0.0.1:5173`
-- API: `http://127.0.0.1:8787`
+- Web and same-origin API: `http://127.0.0.1:8787`
 - Health: `http://127.0.0.1:8787/api/health`
 
-Console email logs one-time links and returns development tokens to the local UI. Treat terminal output as sensitive while those tokens are valid.
+`npm run dev` builds the React client, applies forward-only migrations to Wrangler-local D1, watches the web build, and runs the canonical Worker with local D1/R2 emulation. Email and OAuth remain unavailable unless their Worker secrets are supplied; the client never receives a development verification token.
 
 ## Emitted Build Smoke
 
 ```bash
 npm run build
-npm run start:local
+npm start
 ```
 
 Smoke checks:
@@ -65,17 +79,18 @@ curl -fsSI http://127.0.0.1:8787/
 
 Expected local health characteristics:
 
-- `status: ok` when the selected generation and email providers report configured;
+- `runtime: cloudflare-worker`;
+- `status: ok` when the selected generation provider is configured;
 - `provider: local-preview` and `generator: local-qwen-preview` by default;
 - Google/GitHub `false` without credentials;
 - Stripe `configured: false` without the required credentials and one active database Price version per offer;
-- database reported as SQLite.
+- `database: cloudflare-d1`, `objectStorage: cloudflare-r2`, a revision label, and maintenance freshness.
 
-The health endpoint is a configuration/readiness summary, not a deep provider request, database write probe, billing reconciliation check, or deployment marker.
+The health endpoint is a non-sensitive configuration/readiness summary, not a deep provider request. Its `billing.eventHealth` object reports failed and stale webhook counts. Its `billing.reviewHealth` object reports open reviews and confirmed losses with unrecovered credits. Either condition changes the overall status to `degraded`; these aggregate signals do not replace Stripe-to-D1 financial reconciliation.
 
-`npm start` sets `NODE_ENV=production` and refuses to listen unless the canonical URL is HTTPS, cookies are secure, development tokens are disabled, storage is persistent, Resend and Qwen are configured, asset hosts are explicit, and every variable for any enabled billing surface is present.
+HTML responses use `Cache-Control: public, max-age=0, must-revalidate, no-transform`. The `no-transform` directive prevents Cloudflare zone-level Web Analytics from injecting an unreviewed beacon into the application shell; the strict CSP remains an independent fail-closed control.
 
-The checked-in `compose.yaml` is a local-demo profile: it explicitly runs `npm run start:local` with console email and the deterministic local generator. Production orchestration must retain the image's default production command and supply the validated environment instead of copying that local profile.
+The checked-in `compose.yaml`, `Dockerfile`, and `server/` tree run only the legacy Express/SQLite comparison adapter. They are excluded from the default development, build, CI artifact, and Cloudflare deployment paths.
 
 ## Cloudflare Acceptance Environment
 
@@ -87,18 +102,29 @@ Current resources:
 - Pages fallback: `https://qwen-image-3.pages.dev`
 - D1 database: `qwen-image-3-production`
 - R2 bucket: `qwen-image-3-assets`
-- Billing: disabled
-- Email/OAuth: disabled
-- Generation provider: deterministic local preview
+- Standard generation queue: `qwen-image-3-generation`
+- Creator/Professional priority queue: `qwen-image-3-generation-priority`
+- Billing: enabled for new Checkout only by the explicit July 24, 2026 repository-owner acceptance decision; this is not production approval
+- Transactional account email and GitHub OAuth: disabled; Cloudflare Email Routing operational alerts: enabled
+- Google OAuth: enabled with Google Auth Platform publishing status `Production` for external Google accounts
+- Canonical generation provider: Kie.ai `qwen2/text-to-image`
+- Pages fallback generation provider: deterministic local preview
 
-Deploy and migrate:
+Release verification, migration, and deployment:
 
 ```bash
+npm run verify:release
+npx wrangler d1 export qwen-image-3-production --remote --output backups/qwen-image-3-YYYYMMDD-HHMMSS.sql
+npx wrangler queues list
+npx wrangler queues create qwen-image-3-generation
+npx wrangler queues create qwen-image-3-generation-priority
 npm run cf:migrate:remote
 npm run cf:deploy
 ```
 
 `wrangler.worker.jsonc` is the public custom-domain deployment source of truth. `wrangler.jsonc` retains the Pages fallback configuration.
+Create each queue only when it is absent from `wrangler queues list`; a repeated create is an operator error, not a deployment prerequisite. Apply the forward migration before deploying the consumer so `provider_task_id` exists when the first job is delivered.
+Capture an R2 object inventory through the authenticated Cloudflare API or dashboard before migrations that affect object references; current Wrangler has no object-list command.
 
 Live smoke:
 
@@ -109,9 +135,60 @@ curl -fsS -c cookies.txt -b cookies.txt https://qwen-image-3.net/api/catalog
 curl -fsSI https://www.qwen-image-3.net/pricing
 ```
 
-Expected health reports `cloudflare-d1`, `cloudflare-r2`, billing disabled, Stripe credentials/webhook configured, email disabled, and the local preview provider. The catalog response must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance also created a guest generation, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. Stripe Sandbox acceptance created and expired an API-only Checkout Session, deleted that temporary Customer, delivered a signed no-op subscription update through the canonical webhook, and confirmed idempotent replay. A separate application-created USD 7/100-credit Checkout then completed with Stripe's test card: the Stripe-origin `checkout.session.completed` event completed once in D1, the order and payment became paid, and one ledger row granted exactly 100 credits. New Checkout was disabled again before the payment was submitted.
+Expected canonical health reports `cloudflare-d1`, `cloudflare-r2`, billing enabled with Stripe credentials/webhook/catalog configured, zero failed/stale billing events, configured healthy alerting, and Kie.ai `qwen2/text-to-image` selected and configured. The public catalog must mark every configured subscription interval and credit pack available for Checkout. The Pages fallback intentionally reports the deterministic local preview provider with billing disabled. Both catalog responses must contain plan `id`/`description`/`features`, structured prompt records, model `id`/`provider`/`available`/`status`/`speed`/`cost`/`bestFor`, promotion state, and credit packs; the client rejects a mismatched contract without unmounting the application. The July 23 acceptance created a guest generation on the previous guest-enabled revision, confirmed D1 metadata and an R2 key, fetched the private asset through the ownership route, and verified the free-export watermark headers/content. That result is historical only; the current revision requires an account. Stripe Sandbox acceptance completed all configured monthly/yearly offers, credit-pack fulfillment, renewal success, renewal failure and recovery, Portal cancellation, terminal cancellation, refund, dispute, Radar, missing-order reconstruction, active/trialing/past-due/already-canceled/cancel-at-period-end account deletion, and authenticated risk resolution. Checkout currently advertises only synchronous `card` and `link`; delayed methods require a new acceptance pass before enablement.
 
-Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. `BILLING_ENABLED=false` blocks new Checkout while allowing configured signed webhooks and Stripe-side account cleanup to finish. Enabling new purchases requires updating that switch in the Worker configuration and redeploying only after test-mode acceptance passes.
+Queue acceptance on July 25, 2026 used commit `cd2d2c5` and Worker `90428382-3497-4f92-99be-39bf4f371a58`. Both queues reported one producer and one consumer. Signed-in generation `b8a24ffa-9bd9-46be-9214-9624d1b4abeb` moved through visible submitting/generating/complete states, loaded a 2048×2048 private result, persisted its Kie task ID and R2 key, and settled four reserved credits to an 8 available/0 reserved balance. This success does not replace the required canonical terminal-failure, timeout, late-completion, cancellation, or cost-monitoring acceptance.
+
+Cloudflare secrets for the canonical Worker must be written with `wrangler secret put NAME --config wrangler.worker.jsonc` and must never be committed. OAuth callbacks are `/api/auth/oauth/google/callback` and `/api/auth/oauth/github/callback` under `APP_BASE_URL`. `BILLING_ENABLED` gates only new Checkout creation; configured signed webhooks and Stripe-side account cleanup continue in either state. The canonical `true` state is the repository owner's explicit July 24, 2026 acceptance-environment decision. Any state change requires a committed configuration, deployment, and health/catalog verification.
+
+### Google sign-in
+
+Google sign-in requires a Google Cloud project with an OAuth consent screen and an OAuth 2.0 Client ID of type **Web application**. The current Worker uses Google's OpenID Connect `userinfo` endpoint, so no Google storage, model, or paid API service is required.
+
+Configure the Google OAuth application with:
+
+```text
+Authorized JavaScript origin:
+https://qwen-image-3.net
+
+Authorized redirect URI:
+https://qwen-image-3.net/api/auth/oauth/google/callback
+```
+
+Keep the consent screen in testing mode during initial validation and add only designated test accounts. After the successful acceptance callback, switching Google Auth Platform to `Production` makes the external OAuth application available to Google accounts outside the tester list; this OAuth publishing label does not make the website a production-approved service. Store the issued credentials as encrypted Worker secrets; do not put them in `wrangler.worker.jsonc`, `.env.example`, CI logs, or shell history:
+
+```bash
+npx wrangler secret put GOOGLE_CLIENT_ID --config wrangler.worker.jsonc
+npx wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.worker.jsonc
+```
+
+After deploying the reviewed revision, verify:
+
+```bash
+curl -fsS https://qwen-image-3.net/api/health
+curl -fsS https://qwen-image-3.net/api/auth/methods
+```
+
+Both responses must report Google OAuth as configured. Complete one consent denial and one successful sign-in with a test account. Confirm the callback returns to `/studio`, the session cookie is `HttpOnly`, `Secure`, and `SameSite=Lax`, the Google access token is absent from logs and D1, and a repeated callback is rejected because OAuth state is single-use. This closes only the Google portion of `AUTH-001`; the acceptance deployment remains non-production until the other release gates are resolved.
+
+Acceptance evidence on July 23, 2026: Worker version `48f7704c-0cc7-4f25-9ae6-9efda9d0deb3` reported Google configured, completed the real authorization-code and PKCE callback, created one Google identity mapping and browser session, granted the social-account starter credits once, entered the private Workspace, and left no pending OAuth state. Google Auth Platform was then switched from `Testing` to `Production` for the external user type, making sign-in available beyond the tester list. Denial/failure acceptance and reviewed release provenance remain open.
+
+Cloudflare Web Analytics injection must remain disabled for this Worker/custom domain. Reviewed GA4 support is loaded by the client and limited by CSP to the exact Google Tag Manager script host plus the primary and regional Google Analytics collection hosts. Inline scripts remain blocked.
+
+Homepage recognition badges remain image-only embeds. CSP permits their assets from the exact `findly.tools` and `softwarebolt.com` hosts without granting either host script or connection access.
+
+### GA4 page-view analytics
+
+The reviewed web stream uses Measurement ID `G-7Q6BB5CR23` for `https://qwen-image-3.net`. The client loads `gtag.js` on site entry and records SPA page views without displaying an analytics prompt.
+
+The configuration sends SPA page-view events only. Advertising storage, advertising user data, personalization, Google Signals, and ad-personalization signals are disabled. Product code must not add prompts, generated images, user IDs, email addresses, billing identifiers, or project names to analytics events.
+
+Live acceptance after deployment:
+
+1. Open a clean browser profile and confirm `gtag/js?id=G-7Q6BB5CR23` and one page-view collection request load without a prompt.
+2. Confirm the page does not display an analytics banner or footer choice.
+3. Navigate between public SPA routes and confirm subsequent page-view events use the new path without a full reload.
+4. Use GA4 Realtime or DebugView to confirm receipt. Google notes that standard collection views can take longer to populate.
 
 ## Billing Price Versions
 
@@ -127,30 +204,99 @@ WHERE offer_id = 'creator_monthly' AND active_for_checkout = 1;
 INSERT INTO billing_price_versions
   (stripe_price_id, offer_id, kind, amount_cents, currency, credits, active_for_checkout, effective_from, created_at)
 VALUES
-  ('price_new_from_stripe', 'creator_monthly', 'subscription', 1200, 'usd', 450, 1,
+  ('price_new_from_stripe', 'creator_monthly', 'subscription', 2990, 'usd', 2000, 1,
    '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z');
 ```
 
 Do not update the amount or credits on an existing row and do not delete retired rows while Stripe subscriptions or financial records may reference them. Before applying the migration, export D1, confirm the new Stripe Price in Sandbox, keep `BILLING_ENABLED=false`, migrate, deploy, verify `/api/health` reports `priceCatalogConfigured: true`, exercise Checkout and invoice replay, then explicitly decide whether to enable sales.
 
-## Container
+## Billing Risk Review
+
+Refunds, disputes, and actionable Radar early fraud warnings are consolidated into one review per PaymentIntent. The first unresolved trigger immediately blocks generation and Checkout. Additional Stripe events for the same payment are retained as evidence without creating a second credit exposure.
+
+Provision operator access as a managed secret:
+
+```bash
+npx wrangler secret put BILLING_OPERATOR_TOKEN --config wrangler.worker.jsonc
+```
+
+Use a unique, stable `Idempotency-Key` for every human decision and a stable operator identity in `X-Operator-Id`. Do not put card data, access tokens, or other secrets in review notes.
+
+```bash
+curl -fsS 'https://qwen-image-3.net/api/operator/billing/reviews?status=open' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN"
+
+curl -fsS 'https://qwen-image-3.net/api/operator/billing/reviews/REVIEW_ID' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN"
+
+curl -fsS -X POST \
+  'https://qwen-image-3.net/api/operator/billing/reviews/REVIEW_ID/resolve' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'X-Operator-Id: operator@example.com' \
+  -H 'Idempotency-Key: REVIEW_ID-decision-001' \
+  --data '{"decision":"confirmed_loss","note":"Refund confirmed in Stripe; recover remaining available credits."}'
+```
+
+Decision rules:
+
+- `cleared` is only for a false-positive Radar warning or a dispute that was won. It restores the payment/order financial state, resolves the review, and unblocks the account only when no other review or unrecovered loss remains. A completed refund cannot be cleared.
+- `confirmed_loss` deducts at most the account's currently available credits, writes a `manual_adjustment` ledger entry, and never creates a negative balance. If the full credit exposure cannot be recovered, the account remains blocked.
+- A partial refund maps the cumulative refunded amount to credits proportionally and rounds the exposure up to the next whole credit. A later larger refund reopens the same review only for the increased exposure.
+- When support later establishes repayment or recoverable credits become available, submit another `confirmed_loss` action with a new idempotency key. Only the outstanding amount is recovered.
+- A replay with the same review and idempotency key returns the original action. Reusing that key for a different decision is rejected.
+- Every trigger and decision remains in `billing_review_events` and `billing_review_actions`. Never bypass the operation by directly editing `credit_accounts`, `billing_accounts`, or `credit_ledger`.
+
+Before unblocking a dispute, verify the Stripe dispute outcome and supporting evidence. Before confirming a refund loss, verify the refund amount and that the PaymentIntent belongs to the local payment. Escalate legal threats, suspected account takeover, or ambiguous partial-refund cases instead of guessing.
+
+## External Billing Alerts
+
+The 15-minute Worker schedule evaluates four aggregate conditions without putting customer identity or payment details into email:
+
+- failed Stripe webhook events;
+- Stripe events left in `processing` for more than 15 minutes;
+- open refund, dispute, or actionable Radar reviews;
+- confirmed payment losses with unrecovered credits.
+
+The first degraded observation sends an action-required email. A changed incident fingerprint or six elapsed hours sends a reminder. Returning all counters to zero sends one recovery email. Every attempt is audited in D1, while the health endpoint reports only aggregate configuration, state, and delivery error status.
+
+Enable Cloudflare Email Routing for `qwen-image-3.net`, verify the intended destination, and then provision the destination and operator credentials as managed secrets:
+
+```bash
+npx wrangler secret put OPS_ALERT_TO --config wrangler.worker.jsonc
+npx wrangler secret put BILLING_OPERATOR_TOKEN --config wrangler.worker.jsonc
+```
+
+After the reviewed revision is deployed, send one idempotent delivery test. Repeating the same key returns the recorded result without sending another email:
+
+```bash
+curl -fsS -X POST \
+  'https://qwen-image-3.net/api/operator/alerts/test' \
+  -H "Authorization: Bearer $BILLING_OPERATOR_TOKEN" \
+  -H 'X-Operator-Id: acceptance@example.com' \
+  -H 'Idempotency-Key: alert-acceptance-YYYYMMDD'
+```
+
+Verify the recipient mailbox, the `operational_alert_deliveries` audit row, and `/api/health`. A successful local binding mock is not external acceptance. Do not enable `BILLING_ENABLED` until a real test email is received and the customer-facing policy approval is recorded.
+
+## Legacy Container
 
 ```bash
 docker compose up --build
 ```
 
-The checked-in Compose service is for local evaluation only. It deliberately uses:
+The checked-in Compose service is a retained comparison path only. It deliberately uses:
 
 - `COOKIE_SECURE=false`;
 - `EMAIL_PROVIDER=console`;
 - `ALLOW_DEV_AUTH_TOKENS=true`;
 - `GENERATION_PROVIDER=local`.
 
-A deployment platform must override those values, use managed secrets, mount durable storage, provide health supervision, and prove backup/restore. The current workspace has not executed the container because Docker Compose and a running daemon are unavailable.
+It must not be used as an internet deployment configuration. The current workspace has not executed it because Docker Compose and a running daemon are unavailable.
 
 ## Database Backup and Restore
 
-SQLite uses WAL mode. Prefer an online SQLite backup rather than copying only the main database file while the service is writing.
+The following SQLite procedure applies only to preserved legacy/runtime evidence. SQLite uses WAL mode, so prefer an online backup rather than copying only the main database file while it is writing.
 
 Backup example:
 
@@ -167,7 +313,7 @@ Restore procedure:
 4. Exercise health, login, ownership, generation history, and credit-balance checks.
 5. Promote the restored path only after validation.
 
-Do not overwrite the active database without an explicit recovery decision and rollback copy. No production restore exercise has been completed yet.
+Do not overwrite the active database without an explicit recovery decision and rollback copy. The SQLite path is not the canonical runtime and has no production restore evidence.
 
 For D1, capture a remote export before any destructive migration:
 
@@ -176,6 +322,15 @@ npx wrangler d1 export qwen-image-3-production --remote --output backups/qwen-im
 ```
 
 Restore must target a separate D1 database first, run consistency and application acceptance checks, then be promoted through an explicit binding change. R2 source objects require an independent inventory/lifecycle/deletion exercise; a D1 export alone is not a complete asset backup.
+
+July 25, 2026 rehearsal evidence:
+
+- remote export `backups/qwen-image-3-20260725-184500.sql` is retained outside Git, is 218,328 bytes/988 lines, has SHA-256 `3c7b7650a2434b8a35c7caa7262883ba424f196f8b05ee3db75c206e70300050`, and passed SQLite `PRAGMA integrity_check`;
+- the export imported into isolated D1 database `qwen-image-3-restore-rehearsal-20260725` (`cf8c1fed-2db2-43ac-bb71-b3d7499d99b6`) with 590 queries, 1,753 rows written, and no import error;
+- source and rehearsal counts matched for users (6), generations (11), credit ledger (26), billing events (9), billing payments (2), support tickets (0), and migrations (13), with zero negative credit balances;
+- D1 referenced seven distinct non-null generation object keys, the private R2 bucket contained seven objects, and the deletion-compensation queue was empty.
+
+This proves export integrity and isolated relational restoration, not promotion of the restored binding, point-in-time recovery, approved backup deletion, or full R2 byte restoration. Retain the rehearsal database until its evidence is reviewed; deletion requires an explicit post-report cleanup decision.
 
 ## External Integration Gates
 
@@ -200,41 +355,70 @@ Restore must target a separate D1 database first, run consistency and applicatio
 - Record the exact model ID and verification date in `PRODUCT.md` and release evidence.
 - Do not label Qwen Image 3 available until a real, sourced integration exists.
 
+### Kie.ai Qwen Image 2
+
+- Create a dedicated Kie.ai API key for this Worker, restricted to `qwen2/text-to-image` with conservative hourly, daily, and total spend limits. Do not use an IP allowlist unless the Worker has a verified fixed egress address.
+- Store `KIE_API_KEY` only as a managed Worker secret. Keep `GENERATION_PROVIDER=local` until the real acceptance request is ready.
+- Confirm the API origin is exactly `https://api.kie.ai` and review every hostname reached by the generated-image URL and any redirect before adding it to `KIE_IMAGE_ALLOWED_HOSTS`.
+- Run one low-risk Golden Prompt through the signed-in Studio. Confirm task creation, polling, one credit settlement, immediate private R2 persistence, owned download, and no provider URL or credential in the browser, logs, D1, or API response.
+- Exercise invalid key, insufficient balance, provider rejection, unknown status, timeout, unapproved result host, redirect, invalid MIME/signature, and oversized asset behavior. Every failure must mark the task failed and refund the reserved product credits.
+- Submission now enters a durable standard or priority queue, and a retry resumes the persisted Kie task ID. Exercise canonical queue delivery, terminal refund, timeout/late-provider reconciliation, cancellation policy, and provider cost monitoring before production approval.
+- Record the provider model, Kie task ID, returned-host evidence, product credit delta, provider charge, test time, Worker version, and rollback version in `RELEASE_READINESS.md` without recording the API key or expiring asset URL.
+
 ### Stripe
 
-- Keep `BILLING_ENABLED=false` in any public environment until every public-billing acceptance gate is closed.
+- Default `BILLING_ENABLED` to `false` for a new public environment. Any explicit owner override must be recorded with the deployed Worker version and must not be described as production approval while release gates remain open.
 - Use the dedicated restricted Sandbox key for the application. Stripe's default Sandbox standard secret was rotated after setup and is not an application dependency.
-- Test signed delivery, out-of-order events, missing local records, replay, refunds, disputes, asynchronous payment, subscription updates, cancellation, account deletion, and reconciliation.
-- Local and Worker code validate the Creator Customer, stored subscription, configured launch or standard Price, paid state, exact USD 800 or 1000 amount, allowed billing reason, and PaymentIntent; test-mode must prove that contract against real Stripe payloads.
+- Test signed delivery, out-of-order events, missing local records, replay, refunds, disputes, subscription updates, cancellation, account deletion, and reconciliation. If delayed payment methods are enabled later, add real asynchronous success and failure acceptance before deployment.
+- The Worker validates the subscription Customer, stored subscription, immutable Price version, exact amount/currency, paid state, allowed billing reason, and PaymentIntent; test-mode must prove every current offer contract against real Stripe payloads.
 - Confirm external subscription state before deleting local identity data.
+
+### Isolated Stripe Sandbox acceptance
+
+The checked-in `wrangler.sandbox.jsonc` deploys a separate `qwen-image-3-sandbox` Worker at `sandbox.qwen-image-3.net`, with its own D1 database and R2 bucket. It intentionally enables Checkout only against Stripe Sandbox Price IDs. It has no canonical production-domain route and must not receive Live Stripe credentials.
+
+Provision and update it with:
+
+```bash
+npm run cf:sandbox:migrate
+npm run cf:sandbox:catalog
+npx wrangler secret put STRIPE_SECRET_KEY --config wrangler.sandbox.jsonc
+npx wrangler secret put STRIPE_WEBHOOK_SECRET --config wrangler.sandbox.jsonc
+npm run cf:sandbox:deploy
+```
+
+`worker/sandbox/stripe_catalog.sql` is an idempotent acceptance seed, not a canonical production migration. Do not apply it to `qwen-image-3-production`. Keep Sandbox test users and financial events in the sandbox D1 database, and record Stripe-origin Checkout, grant, subscription, Portal, refund, dispute, and Radar evidence before changing the production billing switch.
+
+Billing-review acceptance on July 23, 2026 used committed revision `8cdf34f` and Sandbox Worker version `b5ee6271-4cca-46d8-840f-6f6d8745dc6b`. Migration `0011` backfilled three real Sandbox payment cases. Unauthenticated review access returned `401`; an actionable Radar warning cleared with an idempotent replay; a completed refund rejected `cleared` with `409` and recovered exactly 400 credits; and the synthetic dispute cleared as a won test case. Final reconciliation found three resolved reviews, three unique actions, one `-400` recovery ledger row, zero invalid exposures, zero negative balances, zero blocked reviewed accounts, and zero failed/processing billing events. Health moved from three open reviews and `degraded` to `0 open / 0 outstanding` and `ok`.
 
 ## Data Retention
 
 Current behavior:
 
-- account and guest sessions have 30-day expiries;
-- guest-to-account migration considers the previous 24 hours;
-- guest history and asset access are denied after 24 hours;
-- maintenance runs at startup and every 15 minutes to delete guest asset rows older than 24 hours, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded generation reservations, and record its result;
-- free/paid account assets, billing/audit records, and backups do not yet have approved deletion schedules.
+- account sessions have 30-day expiries;
+- signed-out visitors receive no anonymous generation session and cannot access generation routes;
+- legacy guest rows remain cleanup-only and are not migrated into new accounts;
+- Worker maintenance runs every 15 minutes to delete legacy guest assets older than 24 hours, drain the R2 deletion compensation queue, remove expired sessions/tokens/OAuth/idempotency/rate buckets, repair stranded account generation reservations, and record its result;
+- Starter/paid account assets, billing/audit records, and backups do not yet have approved deletion schedules.
 
 Required before external beta:
 
-- monitor maintenance freshness and overdue guest records in the target environment;
+- monitor maintenance freshness and any overdue legacy guest records until they are drained;
 - prove primary and backup deletion against the approved policy;
 - document account, paid, billing, audit, and backup retention separately;
 - verify deletion against primary storage and backups.
 
 ## Monitoring and Incidents
 
-Current logging is process console output plus request IDs. Authenticated developer generation calls are stored in `api_request_logs`, and retention/recovery summaries are stored in `maintenance_runs`. No production log pipeline, metrics, traces, dashboards, or alerts are configured.
+Current logging is Cloudflare invocation/queue-consumer output plus request IDs. Every `/v1/generations` submission and status read is recorded with status, duration, path, and request ID; valid keys also retain user/key association. Queue logs identify retry/failure by generation and request ID without prompt text. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, deleted PaymentIntent evidence in `billing_deleted_payment_tombstones`, and failed object cleanup in `r2_deletion_queue`. `/api/health` exposes aggregate failed/stale Stripe-event counts without customer data. No external production queue-depth, generation-latency, cost, metrics, traces, dashboard, or on-call destination is configured.
 
 Production acceptance requires at minimum:
 
 - request rate, latency, and error code dashboards;
-- generation success, timeout, moderation, and stranded-reservation alerts;
-- credit and Stripe reconciliation alarms;
-- database capacity, WAL, backup, and restore monitoring;
+- queue depth/age and generation success, timeout, moderation, retry, terminal-failure, and stranded-reservation alerts;
+- poll `/api/health` and alert when `status != "ok"`, `billing.eventHealth.healthy != true`, or `billing.reviewHealth.healthy != true`;
+- credit and Stripe reconciliation alarms beyond the aggregate event-health signal;
+- D1 capacity, R2 cleanup backlog, backup, and restore monitoring;
 - provider health and cost alerts;
 - deploy revision and rollback marker.
 

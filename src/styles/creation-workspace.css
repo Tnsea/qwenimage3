@@ -1,0 +1,351 @@
+.creation-workspace.generator-shell.card {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.hero-section {
+  min-height: 330px;
+  justify-content: flex-start;
+  padding: 54px 20px 102px;
+}
+
+.hero-section h1 {
+  margin-top: 18px;
+  font-size: clamp(44px, 5.8vw, 68px);
+  line-height: 0.9;
+}
+
+.hero-copy {
+  max-width: 680px;
+  margin-top: 20px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.trust-copy {
+  margin-top: 12px;
+}
+
+.home-main > .creation-workspace {
+  margin-top: -62px;
+}
+
+.creation-workspace .creation-alert.alert {
+  width: 100%;
+  margin: 0 0 12px;
+}
+
+.creation-composer {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-base-content) 13%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--color-base-200) 92%, transparent);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 color-mix(in srgb, var(--color-base-content) 5%, transparent);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.creation-composer:focus-within {
+  border-color: color-mix(in srgb, var(--color-base-content) 28%, transparent);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.28),
+    0 0 0 3px color-mix(in srgb, var(--color-base-content) 4%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-base-content) 7%, transparent);
+}
+
+.creation-editor {
+  position: relative;
+  min-height: 224px;
+}
+
+.creation-prompt.textarea {
+  display: block;
+  width: 100%;
+  height: 224px;
+  min-height: 224px;
+  resize: none;
+  padding: 24px 72px 20px 24px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  font-size: 17px;
+  font-weight: 430;
+  line-height: 1.6;
+  box-shadow: none;
+}
+
+.creation-prompt.textarea::placeholder {
+  color: color-mix(in srgb, var(--color-base-content) 38%, transparent);
+}
+
+.creation-prompt.textarea:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.creation-count {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  color: color-mix(in srgb, var(--color-base-content) 34%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.creation-toolbar {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--color-base-content) 8%, transparent);
+}
+
+.creation-controls,
+.creation-submit {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.creation-controls {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.creation-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.creation-example.btn {
+  height: 38px;
+  min-height: 38px;
+  flex: 0 0 auto;
+  gap: 7px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 10px;
+  color: color-mix(in srgb, var(--color-base-content) 72%, transparent);
+  font-size: 12px;
+  font-weight: 520;
+}
+
+.creation-example.btn:hover,
+.creation-example.btn:focus-visible {
+  background: color-mix(in srgb, var(--color-base-content) 7%, transparent);
+  color: var(--color-base-content);
+}
+
+.creation-select {
+  display: inline-flex;
+  height: 38px;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding-left: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-base-content) 9%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-base-content) 5%, transparent);
+  color: color-mix(in srgb, var(--color-base-content) 78%, transparent);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.creation-select:hover,
+.creation-select:focus-within {
+  border-color: color-mix(in srgb, var(--color-base-content) 20%, transparent);
+  background: color-mix(in srgb, var(--color-base-content) 8%, transparent);
+}
+
+.creation-select .select {
+  width: auto;
+  height: 36px;
+  min-height: 36px;
+  padding-right: 26px;
+  padding-left: 0;
+  border: 0;
+  outline: 0;
+  background-color: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 520;
+  box-shadow: none;
+}
+
+.creation-select .select:focus {
+  outline: 0;
+}
+
+.creation-style-select .select {
+  max-width: 142px;
+  padding-left: 10px;
+}
+
+.creation-model-select .select {
+  max-width: 190px;
+}
+
+.creation-quality-select .select {
+  max-width: 152px;
+  padding-left: 10px;
+}
+
+.creation-project-select .select {
+  max-width: 150px;
+}
+
+.creation-submit {
+  flex: 0 0 auto;
+}
+
+.creation-submit > span {
+  max-width: 170px;
+  color: color-mix(in srgb, var(--color-base-content) 46%, transparent);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.creation-generate.btn {
+  height: 42px;
+  min-height: 42px;
+  min-width: 118px;
+  gap: 8px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+  font-size: 13px;
+  font-weight: 680;
+  box-shadow: none;
+}
+
+.creation-generate.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.creation-generate.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.creation-generate.btn:disabled {
+  background: color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  color: color-mix(in srgb, var(--color-base-content) 32%, transparent);
+}
+
+.generator-compact.creation-workspace {
+  width: 100%;
+}
+
+.generator-compact .creation-editor {
+  min-height: 260px;
+}
+
+.generator-compact .creation-prompt.textarea {
+  height: 260px;
+  min-height: 260px;
+}
+
+.page-shell.light-mode .creation-composer {
+  border-color: color-mix(in srgb, var(--color-base-content) 14%, transparent);
+  background: color-mix(in srgb, var(--color-base-100) 92%, white);
+  box-shadow:
+    0 24px 70px rgba(45, 40, 30, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+@media (max-width: 1020px) {
+  .creation-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .creation-controls {
+    width: 100%;
+  }
+
+  .creation-submit {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-section {
+    min-height: 294px;
+    padding: 38px 18px 84px;
+  }
+
+  .hero-section h1 {
+    margin-top: 16px;
+    font-size: clamp(39px, 12.5vw, 52px);
+    white-space: normal;
+  }
+
+  .hero-copy {
+    margin-top: 16px;
+    font-size: 13px;
+  }
+
+  .trust-copy {
+    display: none;
+  }
+
+  .home-main > .creation-workspace {
+    margin-top: -48px;
+  }
+
+  .creation-composer {
+    border-radius: 16px;
+  }
+
+  .creation-editor,
+  .generator-compact .creation-editor {
+    min-height: 190px;
+  }
+
+  .creation-prompt.textarea,
+  .generator-compact .creation-prompt.textarea {
+    height: 190px;
+    min-height: 190px;
+    padding: 18px 18px 16px;
+    font-size: 15px;
+  }
+
+  .creation-count {
+    display: none;
+  }
+
+  .creation-toolbar {
+    padding: 9px;
+  }
+
+  .creation-example span {
+    display: none;
+  }
+
+  .creation-submit {
+    justify-content: space-between;
+  }
+
+  .creation-submit > span {
+    text-align: left;
+  }
+
+  .creation-generate.btn {
+    min-width: 110px;
+  }
+
+}

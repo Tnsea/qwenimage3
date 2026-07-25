@@ -1,8 +1,8 @@
 # Qwen Image Generator Hub
 
-An independent, English-only image-generation web application inspired by the supplied visual references. It includes a React interface, a local Express/SQLite runtime, a Cloudflare Pages Worker backed by D1 and private R2 storage, account and credit flows, a deterministic preview provider, and optional external adapters.
+An independent, English-only image-generation web application. Its canonical business runtime is a Cloudflare Worker backed by D1 and private R2 storage, with a React interface, account and credit flows, a deterministic preview provider, and optional external adapters. The former Express/SQLite implementation remains only as a legacy comparison adapter.
 
-> **Release status — canonical acceptance environment deployed; production and public billing blocked.** The Cloudflare environment is live at [qwen-image-3.net](https://qwen-image-3.net) for acceptance testing with billing, production email, OAuth, and the real Qwen provider disabled. See [Release Readiness](./docs/RELEASE_READINESS.md) before enabling those integrations.
+> **Release status — canonical acceptance environment deployed with Checkout enabled; production approval remains blocked.** The Cloudflare environment is live at [qwen-image-3.net](https://qwen-image-3.net) for acceptance testing. By an explicit repository-owner decision on July 24, 2026, its Live-mode Stripe Checkout is externally reachable for the configured offers. Google sign-in is published for external Google accounts, and one signed-in Kie.ai Qwen Image 2 generation completed with D1 credit settlement, private R2 persistence, and browser rendering. Failure/timeout behavior, provider commercial approval, launch-region legal/commercial review, and the other release gates remain open. Production email and GitHub sign-in remain disabled. See [Release Readiness](./docs/RELEASE_READINESS.md) before treating any acceptance result—or the Checkout switch—as production approval.
 
 This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 
@@ -10,19 +10,19 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 
 | Area | Current status |
 |---|---|
-| Public UI | English homepage, sticky navigation, responsive generator, Examples, Prompts, Models, Pricing, Guides, and API pages |
-| Search discovery | Homepage content is prerendered into the initial HTML; canonical, social metadata, JSON-LD, robots.txt, and sitemap.xml are emitted with the web build |
-| Guest creation | Three server-enforced generations per UTC day, private history, deletion, free queue, and watermarked export |
-| Accounts | Email/password registration and login, one-time email verification, password recovery, session management, export, and fail-safe account deletion that cleans Stripe first when linked |
-| Social login | Google and GitHub authorization-code adapters with state and PKCE; buttons appear only when credentials are configured |
-| Studio | Overview, creation, projects, history, favorites, credits, billing, scoped API keys, API activity, and account settings |
-| Credits | One-time 20-credit verified-email grant; atomic reservation, settlement, refund, and ledger entries |
-| Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
-| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated Creator invoices, refund/dispute quarantine, and external cleanup before account deletion |
-| Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio adapter for `qwen-image-2.0-pro` |
-| Storage | Local SQLite/WAL plus deployed Cloudflare D1 records and private R2 generation assets |
+| Public UI | English homepage, sticky navigation, responsive generator, Examples, Models, Pricing, Guides, Blog, four source-led Qwen Image 3 content pages, and API pages |
+| Search discovery | Every published public route is prerendered into independent initial HTML with route-specific title, description, canonical, social metadata, and JSON-LD; the sitemap is generated from the published content manifest and unknown routes return HTTP 404 |
+| Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
+| Accounts | Customer-facing access is Google-only in the acceptance UI; the Worker retains locally tested email/password, verification, and recovery routes, plus session management, export, and fail-safe account deletion |
+| Social login | Google is the only customer-facing sign-in method; its authorization-code flow completed one real acceptance sign-in and its OAuth publishing status is Production. The GitHub adapter remains implemented but unverified and is not offered in the UI |
+| Studio | Login-directed responsive workspace with a continuous Create conversation of prior user prompts and image responses, immediate submitting/queued/generating/complete/failed states, in-place results, persistent light/dark theme control, aggregate overview, projects, History archive, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings; the durable lifecycle is deployed and live-verified in Cloudflare acceptance |
+| Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
+| Developer API | Hashed, scoped, revocable API keys; asynchronous `POST /v1/generations`, owned status reads, 24-hour idempotency, and durable request logs |
+| Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, versioned policy acceptance, scheduled external-alert delivery, and external cleanup before account deletion |
+| Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image` adapters |
+| Storage | D1 records and private R2 generation assets in both Wrangler development and the Cloudflare acceptance runtime |
 
-The application does **not** currently provide a durable asynchronous generation queue, approved retention/backup lifecycle, production monitoring/alerting, verified Qwen Image 3 integration, or externally accepted public billing.
+The application now implements durable standard and priority generation queues, status polling, bounded retries, persisted provider task IDs, and credit refunds on terminal failure. It does **not** currently provide an approved retention/backup-deletion lifecycle, complete production monitoring, verified Qwen Image 3 integration, or production-approved public billing. Checkout is enabled only as an explicit acceptance-environment operator decision. Billing-health email delivery and product-owner billing-copy acceptance passed in the Cloudflare acceptance environment; broader reconciliation monitoring and launch-region legal/commercial review remain open.
 
 ## Local Quick Start
 
@@ -36,29 +36,25 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The API runs at `http://127.0.0.1:8787` and Vite proxies `/api` requests to it.
+Open `http://127.0.0.1:8787`. Wrangler serves the built React client and the same-origin Worker API, using its local D1 and R2 emulators.
 
 The default configuration uses:
 
 - the deterministic local SVG provider;
-- SQLite at `./data/qwenimage.db`;
-- console email delivery with one-time development tokens;
+- Wrangler-managed local D1 and R2 state;
+- email and social login disabled until Worker secrets are configured;
 - disabled Google, GitHub, Stripe, and real Qwen integrations.
 
-Do not use the default development token or insecure-cookie settings on an internet-facing service.
+No browser-visible development verification token exists in the canonical runtime.
 
-## Production-Like Local Build
+## Local Release Smoke
 
 ```bash
 npm run build
-npm run start:local
+npm start
 ```
 
-Open `http://127.0.0.1:8787`. This verifies emitted JavaScript and static asset serving; it is not evidence of a production deployment.
-
-`npm start` is the production entry point and fails closed unless HTTPS, persistent storage, production email, Qwen configuration, trusted asset hosts, and any enabled billing variables pass startup validation.
-
-`docker compose up --build` is intentionally a local-demo profile and overrides the image command with `npm run start:local`. A production deployment should use the image's default command and provide the validated production environment.
+Open `http://127.0.0.1:8787`. This verifies the emitted client against the Worker/D1/R2 development runtime; it is not evidence of a deployment.
 
 ## Cloudflare Acceptance Environment
 
@@ -70,20 +66,21 @@ npm run cf:deploy
 ```
 
 - A Cloudflare Worker custom domain serves the React bundle and same-origin Hono API.
-- D1 stores identities, sessions, projects, credits, rate limits, immutable Stripe Price-to-credit versions, event/order/payment records, and generation metadata.
+- D1 stores identities, sessions, projects, credits, support conversations, rate limits, immutable Stripe Price-to-credit versions, event/order/payment records, and generation metadata.
 - R2 stores private generation source assets; access always passes through server ownership checks.
-- Free exports are watermarked and use the free queue; Creator entitlements use the VIP queue and original exports.
-- `BILLING_ENABLED=false` remains deployed until Stripe test-mode acceptance and release gates pass.
+- Separate Cloudflare Queues carry standard and Creator/Professional generation jobs; submission returns immediately and the Worker persists provider task IDs before polling.
+- Unsubscribed-account exports are watermarked. Every active paid plan, including Starter, receives original exports; Creator and Professional additionally use the VIP queue.
+- `BILLING_ENABLED=true` enables new Live-mode Stripe Checkout creation on the canonical acceptance Worker by explicit repository-owner decision. Signed webhook settlement and external account cleanup remain active. The isolated Sandbox remains the authoritative lifecycle-acceptance surface; enabling the canonical switch is not production approval.
 
-## Container for Local Evaluation
+## Legacy Container for Local Comparison
 
-The repository includes a multi-stage non-root image and a named SQLite volume:
+The repository retains a multi-stage, non-root Express/SQLite comparison image:
 
 ```bash
 docker compose up --build
 ```
 
-The checked-in `compose.yaml` is intentionally local-only: it enables console auth tokens, insecure HTTP cookies, and the local preview provider. Do not deploy it unchanged. Container execution has not been verified in the current workspace because a Compose-capable Docker daemon is unavailable.
+The checked-in `compose.yaml`, `Dockerfile`, and `server/` code are explicitly legacy and local-only. They are not an active development, release, or internet deployment path. Container execution has not been verified in the current workspace because a Compose-capable Docker daemon is unavailable.
 
 ## Optional Integrations
 
@@ -113,58 +110,79 @@ Then configure the corresponding `GOOGLE_*` and `GITHUB_*` variables from `.env.
 
 ### Alibaba Cloud Model Studio
 
-The implemented adapter targets `qwen-image-2.0-pro`. No Qwen Image 3 provider is implemented or verified.
+The implemented adapter targets `qwen-image-2.0-pro`. Qwen officially announced Qwen-Image-3.0 on July 21, 2026, and Alibaba Cloud documents `qwen-image-3.0-pro` as invite-only. This repository has not implemented, selected, or externally accepted a Qwen Image 3 provider.
 
 ```bash
 GENERATION_PROVIDER=qwen
 DASHSCOPE_API_KEY=your_model_studio_key
 QWEN_API_BASE_URL=https://YOUR_WORKSPACE_ID.ap-southeast-1.maas.aliyuncs.com/api/v1
+QWEN_API_ALLOWED_HOST=YOUR_WORKSPACE_ID.ap-southeast-1.maas.aliyuncs.com
 QWEN_MODEL_ID=qwen-image-2.0-pro
-QWEN_IMAGE_ALLOWED_HOSTS=aliyuncs.com
+QWEN_IMAGE_ALLOWED_HOSTS=EXACT_PROVIDER_ASSET_HOST
 ```
 
-The selected runtime downloads provider output immediately and persists it in local SQLite or production R2. Downloads require an approved HTTPS host, an allowed MIME type, matching image signatures, and a 25 MB limit; the local adapter additionally validates public DNS and bounded redirects. Provider failures release the reservation.
+The Worker downloads provider output immediately and persists it in private R2. Both the API base and returned asset must use HTTPS and exact configured hosts; redirects are rejected. Assets must also use an allowed MIME type, match their image signature, and remain under 25 MB. Provider failures release the reservation.
+
+### Kie.ai Qwen Image 2
+
+The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, persists the task ID, polls it from a durable queue consumer, then immediately downloads the expiring result into private R2. A retried consumer resumes the same task instead of creating a second provider charge. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. A signed-in canonical queue request completed submission, task-ID persistence, D1 reservation/settlement, private R2 persistence, browser polling/rendering, and authenticated image access on July 25, 2026. Failure/moderation behavior, end-to-end timeout recovery, late completion, data/commercial terms, and production approval remain open.
+
+```bash
+GENERATION_PROVIDER=kie
+KIE_API_KEY=your_dedicated_kie_key
+KIE_API_BASE_URL=https://api.kie.ai
+KIE_API_ALLOWED_HOST=api.kie.ai
+KIE_MODEL_ID=qwen2/text-to-image
+KIE_IMAGE_ALLOWED_HOSTS=tempfile.aiquickdraw.com,file.aiquickdraw.com
+KIE_POLL_INTERVAL_MS=2000
+KIE_MAX_POLL_MS=120000
+```
+
+The API and every result or redirect target must use HTTPS and match an exact configured hostname. The Worker accepts PNG, JPEG, or WebP files whose signatures match their MIME type and whose total size does not exceed 25 MB. Submission and provider execution are separated by Cloudflare Queues; moderation, provider-commercial approval, live timeout/late-completion acceptance, and cost supervision remain production gates.
 
 ### Stripe
 
-Stripe is fail-closed behind `BILLING_ENABLED=false`. That switch blocks new Checkout offers without disabling signed webhook settlement or external Stripe cleanup for existing records. The restricted Sandbox key, configured Prices, webhook secret, USD 7 credit-pack Checkout, Stripe-origin completion event, D1 PaymentIntent mapping, and exactly-once 100-credit grant have passed end-to-end acceptance. Public billing still requires subscription/invoice, refund/dispute, Portal/cancellation/deletion, policy, reconciliation, and legal/commercial acceptance in [Release Readiness](./docs/RELEASE_READINESS.md).
+Stripe remains fail-closed by default, but `BILLING_ENABLED=true` is an explicit repository-owner override on the canonical acceptance environment. New Live-mode Checkout offers are therefore externally reachable; signed webhook settlement and external Stripe cleanup remain active. The replacement catalog has dedicated immutable Live and Sandbox Price IDs, matching active D1 versions, restricted runtime keys, and signed 10-event webhook destinations. A separate `sandbox.qwen-image-3.net` Worker/D1/R2 environment has accepted every configured monthly/yearly offer, credit-pack fulfillment, renewal success, failed-payment recovery, Portal and terminal cancellation, refund, dispute, Radar, missing-order recovery, account-deletion races, and the authenticated risk-resolution workflow. Checkout exposes only synchronous `card` and `link`; delayed methods are not enabled. The accepted risk policy freezes spending, consolidates Stripe evidence per PaymentIntent, and uses an authenticated, idempotent operator decision path that never creates a negative credit balance. The canonical Worker requires server-recorded acceptance of policy version `2026-07-23` before Checkout and sends aggregate billing-health email through Cloudflare with deduplication, reminders, recovery, and an idempotent operator test. Product-owner copy approval and a real Delivered event are recorded in [Release Readiness](./docs/RELEASE_READINESS.md). The override does not close the remaining legal, monitoring, provider, reconciliation, or production-release gates.
+
+GA4 property `G-7Q6BB5CR23` loads on site entry and records SPA page views. Advertising storage and personalization remain denied, and the product does not send prompts, generated images, or account identifiers.
 
 The configured offer contract is:
 
-- Creator VIP launch subscription: USD 8/month during the server-authoritative ten-minute window.
-- Creator VIP standard subscription: USD 10/month after the window.
-- 100-credit pack: USD 7 one time.
-- 300-credit pack: USD 18 one time.
+- Starter: USD 9.90/month for 500 credits or USD 99/year for 6,000 credits.
+- Creator: USD 29.90/month for 2,000 credits or USD 299/year for 24,000 credits.
+- Professional: USD 59.90/month for 5,000 credits or USD 599/year for 60,000 credits.
+- One-time packs: USD 12/400 credits, USD 30/1,200 credits, or USD 60/3,000 credits.
 
-Each offer has its own Stripe Price ID. Signed webhook events are idempotently stored in D1/SQLite, and payment data is mapped to local orders and payment records before credits or subscription entitlements are granted.
+Standard, High, and Ultra generations cost 4, 8, and 16 product credits. Yearly subscriptions grant the full annual allowance after the yearly invoice is paid. Each offer requires its own immutable Stripe Price ID. Signed webhook events are idempotently stored in D1, and payment data is mapped to recoverable local orders and payment records before credits or subscription entitlements are granted. Refunds, disputes, and actionable Radar warnings pause generation and Checkout and enter one review per PaymentIntent. A cleared false positive unblocks only after all exposure is resolved; a confirmed loss reclaims no more than available credits and keeps the account blocked if any amount remains unrecovered.
 
 ## Developer API
 
 After registering, verifying the email address, and creating a key in **Studio → API keys**:
 
 ```bash
-curl -X POST http://127.0.0.1:8787/v1/generations \
+curl -X POST https://qwen-image-3.net/v1/generations \
   -H "Authorization: Bearer $QWEN_HUB_API_KEY" \
   -H "Idempotency-Key: launch-001" \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "qwen2/text-to-image",
     "prompt": "A glass pavilion at dawn",
     "aspect_ratio": "16:9",
     "style": "editorial",
-    "quality": "high"
+    "quality": "standard"
   }'
 ```
 
-The endpoint is synchronous. Reusing the same idempotency key within 24 hours returns the stored generation and does not reserve credits again.
+The endpoint returns `202 Accepted` with a processing generation, `Location: /v1/generations/{id}`, and `Retry-After: 2` after durable queue submission. Poll the returned `Location` with the same API key until `status` is `complete` or `failed`; completed records expose private image and download routes. `model` may be omitted to select the server's only available runtime, but explicit selection is recommended and unavailable IDs are rejected. Reusing a completed idempotency key within 24 hours returns the stored generation and does not reserve credits again. Repeating the key while work is in flight receives `409 REQUEST_IN_PROGRESS` and `Retry-After`.
 
 ## Data and Retention Reality
 
-- Guest generation ownership is bound to an HttpOnly anonymous-session cookie.
-- Registration or login migrates guest generations created during the previous 24 hours.
-- Guest sessions expire after 30 days, while a scheduled maintenance pass deletes guest generation assets after 24 hours.
-- Maintenance runs at startup and every 15 minutes, records its result, removes expired session/security/idempotency/rate-limit state, and repairs stranded generation reservations.
+- New anonymous generation sessions are disabled. Signed-out visitors can browse but must sign in before generation or private asset access.
+- New accounts receive one idempotent 20-credit welcome grant. Email verification remains required for recovery trust and developer keys, not for the grant.
+- Legacy anonymous rows remain in the schema only so scheduled maintenance can drain previously created guest assets safely.
+- Scheduled maintenance runs every 15 minutes, records its result, drains R2 deletion compensation work, removes expired session/security/idempotency/rate-limit state, and repairs stranded generation reservations.
 - Account deletion cancels a stored Stripe subscription and deletes the Stripe Customer before local cascades. If external cleanup fails, the local account is retained.
-- Backup-deletion timing, free/paid retention, and production overdue telemetry remain pending policy and infrastructure decisions.
+- A July 25 D1 export was integrity-checked and restored into an isolated rehearsal database with matching core-table counts; R2 key/object counts also matched. Backup-deletion timing, free/paid retention policy, production overdue telemetry, and promotion from a restored database remain pending decisions.
 
 ## Verification
 
@@ -172,12 +190,14 @@ The endpoint is synchronous. Reusing the same idempotency key within 24 hours re
 npm run check
 npm test
 npm run build
-npm audit --audit-level=moderate
+npm run check:artifacts
+npm run audit:production
+npm run audit:dependencies
 ```
 
-The 39-test suite covers local rendering, the shared browser/local/Worker catalog contract, Cloudflare password/offer contracts, pricing promotion persistence, quota, registration/verification, migration, recovery, sessions, export/deletion, projects, favorites, credit accounting, scoped keys, API logs/idempotency, OAuth mapping, recoverable Stripe fulfillment and invoice validation, refund quarantine, external deletion safety, origin rejection, maintenance, persisted rate limits, production config gates, and Qwen SSRF/MIME safeguards.
+The automated suite covers rendering, the browser/Worker catalog contract, the signed-out generation gate, Cloudflare password/offer contracts, yearly-default pricing, 4/8/16 charging, Starter-versus-Creator entitlements, registration/verification, workspace overview, private support conversations, recovery, sessions, export/deletion, projects, favorites, concurrent D1 credit accounting, scoped keys, API logs/idempotency, OAuth mapping, recoverable Stripe fulfillment and invoice validation, refund and Radar fraud-warning quarantine, external deletion safety, origin rejection, maintenance, persisted rate limits, configuration gates, and Qwen host/MIME safeguards. Historical promotion tests remain isolated in the inactive comparison adapter.
 
-Passing these commands means the repository is locally consistent. The custom-domain Worker/D1/R2 health, guest session, promotion, generation, R2-backed asset, free-watermark, TLS, canonical metadata, and `www` redirect paths were live-smoke-tested. This does not replace real OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
+Passing these commands means the repository is locally consistent. The current account-required revision has been deployed to the isolated Stripe Sandbox for the billing evidence described above; the canonical acceptance Worker has new Checkout enabled only by the explicit repository-owner decision recorded in [Release Readiness](./docs/RELEASE_READINESS.md). This does not replace the remaining OAuth/email/Stripe/Qwen acceptance, formal WCAG/browser-matrix testing, or a production launch decision.
 
 ## Project Documentation
 
@@ -190,7 +210,7 @@ Passing these commands means the repository is locally consistent. The custom-do
 ## Stack
 
 - React 19, Tailwind CSS 4, and daisyUI 5
-- Express 5 and Node.js
-- Hono on Cloudflare Pages Functions/Workers
-- SQLite through `node:sqlite` locally; Cloudflare D1 and R2 in the acceptance environment
+- Hono on Cloudflare Workers
+- Cloudflare D1 and private R2 in Wrangler development and the acceptance environment
+- Express 5, Node.js, and SQLite retained only as a legacy comparison adapter
 - TypeScript across client, server, and tests

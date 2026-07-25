@@ -14,7 +14,14 @@ import type {
   ImageQuality,
   ImageStyle,
   Project,
+  SupportMessage,
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTicketPriority,
+  SupportTicketStatus,
   User,
+  WorkspaceActivity,
+  WorkspaceOverview,
 } from "../src/types.js";
 
 const databasePath = resolve(process.env.DATABASE_PATH ?? "./data/qwenimage.db");
@@ -418,6 +425,29 @@ runSchemaMigration(7, "versioned Stripe price and credit catalog", () => {
   ) WHERE stripe_price_id IS NULL`).run();
 });
 
+runSchemaMigration(8, "workspace support tickets", () => {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN ('generation', 'billing', 'api', 'account', 'other')),
+      priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal', 'high')),
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'waiting', 'resolved', 'closed')),
+      last_message_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS support_messages (
+      id TEXT PRIMARY KEY,
+      ticket_id TEXT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+      author TEXT NOT NULL CHECK(author IN ('user', 'support')),
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+});
+
 database.prepare("UPDATE users SET updated_at = created_at WHERE updated_at IS NULL").run();
 database.prepare("UPDATE sessions SET last_seen_at = created_at WHERE last_seen_at IS NULL").run();
 
@@ -445,6 +475,8 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS pricing_promotions_expiry_idx ON pricing_promotions(expires_at);
   CREATE INDEX IF NOT EXISTS rate_limit_reset_idx ON rate_limit_buckets(reset_at);
   CREATE INDEX IF NOT EXISTS api_request_logs_user_idx ON api_request_logs(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS support_tickets_user_idx ON support_tickets(user_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS support_messages_ticket_idx ON support_messages(ticket_id, created_at ASC);
 `);
 
 function transaction<T>(work: () => T): T {
@@ -1199,6 +1231,196 @@ export function listApiRequestLogs(userId: string, limit = 100): ApiRequestLog[]
   return rows.map((row) => ({ id: row.id, userId: row.user_id, apiKeyId: row.api_key_id, method: row.method, path: row.path, statusCode: row.status_code, durationMs: row.duration_ms, requestId: row.request_id, createdAt: row.created_at }));
 }
 
+interface SupportTicketRow {
+  id: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  message_count: number;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function toSupportTicket(row: SupportTicketRow): SupportTicket {
+  return {
+    id: row.id,
+    subject: row.subject,
+    category: row.category,
+    priority: row.priority,
+    status: row.status,
+    messageCount: Number(row.message_count),
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function listSupportTickets(userId: string): SupportTicket[] {
+  const rows = database.prepare(`SELECT t.id, t.subject, t.category, t.priority, t.status, t.last_message_at, t.created_at, t.updated_at,
+    COUNT(m.id) message_count
+    FROM support_tickets t LEFT JOIN support_messages m ON m.ticket_id = t.id
+    WHERE t.user_id = ? GROUP BY t.id ORDER BY t.updated_at DESC`)
+    .all(userId) as unknown as SupportTicketRow[];
+  return rows.map(toSupportTicket);
+}
+
+export function getSupportTicket(userId: string, ticketId: string) {
+  const row = database.prepare(`SELECT t.id, t.subject, t.category, t.priority, t.status, t.last_message_at, t.created_at, t.updated_at,
+    COUNT(m.id) message_count
+    FROM support_tickets t LEFT JOIN support_messages m ON m.ticket_id = t.id
+    WHERE t.id = ? AND t.user_id = ? GROUP BY t.id`)
+    .get(ticketId, userId) as SupportTicketRow | undefined;
+  if (!row) return null;
+  const messages = database.prepare(`SELECT id, ticket_id, author, body, created_at
+    FROM support_messages WHERE ticket_id = ? ORDER BY created_at ASC`)
+    .all(ticketId) as unknown as Array<{ id: string; ticket_id: string; author: SupportMessage["author"]; body: string; created_at: string }>;
+  return {
+    ...toSupportTicket(row),
+    messages: messages.map((message) => ({
+      id: message.id,
+      ticketId: message.ticket_id,
+      author: message.author,
+      body: message.body,
+      createdAt: message.created_at,
+    })),
+  };
+}
+
+export function createSupportTicket(input: {
+  id: string;
+  messageId: string;
+  userId: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  message: string;
+}) {
+  return transaction(() => {
+    const createdAt = new Date().toISOString();
+    database.prepare(`INSERT INTO support_tickets
+      (id, user_id, subject, category, priority, status, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`)
+      .run(input.id, input.userId, input.subject, input.category, input.priority, createdAt, createdAt, createdAt);
+    database.prepare(`INSERT INTO support_messages (id, ticket_id, author, body, created_at)
+      VALUES (?, ?, 'user', ?, ?)`)
+      .run(input.messageId, input.id, input.message, createdAt);
+    return getSupportTicket(input.userId, input.id)!;
+  });
+}
+
+export function addSupportMessage(input: { id: string; ticketId: string; userId: string; message: string }) {
+  return transaction(() => {
+    const ticket = database.prepare("SELECT status FROM support_tickets WHERE id = ? AND user_id = ?")
+      .get(input.ticketId, input.userId) as { status: SupportTicketStatus } | undefined;
+    if (!ticket) return { outcome: "not_found" as const, ticket: null };
+    if (ticket.status === "closed") return { outcome: "closed" as const, ticket: null };
+    const createdAt = new Date().toISOString();
+    database.prepare("INSERT INTO support_messages (id, ticket_id, author, body, created_at) VALUES (?, ?, 'user', ?, ?)")
+      .run(input.id, input.ticketId, input.message, createdAt);
+    database.prepare("UPDATE support_tickets SET status = 'open', last_message_at = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+      .run(createdAt, createdAt, input.ticketId, input.userId);
+    return { outcome: "ok" as const, ticket: getSupportTicket(input.userId, input.ticketId)! };
+  });
+}
+
+export function updateSupportTicketStatus(input: { ticketId: string; userId: string; status: "open" | "closed" }) {
+  const changed = database.prepare("UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(input.status, new Date().toISOString(), input.ticketId, input.userId).changes;
+  return changed ? getSupportTicket(input.userId, input.ticketId) : null;
+}
+
+export function getWorkspaceOverview(userId: string): WorkspaceOverview {
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const counts = database.prepare(`SELECT
+    (SELECT COUNT(*) FROM generations WHERE owner_user_id = ?) generations_all_time,
+    (SELECT COUNT(*) FROM generations WHERE owner_user_id = ? AND created_at >= ?) generations_this_month,
+    (SELECT COUNT(*) FROM projects WHERE user_id = ? AND archived = 0) active_projects,
+    (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) active_api_keys,
+    (SELECT COUNT(*) FROM support_tickets WHERE user_id = ? AND status IN ('open', 'waiting')) open_support_tickets`)
+    .get(userId, userId, monthStart.toISOString(), userId, userId, userId) as {
+      generations_all_time: number;
+      generations_this_month: number;
+      active_projects: number;
+      active_api_keys: number;
+      open_support_tickets: number;
+    };
+
+  const generationActivity = database.prepare(`SELECT id, prompt, status, quality, created_at
+    FROM generations WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT 5`).all(userId) as unknown as Array<{
+      id: string; prompt: string; status: Generation["status"]; quality: ImageQuality; created_at: string;
+    }>;
+  const creditActivity = database.prepare(`SELECT id, type, amount, description, created_at
+    FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`).all(userId) as unknown as Array<{
+      id: string; type: CreditEntry["type"]; amount: number; description: string; created_at: string;
+    }>;
+  const paymentActivity = database.prepare(`SELECT id, offer_id, status, financial_status, amount_cents, currency, created_at
+    FROM billing_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`).all(userId) as unknown as Array<{
+      id: string; offer_id: string; status: string; financial_status: string; amount_cents: number; currency: string; created_at: string;
+    }>;
+  const supportActivity = database.prepare(`SELECT id, subject, status, category, updated_at
+    FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC LIMIT 5`).all(userId) as unknown as Array<{
+      id: string; subject: string; status: string; category: string; updated_at: string;
+    }>;
+
+  const recentActivity: WorkspaceActivity[] = [
+    ...generationActivity.map((item) => ({
+      id: `generation:${item.id}`,
+      type: "generation" as const,
+      title: item.status === "complete" ? "Image generated" : item.status === "failed" ? "Generation failed safely" : "Generation started",
+      detail: item.prompt,
+      status: item.quality,
+      href: "/studio/history",
+      createdAt: item.created_at,
+    })),
+    ...creditActivity.map((item) => ({
+      id: `credit:${item.id}`,
+      type: "credit" as const,
+      title: item.description,
+      detail: `${item.amount > 0 ? "+" : ""}${item.amount} credits`,
+      status: item.type.replaceAll("_", " "),
+      href: "/studio/credits",
+      createdAt: item.created_at,
+    })),
+    ...paymentActivity.map((item) => ({
+      id: `payment:${item.id}`,
+      type: "payment" as const,
+      title: item.offer_id.replaceAll("_", " "),
+      detail: new Intl.NumberFormat("en-US", { style: "currency", currency: item.currency.toUpperCase() }).format(item.amount_cents / 100),
+      status: item.financial_status === "normal" ? item.status : item.financial_status,
+      href: "/studio/payments",
+      createdAt: item.created_at,
+    })),
+    ...supportActivity.map((item) => ({
+      id: `support:${item.id}`,
+      type: "support" as const,
+      title: item.subject,
+      detail: `${item.category} support`,
+      status: item.status,
+      href: "/studio/support",
+      createdAt: item.updated_at,
+    })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+
+  const billing = getBillingState(userId);
+  const credits = getCreditAccount(userId);
+  return {
+    plan: { name: billing.plan === "creator" ? "Creator" : "Free", status: billing.status },
+    credits,
+    usage: {
+      generationsThisMonth: Number(counts.generations_this_month),
+      generationsAllTime: Number(counts.generations_all_time),
+    },
+    activeProjects: Number(counts.active_projects),
+    activeApiKeys: Number(counts.active_api_keys),
+    openSupportTickets: Number(counts.open_support_tickets),
+    recentActivity,
+  };
+}
+
 export function findIdempotentGeneration(userId: string, key: string) {
   const row = database.prepare(`SELECT g.* FROM idempotency_keys i
     JOIN generations g ON g.id = i.generation_id
@@ -1222,6 +1444,7 @@ export function getAccountExport(userId: string) {
   const credits = { account: getCreditAccount(userId), ledger: listCreditLedger(userId, 10_000) };
   const apiKeys = listApiKeys(userId);
   const apiRequests = listApiRequestLogs(userId, 10_000);
+  const supportTickets = listSupportTickets(userId).map((ticket) => getSupportTicket(userId, ticket.id));
   const identities = database.prepare(`SELECT provider, created_at FROM oauth_identities
     WHERE user_id = ? ORDER BY created_at ASC`).all(userId) as unknown as Array<{ provider: string; created_at: string }>;
   return {
@@ -1233,6 +1456,7 @@ export function getAccountExport(userId: string) {
     credits,
     apiKeys,
     apiRequests,
+    supportTickets,
     sessions,
     connectedAccounts: identities.map((identity) => ({ provider: identity.provider, connectedAt: identity.created_at })),
     billing: (() => {
@@ -1581,6 +1805,8 @@ export function deleteUserAccount(userId: string) {
 
 export function resetDatabaseForTests() {
   database.exec(`
+    DELETE FROM support_messages;
+    DELETE FROM support_tickets;
     DELETE FROM api_request_logs;
     DELETE FROM rate_limit_buckets;
     DELETE FROM maintenance_runs;

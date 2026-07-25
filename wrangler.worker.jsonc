@@ -18,6 +18,34 @@
   "triggers": {
     "crons": ["*/15 * * * *"]
   },
+  "queues": {
+    "producers": [
+      {
+        "binding": "GENERATION_QUEUE",
+        "queue": "qwen-image-3-generation"
+      },
+      {
+        "binding": "GENERATION_PRIORITY_QUEUE",
+        "queue": "qwen-image-3-generation-priority"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "qwen-image-3-generation",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 1
+      },
+      {
+        "queue": "qwen-image-3-generation-priority",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 2
+      }
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": {
@@ -25,6 +53,14 @@
       "invocation_logs": true
     }
   },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "send_email": [
+    {
+      "name": "OPS_ALERT_EMAIL"
+    }
+  ],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist",
@@ -47,12 +83,27 @@
   ],
   "vars": {
     "APP_BASE_URL": "https://qwen-image-3.net",
-    "BILLING_ENABLED": "false",
-    "GENERATION_PROVIDER": "local",
+    "DEPLOY_REVISION": "acceptance-durable-generation-queue-20260725",
+    "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
+    "STRIPE_TIMEOUT_MS": "15000",
+    "BILLING_ENABLED": "true",
+    "OPS_ALERT_FROM": "alerts@qwen-image-3.net",
+    "GENERATION_PROVIDER": "kie",
     "QWEN_MODEL_ID": "local-qwen-preview",
-    "STRIPE_PRICE_CREATOR_INTRO": "price_1TwEbTQnZzuLeKGY8QOg8XtQ",
-    "STRIPE_PRICE_CREATOR_MONTHLY": "price_1TwEYzQnZzuLeKGYJiEnuAxo",
-    "STRIPE_PRICE_CREDITS_100": "price_1TwEd3QnZzuLeKGYOXCJommu",
-    "STRIPE_PRICE_CREDITS_300": "price_1TwEeoQnZzuLeKGYpqgbXL5p"
+    "KIE_API_BASE_URL": "https://api.kie.ai",
+    "KIE_API_ALLOWED_HOST": "api.kie.ai",
+    "KIE_MODEL_ID": "qwen2/text-to-image",
+    "KIE_IMAGE_ALLOWED_HOSTS": "tempfile.aiquickdraw.com,file.aiquickdraw.com",
+    "KIE_POLL_INTERVAL_MS": "2000",
+    "KIE_MAX_POLL_MS": "120000",
+    "STRIPE_PRICE_STARTER_MONTHLY": "price_1TwMSWHyVvkt92TEJXyOtAjU",
+    "STRIPE_PRICE_STARTER_YEARLY": "price_1TwMSWHyVvkt92TE7PQbN7jU",
+    "STRIPE_PRICE_CREATOR_MONTHLY": "price_1TwMSXHyVvkt92TEeoNEvU57",
+    "STRIPE_PRICE_CREATOR_YEARLY": "price_1TwMSYHyVvkt92TELfcuWC5B",
+    "STRIPE_PRICE_PROFESSIONAL_MONTHLY": "price_1TwMSZHyVvkt92TEfGFFtnKF",
+    "STRIPE_PRICE_PROFESSIONAL_YEARLY": "price_1TwMSaHyVvkt92TEtH8a22JR",
+    "STRIPE_PRICE_CREDITS_400": "price_1TwMSbHyVvkt92TEBWGvGd0Y",
+    "STRIPE_PRICE_CREDITS_1200": "price_1TwMScHyVvkt92TENyvKVc2Z",
+    "STRIPE_PRICE_CREDITS_3000": "price_1TwMSdHyVvkt92TEhloi1tBj"
   }
 }

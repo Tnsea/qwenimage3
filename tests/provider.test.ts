@@ -4,6 +4,15 @@ import { ProviderError } from "../server/providers/types.js";
 import { QwenImageProvider } from "../server/providers/qwen.js";
 
 test("Qwen provider maps the product request to the official synchronous API and downloads the asset", async () => {
+  assert.throws(
+    () => new QwenImageProvider({
+      apiKey: "sk-test",
+      baseUrl: "https://workspace.ap-southeast-1.maas.aliyuncs.com/api/v1",
+      model: "qwen-image-3",
+    }),
+    /Unsupported Qwen model/,
+  );
+
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const fetchImpl: typeof fetch = async (input, init) => {

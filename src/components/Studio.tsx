@@ -1,28 +1,54 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Archive, ArrowRight, BarChart3, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Image as ImageIcon, KeyRound, LayoutDashboard, LogOut, MailCheck, Menu, MonitorSmartphone, Plus, Settings, ShieldCheck, Sparkles, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Archive, ArrowRight, CheckCircle2, Coins, Copy, CreditCard, Download, FolderKanban, Heart, History, Home, Image as ImageIcon, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailCheck, Menu, MessageSquare, MonitorSmartphone, Moon, Plus, ReceiptText, RefreshCw, Send, Settings, ShieldCheck, Sun, Trash2, TriangleAlert, UserRound, X } from "lucide-react";
 import { api } from "../api";
-import type { AccountSession, ApiKeyCreated, ApiKeySummary, ApiRequestLog, AuthTokenDelivery, BillingSummary, CreditEntry, Generation, Project, SessionState } from "../types";
+import { BILLING_TERMS_VERSION, billingPolicySummary } from "../billing-policy";
+import type {
+  AccountSession,
+  ApiKeyCreated,
+  ApiKeySummary,
+  ApiRequestLog,
+  BillingSummary,
+  CatalogModel,
+  CreditEntry,
+  Generation,
+  Project,
+  SessionState,
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTicketDetail,
+  SupportTicketPriority,
+  WorkspaceActivity,
+  WorkspaceOverview,
+} from "../types";
 import { GeneratorWorkspace } from "./GeneratorWorkspace";
-import { PricingCountdown, usePromotionCountdown } from "./PricingCountdown";
 
 interface StudioProps {
   path: string;
   session: SessionState;
+  models: CatalogModel[];
+  theme: "dark" | "light";
   onNavigate: (path: string) => void;
+  onTheme: () => void;
   onRequireAuth: () => void;
   onSessionRefresh: () => Promise<void>;
+  onLogout: () => Promise<void>;
 }
 
-const studioNavigation = [
-  { label: "Overview", path: "/studio", icon: LayoutDashboard },
-  { label: "Create", path: "/studio/new", icon: Sparkles },
-  { label: "Projects", path: "/studio/projects", icon: FolderKanban },
+const workspaceNavigation = [
+  { label: "Create", path: "/studio", icon: Plus },
   { label: "History", path: "/studio/history", icon: History },
+  { label: "Projects", path: "/studio/projects", icon: FolderKanban },
   { label: "Favorites", path: "/studio/favorites", icon: Heart },
+  { label: "Overview", path: "/studio/overview", icon: LayoutDashboard },
+] as const;
+
+const accountNavigation = [
   { label: "Credits", path: "/studio/credits", icon: Coins },
   { label: "Billing", path: "/studio/billing", icon: CreditCard },
-  { label: "API keys", path: "/studio/api-keys", icon: KeyRound },
-  { label: "API activity", path: "/studio/api-activity", icon: Activity },
+  { label: "Payments", path: "/studio/payments", icon: ReceiptText },
+  { label: "API Keys", path: "/studio/api-keys", icon: KeyRound },
+  { label: "API Activity", path: "/studio/api-activity", icon: Activity },
+  { label: "Support", path: "/studio/support", icon: LifeBuoy },
   { label: "Settings", path: "/studio/settings", icon: Settings },
 ] as const;
 
@@ -34,17 +60,118 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function generationDayKey(value: string) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function formatGenerationDay(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const key = generationDayKey(value);
+  if (key === generationDayKey(today.toISOString())) return "Today";
+  if (key === generationDayKey(yesterday.toISOString())) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(date);
+}
+
+interface GenerationArchivePage {
+  generations: Generation[];
+  page?: {
+    hasMore: boolean;
+    nextOffset: number;
+  };
+}
+
+async function loadGenerationArchive() {
+  const archive: Generation[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+
+  while (true) {
+    const payload = await api<GenerationArchivePage>(`/api/generations?limit=50&offset=${offset}`);
+    payload.generations.forEach((generation) => {
+      if (!seen.has(generation.id)) {
+        seen.add(generation.id);
+        archive.push(generation);
+      }
+    });
+    if (!payload.page?.hasMore || payload.page.nextOffset <= offset) return archive;
+    offset = payload.page.nextOffset;
+  }
+}
+
+function isOptimisticGeneration(generation: Generation) {
+  return generation.id.startsWith("pending-");
+}
+
+function generationProgress(generation: Generation) {
+  if (generation.status !== "processing") return null;
+  if (isOptimisticGeneration(generation)) {
+    return {
+      badge: "Submitting",
+      title: "Submitting your request",
+      detail: "A private conversation turn has been created",
+      footer: "Request being submitted.",
+      action: "Submitting request",
+    };
+  }
+  if (!generation.processingStartedAt) {
+    return {
+      badge: "Queued",
+      title: "Waiting in queue",
+      detail: `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"} reserved until completion`,
+      footer: `${generation.queueTier === "vip" ? "Priority" : "Standard"} queue · waiting for a worker.`,
+      action: "Waiting in queue",
+    };
+  }
+  return {
+    badge: "Generating",
+    title: "Generating your image",
+    detail: "The response will appear here when it is ready",
+    footer: "Image generation in progress.",
+    action: "Generating image",
+  };
+}
+
 function formatCurrency(amountCents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amountCents / 100);
 }
 
-export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefresh }: StudioProps) {
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function ActivityIcon({ activity }: { activity: WorkspaceActivity }) {
+  if (activity.type === "credit") return <Coins size={16} />;
+  if (activity.type === "payment") return <ReceiptText size={16} />;
+  if (activity.type === "support") return <LifeBuoy size={16} />;
+  return <ImageIcon size={16} />;
+}
+
+export function Studio({ path, session, models, theme, onNavigate, onTheme, onRequireAuth, onSessionRefresh, onLogout }: StudioProps) {
+  const [overview, setOverview] = useState<WorkspaceOverview | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [ledger, setLedger] = useState<CreditEntry[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [apiRequests, setApiRequests] = useState<ApiRequestLog[]>([]);
   const [billing, setBilling] = useState<BillingSummary | null>(null);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [activeTicket, setActiveTicket] = useState<SupportTicketDetail | null>(null);
+  const [supportSubject, setSupportSubject] = useState("");
+  const [supportCategory, setSupportCategory] = useState<SupportTicketCategory>("generation");
+  const [supportPriority, setSupportPriority] = useState<SupportTicketPriority>("normal");
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportReply, setSupportReply] = useState("");
   const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
@@ -53,40 +180,106 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
   const [profileName, setProfileName] = useState(session.user?.name ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [verificationToken, setVerificationToken] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [billingPeriod, setBillingPeriod] = useState<"month" | "year">("year");
+  const [billingTermsConfirmed, setBillingTermsConfirmed] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [studioLoading, setStudioLoading] = useState(true);
   const deleteDialogRef = useRef<HTMLDialogElement>(null);
-  const promotionCountdown = usePromotionCountdown(billing?.promotion);
 
-  async function loadStudio() {
+  const loadStudio = useCallback(async () => {
     if (!session.user) return;
-    const [projectPayload, generationPayload, creditPayload, keyPayload, requestPayload, sessionPayload, billingPayload] = await Promise.all([
+    const requestedAt = Date.now();
+    const [overviewPayload, projectPayload, generationPayload, creditPayload, keyPayload, requestPayload, sessionPayload, billingPayload, supportPayload] = await Promise.all([
+      api<WorkspaceOverview>("/api/workspace/overview"),
       api<{ projects: Project[] }>("/api/projects"),
-      api<{ generations: Generation[] }>("/api/generations?limit=50"),
+      loadGenerationArchive(),
       api<{ account: { available: number; reserved: number }; ledger: CreditEntry[] }>("/api/credits"),
       api<{ apiKeys: ApiKeySummary[] }>("/api/api-keys"),
       api<{ requests: ApiRequestLog[] }>("/api/api-logs"),
       api<{ sessions: AccountSession[] }>("/api/account/sessions"),
       api<BillingSummary>("/api/billing"),
+      api<{ tickets: SupportTicket[] }>("/api/support/tickets"),
     ]);
+    setOverview(overviewPayload);
     setProjects(projectPayload.projects);
-    setGenerations(generationPayload.generations);
+    setGenerations((current) => {
+      const archiveIds = new Set(generationPayload.map((generation) => generation.id));
+      const createdDuringLoad = current.filter((generation) => !archiveIds.has(generation.id) && new Date(generation.createdAt).getTime() >= requestedAt);
+      return [...createdDuringLoad, ...generationPayload].sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
+    });
     setLedger(creditPayload.ledger);
     setApiKeys(keyPayload.apiKeys);
     setApiRequests(requestPayload.requests);
     setAccountSessions(sessionPayload.sessions);
     setBilling(billingPayload);
-  }
+    setBillingTermsConfirmed(billingPayload.terms.accepted);
+    setSupportTickets(supportPayload.tickets);
+  }, [session.user]);
 
-  useEffect(() => { void loadStudio().catch((reason: Error) => setError(reason.message)); }, [session.user?.id, path]);
+  useEffect(() => {
+    let active = true;
+    void loadStudio()
+      .catch((reason: Error) => setError(reason.message))
+      .finally(() => {
+        if (active) setStudioLoading(false);
+      });
+    return () => { active = false; };
+  }, [loadStudio]);
   useEffect(() => { setProfileName(session.user?.name ?? ""); }, [session.user?.name]);
 
   const favoriteGenerations = useMemo(() => generations.filter((item) => item.favorite), [generations]);
-  const currentSection = path.split("/")[2] || "overview";
+  const currentSection = path.split("/")[2] || "create";
+  const processingGenerationKey = useMemo(
+    () => generations
+      .filter((generation) => generation.status === "processing" && !isOptimisticGeneration(generation))
+      .map((generation) => generation.id)
+      .sort()
+      .join(","),
+    [generations],
+  );
+
+  useEffect(() => {
+    if (!session.user || !processingGenerationKey) return;
+    let active = true;
+    const generationIds = processingGenerationKey.split(",");
+    const refreshProcessingGenerations = async () => {
+      const results = await Promise.allSettled(
+        generationIds.map((generationId) => api<Generation>(`/api/generations/${generationId}`)),
+      );
+      if (!active) return;
+      const refreshed = new Map<string, Generation>();
+      results.forEach((result) => {
+        if (result.status === "fulfilled") refreshed.set(result.value.id, result.value);
+      });
+      if (!refreshed.size) return;
+      const terminalGenerations = Array.from(refreshed.values())
+        .filter((generation) => generation.status !== "processing");
+      setGenerations((items) => items.map((item) => {
+        const replacement = refreshed.get(item.id);
+        if (!replacement) return item;
+        return replacement;
+      }));
+      if (terminalGenerations.length) {
+        const failures = terminalGenerations.filter((generation) => generation.status === "failed").length;
+        setMessage(failures === terminalGenerations.length
+          ? "Generation failed. This turn remains in the conversation and its reserved credits were refunded."
+          : failures
+            ? "Generation updates arrived. Completed results were saved and failed requests were refunded."
+            : "Generation complete. The response was updated in this conversation.");
+        void onSessionRefresh().catch(() => undefined);
+      }
+    };
+    void refreshProcessingGenerations();
+    const interval = window.setInterval(() => void refreshProcessingGenerations(), 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [onSessionRefresh, processingGenerationKey, session.user]);
 
   useEffect(() => {
     if (currentSection !== "billing") return;
@@ -115,6 +308,176 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update the project."); }
   }
 
+  async function setGenerationFavorite(generation: Generation) {
+    const action = `generation-favorite-${generation.id}`;
+    setBusyAction(action);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await api<{ favorite: boolean }>(`/api/generations/${generation.id}/favorite`, {
+        method: "PATCH",
+        body: JSON.stringify({ favorite: !generation.favorite }),
+      });
+      setGenerations((items) => items.map((item) => item.id === generation.id ? { ...item, favorite: updated.favorite } : item));
+      setMessage(updated.favorite ? "Saved to Favorites." : "Removed from Favorites.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update this favorite.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function createGenerationVariation(generation: Generation) {
+    const retrying = generation.status === "failed";
+    const actionLabel = retrying ? "retry" : "variation";
+    if (!window.confirm(`Create a ${actionLabel} using the same settings? This generation uses ${generation.creditCost} credits when it completes.`)) return;
+    const action = `generation-variation-${generation.id}`;
+    const startedAt = new Date().toISOString();
+    const pendingGeneration: Generation = {
+      ...generation,
+      id: `pending-${crypto.randomUUID()}`,
+      status: "processing",
+      imageUrl: null,
+      downloadUrl: null,
+      provider: "pending",
+      favorite: false,
+      queuedAt: startedAt,
+      processingStartedAt: null,
+      createdAt: startedAt,
+    };
+    setBusyAction(action);
+    setError("");
+    setMessage(`${retrying ? "Retry" : "Variation"} started. Progress is visible in the creation conversation.`);
+    setGenerations((items) => [pendingGeneration, ...items]);
+    if (currentSection === "create" || currentSection === "new") {
+      window.setTimeout(() => document.getElementById(`creation-generation-${pendingGeneration.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    }
+    try {
+      const created = await api<Generation>("/api/generations", {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: generation.prompt,
+          modelId: generation.model,
+          aspectRatio: generation.aspectRatio,
+          style: generation.style,
+          quality: generation.quality,
+          projectId: generation.projectId,
+        }),
+      });
+      setGenerations((items) => [created, ...items.filter((item) => item.id !== created.id && item.id !== pendingGeneration.id)]);
+      await Promise.allSettled([
+        onSessionRefresh(),
+        api<WorkspaceOverview>("/api/workspace/overview").then(setOverview),
+      ]);
+      setMessage(created.status === "processing"
+        ? `${retrying ? "Retry" : "Variation"} queued. This turn will update when generation finishes.`
+        : retrying
+          ? "Retry complete. The new result was added to your creation stream."
+          : "Variation complete. The new result was added to your creation stream.");
+      if (currentSection === "create" || currentSection === "new") {
+        window.setTimeout(() => document.getElementById(`creation-generation-${created.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+      }
+    } catch (reason) {
+      setGenerations((items) => items.map((item) => item.id === pendingGeneration.id ? { ...item, status: "failed" } : item));
+      setError(reason instanceof Error ? reason.message : `Could not create the ${actionLabel}.`);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function deleteGenerationRecord(generation: Generation) {
+    if (!window.confirm("Delete this generation and its private image permanently? This cannot be undone.")) return;
+    if (isOptimisticGeneration(generation)) {
+      setGenerations((items) => items.filter((item) => item.id !== generation.id));
+      setMessage("Local failed attempt removed from this conversation.");
+      return;
+    }
+    const action = `generation-delete-${generation.id}`;
+    setBusyAction(action);
+    setError("");
+    setMessage("");
+    try {
+      await api<void>(`/api/generations/${generation.id}`, { method: "DELETE" });
+      setGenerations((items) => items.filter((item) => item.id !== generation.id));
+      setOverview(await api<WorkspaceOverview>("/api/workspace/overview"));
+      setMessage("Generation deleted.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete this generation.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function createSupportRequest(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("support-create");
+    setError("");
+    try {
+      const ticket = await api<SupportTicketDetail>("/api/support/tickets", {
+        method: "POST",
+        body: JSON.stringify({
+          subject: supportSubject,
+          category: supportCategory,
+          priority: supportPriority,
+          message: supportMessage,
+        }),
+      });
+      setSupportTickets((items) => [ticket, ...items]);
+      setActiveTicket(ticket);
+      setSupportSubject("");
+      setSupportCategory("generation");
+      setSupportPriority("normal");
+      setSupportMessage("");
+      setMessage(`Support ticket ${ticket.id.slice(0, 8)} opened.`);
+      setOverview(await api<WorkspaceOverview>("/api/workspace/overview"));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open the support ticket."); }
+    finally { setBusyAction(""); }
+  }
+
+  async function openSupportTicket(ticketId: string) {
+    setBusyAction(ticketId);
+    setError("");
+    try {
+      setActiveTicket(await api<SupportTicketDetail>(`/api/support/tickets/${ticketId}`));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load the support ticket."); }
+    finally { setBusyAction(""); }
+  }
+
+  async function replyToSupportTicket(event: React.FormEvent) {
+    event.preventDefault();
+    if (!activeTicket) return;
+    setBusyAction("support-reply");
+    setError("");
+    try {
+      const ticket = await api<SupportTicketDetail>(`/api/support/tickets/${activeTicket.id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ message: supportReply }),
+      });
+      setActiveTicket(ticket);
+      setSupportTickets((items) => items.map((item) => item.id === ticket.id ? ticket : item));
+      setSupportReply("");
+      setMessage("Your reply was added to the ticket.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send the reply."); }
+    finally { setBusyAction(""); }
+  }
+
+  async function setSupportTicketClosed(closed: boolean) {
+    if (!activeTicket) return;
+    setBusyAction("support-status");
+    setError("");
+    try {
+      const ticket = await api<SupportTicketDetail>(`/api/support/tickets/${activeTicket.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: closed ? "closed" : "open" }),
+      });
+      setActiveTicket(ticket);
+      setSupportTickets((items) => items.map((item) => item.id === ticket.id ? ticket : item));
+      setMessage(closed ? "Support ticket closed." : "Support ticket reopened.");
+      setOverview(await api<WorkspaceOverview>("/api/workspace/overview"));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update the support ticket."); }
+    finally { setBusyAction(""); }
+  }
+
   async function createKey(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -122,6 +485,7 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
       const created = await api<ApiKeyCreated>("/api/api-keys", { method: "POST", body: JSON.stringify({ name: keyName }) });
       setIssuedKey(created);
       setApiKeys((items) => [created, ...items]);
+      setOverview((current) => current ? { ...current, activeApiKeys: current.activeApiKeys + 1 } : current);
       setKeyName("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create the API key."); }
   }
@@ -130,6 +494,7 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
     try {
       await api<void>(`/api/api-keys/${id}`, { method: "DELETE" });
       setApiKeys((items) => items.filter((item) => item.id !== id));
+      setOverview((current) => current ? { ...current, activeApiKeys: Math.max(0, current.activeApiKeys - 1) } : current);
       if (issuedKey?.id === id) setIssuedKey(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not revoke the API key."); }
   }
@@ -150,30 +515,14 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
     setBusyAction("verification");
     setError("");
     try {
-      const delivery = await api<AuthTokenDelivery & { alreadyVerified?: boolean }>("/api/auth/verify-email/request", { method: "POST" });
-      if (delivery.devToken) {
-        setVerificationToken(delivery.devToken);
-        setMessage("Local verification link created. Complete it below.");
-      } else if (delivery.alreadyVerified) {
+      const delivery = await api<{ alreadyVerified?: boolean }>("/api/auth/verify-email/request", { method: "POST" });
+      if (delivery.alreadyVerified) {
         await onSessionRefresh();
         setMessage("This email is already verified.");
       } else {
         setMessage("Verification email sent. The link expires in 24 hours.");
       }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send the verification email."); }
-    finally { setBusyAction(""); }
-  }
-
-  async function completeLocalVerification() {
-    setBusyAction("verification");
-    setError("");
-    try {
-      await api<{ verified: true }>("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: verificationToken }) });
-      setVerificationToken("");
-      await onSessionRefresh();
-      await loadStudio();
-      setMessage("Email verified. 20 welcome credits were added exactly once.");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not verify the email."); }
     finally { setBusyAction(""); }
   }
 
@@ -214,12 +563,43 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
   }
 
   async function startCheckout(offerId: string) {
+    if (!billingTermsConfirmed) {
+      setError("Review and accept the current Billing Terms and Refund Policy before purchasing.");
+      return;
+    }
     setBusyAction(offerId);
     setError("");
     try {
       const payload = await api<{ url: string }>("/api/billing/checkout", { method: "POST", body: JSON.stringify({ offerId }) });
       window.location.assign(payload.url);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not start checkout."); setBusyAction(""); }
+  }
+
+  async function setBillingTermsConsent(confirmed: boolean) {
+    if (!confirmed) {
+      setBillingTermsConfirmed(false);
+      return;
+    }
+    if (billing?.terms.accepted) {
+      setBillingTermsConfirmed(true);
+      return;
+    }
+    setBusyAction("billing-terms");
+    setError("");
+    try {
+      const terms = await api<BillingSummary["terms"]>("/api/billing/terms/accept", {
+        method: "POST",
+        body: JSON.stringify({ version: BILLING_TERMS_VERSION, confirmed: true }),
+      });
+      setBilling((current) => current ? { ...current, terms } : current);
+      setBillingTermsConfirmed(true);
+      setMessage("Billing Terms and Refund Policy accepted.");
+    } catch (reason) {
+      setBillingTermsConfirmed(false);
+      setError(reason instanceof Error ? reason.message : "Could not record billing policy acceptance.");
+    } finally {
+      setBusyAction("");
+    }
   }
 
   async function openBillingPortal() {
@@ -244,28 +624,229 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
   }
 
   if (!session.user) {
-    return <main className="content-page studio-gate"><div className="card card-border"><div className="card-body"><KeyRound /><h1>Studio is your private workspace.</h1><p>Sign in to manage projects, migrated guest work, credits, favorites, and developer keys.</p><div className="card-actions"><button className="btn" type="button" onClick={onRequireAuth}>Sign in to Studio <ArrowRight size={15} /></button></div></div></div></main>;
+    return <main className="content-page studio-gate"><div className="card card-border"><div className="card-body"><KeyRound /><h1>Studio is your private workspace.</h1><p>Sign in to manage projects, credits, generations, favorites, and developer keys.</p><div className="card-actions"><button className="btn btn-primary" type="button" onClick={onRequireAuth}>Sign in to Studio <ArrowRight size={15} /></button></div></div></div></main>;
   }
 
-  const renderOverview = () => <div className="studio-content"><header className="studio-heading"><div><span>Good to see you, {session.user!.name.split(" ")[0]}</span><h1>Your creative control room</h1><p>Continue a project, watch credit usage, or start a fresh generation.</p></div><button className="btn" type="button" onClick={() => onNavigate("/studio/new")}><Plus size={16} />New creation</button></header><div className="stats studio-stats"><div className="stat"><div className="stat-figure"><Coins /></div><div className="stat-title">Available credits</div><div className="stat-value">{session.entitlements.credits}</div><div className="stat-desc">{session.entitlements.reservedCredits} currently reserved</div></div><div className="stat"><div className="stat-figure"><FolderKanban /></div><div className="stat-title">Active projects</div><div className="stat-value">{projects.filter((item) => !item.archived).length}</div><div className="stat-desc">{projects.reduce((total, item) => total + item.generationCount, 0)} organized generations</div></div><div className="stat"><div className="stat-figure"><ImageIcon /></div><div className="stat-title">Private generations</div><div className="stat-value">{generations.length}</div><div className="stat-desc">{favoriteGenerations.length} saved as favorites</div></div></div><section className="studio-panel"><div className="studio-panel-heading"><div><span>Recent work</span><h2>Pick up where you left off</h2></div><button className="btn btn-ghost btn-sm" onClick={() => onNavigate("/studio/history")}>View history <ArrowRight size={14} /></button></div><GenerationGrid generations={generations.slice(0, 6)} /></section></div>;
+  const renderLoading = () => <div className="studio-content studio-loading" aria-busy="true" aria-label="Loading workspace">
+    <header className="studio-loading-header">
+      <div className="skeleton studio-loading-kicker" />
+      <div className="skeleton studio-loading-title" />
+      <div className="skeleton studio-loading-copy" />
+    </header>
+    <div className="studio-loading-summary">
+      {Array.from({ length: 4 }, (_, index) => <div className="studio-loading-summary-item" key={index}><div className="skeleton studio-loading-label" /><div className="skeleton studio-loading-value" /><div className="skeleton studio-loading-note" /></div>)}
+    </div>
+    <div className="studio-loading-grid">
+      <section><div className="skeleton studio-loading-section-title" /><div className="studio-loading-thumbnails">{Array.from({ length: 3 }, (_, index) => <div className="skeleton studio-loading-thumbnail" key={index} />)}</div></section>
+      <aside><div className="skeleton studio-loading-section-title" />{Array.from({ length: 3 }, (_, index) => <div className="skeleton studio-loading-row" key={index} />)}</aside>
+    </div>
+  </div>;
+
+  const renderOverview = () => {
+    const metrics = [
+      {
+        value: overview?.plan.name ?? (session.entitlements.accountType === "creator" ? "Creator" : "Starter"),
+        label: "Plan",
+        note: overview?.plan.status === "active" ? "Active subscription" : "Current subscription",
+        path: "/studio/billing",
+      },
+      {
+        value: overview?.credits.available ?? session.entitlements.credits,
+        label: "Available credits",
+        note: `${overview?.credits.reserved ?? session.entitlements.reservedCredits} currently reserved`,
+        path: "/studio/credits",
+      },
+      {
+        value: overview?.usage.generationsThisMonth ?? 0,
+        label: "Images this month",
+        note: `${overview?.usage.generationsAllTime ?? generations.length} generated all time`,
+        path: "/studio/history",
+      },
+      {
+        value: overview?.activeApiKeys ?? apiKeys.length,
+        label: "Active API keys",
+        note: "Manage developer access",
+        path: "/studio/api-keys",
+      },
+    ];
+    return <div className="studio-content studio-overview">
+      <header className="studio-heading studio-overview-heading">
+        <div>
+          <span>Workspace</span>
+          <h1>Overview</h1>
+          <p>{greeting()}, {session.user!.name.split(" ")[0]}. Your private work is ready where you left it.</p>
+        </div>
+        <button className="btn studio-primary-action" type="button" onClick={() => onNavigate("/studio")}><Plus size={16} />Create image</button>
+      </header>
+
+      <div className="studio-summary" aria-label="Workspace summary">
+        {metrics.map((metric) => <button className="workspace-summary-item" type="button" key={metric.path} onClick={() => onNavigate(metric.path)}>
+          <span>{metric.label}</span>
+          <strong>{metric.value}</strong>
+          <small>{metric.note}</small>
+        </button>)}
+      </div>
+
+      <div className="studio-overview-grid">
+        <section className="studio-panel studio-continue-panel">
+          <div className="studio-panel-heading">
+            <div><h2>Continue creating</h2><p>Your latest private work stays attached to your account.</p></div>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => onNavigate("/studio")}><Plus size={14} />New image</button>
+          </div>
+          <GenerationGrid
+            generations={generations.slice(0, 6)}
+            busyAction={busyAction}
+            onCreate={() => onNavigate("/studio")}
+            onDelete={deleteGenerationRecord}
+            onFavorite={setGenerationFavorite}
+            onVariation={createGenerationVariation}
+          />
+        </section>
+
+        <section className="studio-panel studio-activity-panel">
+          <div className="studio-panel-heading">
+            <div><h2>Recent activity</h2><p>Generations, credits, payments, and support.</p></div>
+          </div>
+          {overview?.recentActivity.length ? <ul className="list studio-activity-list">
+            {overview.recentActivity.map((activity) => <li className="list-row" key={activity.id}>
+              <span className="studio-activity-icon"><ActivityIcon activity={activity} /></span>
+              <button type="button" className="studio-activity-copy" onClick={() => onNavigate(activity.href)}>
+                <strong>{activity.title}</strong>
+                <small>{activity.detail}</small>
+              </button>
+              <time dateTime={activity.createdAt}>{formatDate(activity.createdAt)}</time>
+            </li>)}
+          </ul> : <div className="studio-empty studio-activity-empty"><History /><h3>No recent activity</h3><p>Generations, credit changes, payments, and support updates will appear here.</p></div>}
+        </section>
+      </div>
+    </div>;
+  };
 
   const renderProjects = () => <div className="studio-content"><header className="studio-heading"><div><span>Organization</span><h1>Projects</h1><p>Group generations by campaign, client, or creative direction.</p></div></header><form className="card card-border studio-form-card" onSubmit={createProject}><div className="card-body"><h2 className="card-title">Create a project</h2><div className="studio-form-grid"><label><span>Project name</span><input className="input" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Spring launch" required minLength={2} maxLength={80} /></label><label><span>Description</span><input className="input" value={newProjectDescription} onChange={(event) => setNewProjectDescription(event.target.value)} placeholder="Campaign images and prompt directions" maxLength={240} /></label><button className="btn" type="submit"><Plus size={15} />Create</button></div></div></form><div className="project-grid">{projects.map((project) => <article className={`card card-border project-card ${project.archived ? "is-archived" : ""}`} key={project.id}><div className="card-body"><div className="project-card-top"><FolderKanban /><span className="badge badge-outline">{project.generationCount} images</span></div><h2 className="card-title">{project.name}</h2><p>{project.description || "No description yet."}</p><small>Created {formatDate(project.createdAt)}</small><div className="card-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => void archiveProject(project)}><Archive size={14} />{project.archived ? "Restore" : "Archive"}</button></div></div></article>)}</div></div>;
 
-  const renderCredits = () => <div className="studio-content"><header className="studio-heading"><div><span>Transparent accounting</span><h1>Credits</h1><p>Every grant, reservation, settlement, and refund is visible.</p></div></header><div className="stats studio-stats credit-stats"><div className="stat"><div className="stat-title">Available</div><div className="stat-value">{session.entitlements.credits}</div><div className="stat-desc">Ready for web or API use</div></div><div className="stat"><div className="stat-title">Reserved</div><div className="stat-value">{session.entitlements.reservedCredits}</div><div className="stat-desc">Released automatically on failure</div></div><div className="stat"><div className="stat-title">Welcome grant</div><div className="stat-value">20</div><div className="stat-desc">Issued once after email verification</div></div></div><section className="studio-panel"><div className="studio-panel-heading"><div><span>Immutable ledger</span><h2>Balance activity</h2></div></div><div className="overflow-x-auto"><table className="table ledger-table"><thead><tr><th>Event</th><th>Description</th><th>Change</th><th>Balance</th><th>Date</th></tr></thead><tbody>{ledger.map((entry) => <tr key={entry.id}><td><span className="badge badge-outline">{entry.type.replaceAll("_", " ")}</span></td><td>{entry.description}</td><td className={entry.amount > 0 ? "credit-positive" : entry.amount < 0 ? "credit-negative" : ""}>{entry.amount > 0 ? "+" : ""}{entry.amount}</td><td>{entry.balanceAfter}</td><td>{formatDate(entry.createdAt)}</td></tr>)}</tbody></table></div></section></div>;
+  const renderCredits = () => <div className="studio-content"><header className="studio-heading"><div><span>Transparent accounting</span><h1>Credits</h1><p>Every grant, reservation, settlement, and refund is visible.</p></div></header><div className="stats studio-stats credit-stats"><div className="stat"><div className="stat-title">Available</div><div className="stat-value">{session.entitlements.credits}</div><div className="stat-desc">Ready for web or API use</div></div><div className="stat"><div className="stat-title">Reserved</div><div className="stat-value">{session.entitlements.reservedCredits}</div><div className="stat-desc">Released automatically on failure</div></div><div className="stat"><div className="stat-title">Welcome grant</div><div className="stat-value">20</div><div className="stat-desc">Issued once at account creation</div></div></div><section className="studio-panel"><div className="studio-panel-heading"><div><span>Immutable ledger</span><h2>Balance activity</h2></div></div><div className="overflow-x-auto"><table className="table ledger-table"><thead><tr><th>Event</th><th>Description</th><th>Change</th><th>Balance</th><th>Date</th></tr></thead><tbody>{ledger.map((entry) => <tr key={entry.id}><td><span className="badge badge-outline">{entry.type.replaceAll("_", " ")}</span></td><td>{entry.description}</td><td className={entry.amount > 0 ? "credit-positive" : entry.amount < 0 ? "credit-negative" : ""}>{entry.amount > 0 ? "+" : ""}{entry.amount}</td><td>{entry.balanceAfter}</td><td>{formatDate(entry.createdAt)}</td></tr>)}</tbody></table></div></section></div>;
 
-  const renderBilling = () => <div className="studio-content">
-    <header className="studio-heading"><div><span>Payments and plans</span><h1>Billing</h1><p>Stripe-hosted checkout, signed fulfillment, and self-service subscription management.</p></div>{billing?.account.hasCustomer && <button className="btn btn-outline" type="button" disabled={busyAction === "portal"} onClick={() => void openBillingPortal()}><CreditCard size={15} />Manage in Stripe</button>}</header>
-    {billing?.promotion && <PricingCountdown state={promotionCountdown} compact />}
-    {billing?.account.spendingBlocked && <div role="alert" className="alert alert-error alert-soft billing-config-alert"><TriangleAlert size={19} /><div><strong>Credit spending is paused</strong><span>{billing.account.blockReason ?? "A refund or dispute needs billing review before more credits can be spent."}</span></div></div>}
-    {!billing?.configured && <div role="alert" className="alert alert-info alert-soft billing-config-alert"><ShieldCheck size={19} /><div><strong>Billing is safely disabled</strong><span>Add Stripe secret, webhook, and Price IDs to enable real purchases. No simulated payment buttons are shown.</span></div></div>}
-    <section className="studio-panel billing-plan-panel"><div><span className="settings-card-icon"><CreditCard size={18} /></span><div><span>Current plan</span><h2>{billing?.account.plan === "creator" ? "Creator" : "Free account"}</h2><p>{billing?.account.plan === "creator" ? `Subscription status: ${billing.account.status.replaceAll("_", " ")}.` : "Guest migration, verified welcome credits, projects, and API access."}</p></div></div><div><span className={`badge ${billing?.account.status === "active" ? "badge-success" : "badge-outline"}`}>{billing?.account.status ?? "inactive"}</span>{billing?.account.currentPeriodEnd && <small>{billing.account.cancelAtPeriodEnd ? "Ends" : "Renews"} {formatDate(billing.account.currentPeriodEnd)}</small>}</div></section>
-    <div className="billing-offers">{billing?.offers.map((offer) => {
-      const isSubscription = offer.kind === "subscription";
-      const checkoutOfferId = isSubscription && promotionCountdown.active ? billing.promotion?.offerId ?? offer.id : offer.id;
-      const promotionalPrice = isSubscription && promotionCountdown.active ? `$${((billing.promotion?.promotionalAmountCents ?? offer.amountCents) / 100).toFixed(0)} / month` : offer.priceLabel;
-      return <article className={`card card-border billing-offer ${isSubscription ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{isSubscription ? "Monthly plan" : "One-time pack"}</span><h2 className="card-title">{offer.name}</h2><div className="billing-offer-price">{isSubscription && promotionCountdown.active && <del>{offer.priceLabel}</del>}<strong>{promotionalPrice}</strong>{isSubscription && promotionCountdown.active && <span className="badge badge-error badge-soft">Save 20%</span>}</div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits} credits</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!billing.configured || !offer.configured || busyAction === checkoutOfferId} onClick={() => void startCheckout(checkoutOfferId)}>{busyAction === checkoutOfferId && <span className="loading loading-spinner loading-xs" />}{isSubscription ? promotionCountdown.active ? "Claim $8 Creator price" : "Start Creator checkout" : "Buy credit pack"}<ArrowRight size={14} /></button></div></article>;
-    })}</div>
-    <section className="studio-panel"><div className="studio-panel-heading"><div><span>Reconciled purchases</span><h2>Billing history</h2></div></div>{billing && billing.orders.length > 0 ? <div className="overflow-x-auto"><table className="table billing-table"><thead><tr><th>Offer</th><th>Type</th><th>Credits</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{billing.orders.map((order) => <tr key={order.id}><td>{order.offerId.replaceAll("_", " ")}</td><td>{order.kind}</td><td>{order.credits}</td><td>{formatCurrency(order.amountCents, order.currency)}</td><td><span className={`badge badge-outline ${order.financialStatus !== "normal" ? "badge-error" : order.status === "paid" ? "badge-success" : ""}`}>{order.financialStatus === "normal" ? order.status : order.financialStatus}</span></td><td>{formatDate(order.completedAt ?? order.createdAt)}</td></tr>)}</tbody></table></div> : <div className="studio-empty billing-empty"><CreditCard /><h3>No purchases yet</h3><p>Completed Stripe checkouts appear here after a signed webhook is reconciled.</p></div>}</section>
+  const renderBilling = () => {
+    const planTier = billing?.account.planTier && billing.account.planTier !== "free"
+      ? billing.account.planTier[0].toUpperCase() + billing.account.planTier.slice(1)
+      : "Account";
+    const subscriptionOffers = billing?.offers.filter((offer) => offer.kind === "subscription" && offer.billingInterval === billingPeriod) ?? [];
+    const creditPacks = billing?.offers.filter((offer) => offer.kind === "credits") ?? [];
+    return <div className="studio-content">
+      <header className="studio-heading"><div><span>Payments and plans</span><h1>Billing</h1><p>Stripe-hosted checkout, signed fulfillment, and self-service subscription management.</p></div>{billing?.account.hasCustomer && <button className="btn btn-outline" type="button" disabled={busyAction === "portal"} onClick={() => void openBillingPortal()}><CreditCard size={15} />Manage in Stripe</button>}</header>
+      {billing?.account.spendingBlocked && <div role="alert" className="alert alert-error alert-soft billing-config-alert"><TriangleAlert size={19} /><div><strong>Credit spending is paused</strong><span>{billing.account.blockReason ?? "A refund or dispute needs billing review before more credits can be spent."}</span></div></div>}
+      {!billing?.configured && <div role="alert" className="alert alert-info alert-soft billing-config-alert"><ShieldCheck size={19} /><div><strong>Billing is safely disabled</strong><span>New purchases remain paused while release checks are completed. No simulated payment buttons are shown and no charge can start.</span></div></div>}
+      <section className="studio-panel billing-plan-panel"><div><span className="settings-card-icon"><CreditCard size={18} /></span><div><span>Current plan</span><h2>{planTier}</h2><p>{billing?.account.plan === "creator" ? `${billing.account.billingInterval === "year" ? "Yearly" : "Monthly"} subscription status: ${billing.account.status.replaceAll("_", " ")}.` : "20 welcome credits, private history, projects, and API access."}</p></div></div><div><span className={`badge ${billing?.account.status === "active" ? "badge-success" : "badge-outline"}`}>{billing?.account.status ?? "inactive"}</span>{billing?.account.currentPeriodEnd && <small>{billing.account.cancelAtPeriodEnd ? "Ends" : "Renews"} {formatDate(billing.account.currentPeriodEnd)}</small>}</div></section>
+
+      <fieldset className="fieldset card card-border">
+        <legend className="fieldset-legend">Purchase confirmation</legend>
+        <div role="alert" className="alert alert-info alert-soft items-start" id="billing-policy-summary">
+          <ShieldCheck size={18} />
+          <div>
+            <strong>Automatic renewal and refund rules</strong>
+            <span>{billingPolicySummary[0]} {billingPolicySummary[1]}</span>
+            <span>{billingPolicySummary[3]}</span>
+          </div>
+        </div>
+        <label className="label cursor-pointer items-start gap-3">
+          <input
+            className="checkbox checkbox-sm"
+            type="checkbox"
+            checked={billingTermsConfirmed}
+            disabled={!billing || busyAction === "billing-terms"}
+            aria-describedby="billing-policy-summary"
+            onChange={(event) => void setBillingTermsConsent(event.target.checked)}
+          />
+          <span>
+            I have read and agree to the current <a className="link" href="/terms">Billing Terms</a> and{" "}
+            <a className="link" href="/refund-policy">Refund Policy</a>, including automatic renewal and credit recovery after refunds or disputes.
+          </span>
+        </label>
+        <p className="label">
+          Version {billing?.terms.version ?? BILLING_TERMS_VERSION}
+          {billing?.terms.acceptedAt ? ` accepted ${formatDate(billing.terms.acceptedAt)}` : " must be accepted before Checkout."}
+        </p>
+      </fieldset>
+
+      <section className="billing-choice-section">
+        <div className="studio-panel-heading billing-choice-heading"><div><span>Subscriptions</span><h2>Choose recurring capacity</h2><p>Yearly plans are selected by default and issue the full annual allowance after payment.</p></div><div role="tablist" className="tabs tabs-box billing-cycle-tabs" aria-label="Studio billing period"><button role="tab" type="button" className={`tab ${billingPeriod === "month" ? "tab-active" : ""}`} aria-selected={billingPeriod === "month"} onClick={() => setBillingPeriod("month")}>Monthly</button><button role="tab" type="button" className={`tab ${billingPeriod === "year" ? "tab-active" : ""}`} aria-selected={billingPeriod === "year"} onClick={() => setBillingPeriod("year")}>Yearly <span className="badge badge-sm">Save 2 months</span></button></div></div>
+        <div className="billing-offers">{subscriptionOffers.map((offer) => <article className={`card card-border billing-offer ${offer.planTier === "creator" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.planTier === "creator" ? "Most popular" : offer.planTier === "professional" ? "Best unit price" : "Starter plan"}</span><h2 className="card-title">{offer.name.replace(` ${billingPeriod === "year" ? "yearly" : "monthly"}`, "")}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || !billingTermsConfirmed || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? `Choose ${offer.planTier}` : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
+      </section>
+
+      <section className="billing-choice-section">
+        <div className="studio-panel-heading"><div><span>One-time credits</span><h2>Top up without a subscription</h2><p>Credit packs do not renew and remain available until used.</p></div></div>
+        <div className="billing-offers">{creditPacks.map((offer) => <article className={`card card-border billing-offer ${offer.id === "credits_3000" ? "billing-offer-featured" : ""}`} key={offer.id}><div className="card-body"><span className="badge badge-outline">{offer.id === "credits_3000" ? "Best one-time value" : "One-time pack"}</span><h2 className="card-title">{offer.name}</h2><div className="billing-offer-price"><strong>{offer.priceLabel}</strong></div><p>{offer.description}</p><div className="billing-credit-count"><Coins size={16} /><span>{offer.credits.toLocaleString("en-US")} credits · up to {offer.standardImages?.toLocaleString("en-US")} Standard images</span></div><ul className="billing-feature-list">{offer.features.map((feature) => <li key={feature}><CheckCircle2 size={13} />{feature}</li>)}</ul><button className="btn" type="button" disabled={!offer.configured || !billingTermsConfirmed || busyAction === offer.id} onClick={() => void startCheckout(offer.id)}>{busyAction === offer.id && <span className="loading loading-spinner loading-xs" />}{offer.configured ? "Buy credit pack" : "Checkout not enabled"}{offer.configured && <ArrowRight size={14} />}</button></div></article>)}</div>
+      </section>
+
+      <section className="studio-panel"><div className="studio-panel-heading"><div><span>Reconciled purchases</span><h2>Billing history</h2></div></div>{billing && billing.orders.length > 0 ? <div className="overflow-x-auto"><table className="table billing-table"><thead><tr><th>Offer</th><th>Type</th><th>Credits</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{billing.orders.map((order) => <tr key={order.id}><td>{order.offerId.replaceAll("_", " ")}</td><td>{order.kind}</td><td>{order.credits}</td><td>{formatCurrency(order.amountCents, order.currency)}</td><td><span className={`badge badge-outline ${order.financialStatus !== "normal" ? "badge-error" : order.status === "paid" ? "badge-success" : ""}`}>{order.financialStatus === "normal" ? order.status : order.financialStatus}</span></td><td>{formatDate(order.completedAt ?? order.createdAt)}</td></tr>)}</tbody></table></div> : <div className="studio-empty billing-empty"><CreditCard /><h3>No purchases yet</h3><p>Completed Stripe checkouts appear here after a signed webhook is reconciled.</p></div>}</section>
+    </div>;
+  };
+
+  const renderPayments = () => {
+    const orders = billing?.orders ?? [];
+    const paidTotal = orders.filter((order) => order.status === "paid" && order.financialStatus === "normal")
+      .reduce((total, order) => total + order.amountCents, 0);
+    return <div className="studio-content">
+      <header className="studio-heading"><div><span>Receipts and settlement</span><h1>Payments</h1><p>Every Checkout attempt is reconciled against signed Stripe events before credits or plan access are applied.</p></div></header>
+      <div className="stats studio-stats payment-stats">
+        <div className="stat"><div className="stat-title">Successful payments</div><div className="stat-value">{orders.filter((order) => order.status === "paid").length}</div><div className="stat-desc">Signed webhook fulfillment only</div></div>
+        <div className="stat"><div className="stat-title">Recorded spend</div><div className="stat-value">{formatCurrency(paidTotal, "usd")}</div><div className="stat-desc">Excludes refunded or disputed orders</div></div>
+        <div className="stat"><div className="stat-title">Financial reviews</div><div className="stat-value">{orders.filter((order) => order.financialStatus !== "normal").length}</div><div className="stat-desc">Refunds and disputes remain visible</div></div>
+      </div>
+      <section className="studio-panel">
+        <div className="studio-panel-heading"><div><span>Transaction history</span><h2>Receipts and order status</h2></div></div>
+        {orders.length ? <div className="overflow-x-auto"><table className="table billing-table"><thead><tr><th>Order</th><th>Product</th><th>Credits</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td><code>{order.id.slice(0, 12)}</code></td><td>{order.offerId.replaceAll("_", " ")}</td><td>{order.credits}</td><td>{formatCurrency(order.amountCents, order.currency)}</td><td><span className={`badge badge-outline ${order.financialStatus !== "normal" ? "badge-error" : order.status === "paid" ? "badge-success" : ""}`}>{order.financialStatus === "normal" ? order.status : order.financialStatus}</span></td><td>{formatDate(order.completedAt ?? order.createdAt)}</td></tr>)}</tbody></table></div> : <div className="studio-empty"><ReceiptText /><h3>No payments yet</h3><p>Completed, expired, refunded, and disputed orders will remain visible here.</p></div>}
+      </section>
+    </div>;
+  };
+
+  const renderSupport = () => <div className="studio-content">
+    <header className="studio-heading"><div><span>Account-backed help</span><h1>Support</h1><p>Open a private ticket for generation, billing, API, or account issues and keep the conversation attached to your workspace.</p></div></header>
+
+    <form className="card card-border studio-form-card support-create-card" onSubmit={createSupportRequest}>
+      <div className="card-body">
+        <div className="studio-panel-heading"><div><span>New request</span><h2>How can we help?</h2></div><span className="badge badge-outline">{overview?.openSupportTickets ?? supportTickets.filter((ticket) => ["open", "waiting"].includes(ticket.status)).length} open</span></div>
+        <div className="support-form-grid">
+          <label className="support-subject"><span>Subject</span><input className="input" value={supportSubject} onChange={(event) => setSupportSubject(event.target.value)} minLength={4} maxLength={120} placeholder="Describe the issue in one line" required /></label>
+          <label><span>Category</span><select className="select" value={supportCategory} onChange={(event) => setSupportCategory(event.target.value as SupportTicketCategory)}><option value="generation">Generation</option><option value="billing">Billing</option><option value="api">API</option><option value="account">Account</option><option value="other">Other</option></select></label>
+          <label><span>Priority</span><select className="select" value={supportPriority} onChange={(event) => setSupportPriority(event.target.value as SupportTicketPriority)}><option value="normal">Normal</option><option value="high">High</option></select></label>
+          <label className="support-message"><span>Message</span><textarea className="textarea" value={supportMessage} onChange={(event) => setSupportMessage(event.target.value)} minLength={10} maxLength={4000} placeholder="Include what you expected, what happened, and any relevant generation or request ID." required /></label>
+          <button className="btn studio-primary-action" type="submit" disabled={busyAction === "support-create"}>{busyAction === "support-create" ? <span className="loading loading-spinner loading-xs" /> : <LifeBuoy size={15} />}Open ticket</button>
+        </div>
+      </div>
+    </form>
+
+    <div className="support-workspace">
+      <section className="studio-panel support-ticket-list">
+        <div className="studio-panel-heading"><div><span>Your requests</span><h2>Tickets</h2></div></div>
+        {supportTickets.length ? <ul className="list">{supportTickets.map((ticket) => <li className="list-row" key={ticket.id}>
+          <button className={`support-ticket-button ${activeTicket?.id === ticket.id ? "is-active" : ""}`} type="button" disabled={busyAction === ticket.id} onClick={() => void openSupportTicket(ticket.id)}>
+            <span><strong>{ticket.subject}</strong><small>{ticket.category} · {ticket.messageCount} {ticket.messageCount === 1 ? "message" : "messages"}</small></span>
+            <span><span className={`badge badge-outline ${ticket.status === "open" ? "badge-info" : ticket.status === "closed" ? "" : "badge-warning"}`}>{ticket.status}</span><time dateTime={ticket.updatedAt}>{formatDate(ticket.updatedAt)}</time></span>
+          </button>
+        </li>)}</ul> : <div className="studio-empty support-empty"><LifeBuoy /><h3>No support tickets</h3><p>Open a request above when you need help.</p></div>}
+      </section>
+
+      <section className="studio-panel support-conversation">
+        {activeTicket ? <>
+          <div className="studio-panel-heading"><div><span>Ticket {activeTicket.id.slice(0, 8)}</span><h2>{activeTicket.subject}</h2><p>{activeTicket.category} · {activeTicket.priority} priority</p></div><button className="btn btn-ghost btn-sm" type="button" disabled={busyAction === "support-status"} onClick={() => void setSupportTicketClosed(activeTicket.status !== "closed")}>{activeTicket.status === "closed" ? "Reopen" : "Close ticket"}</button></div>
+          <div className="support-messages">{activeTicket.messages.map((item) => <article className={`support-message-row ${item.author === "support" ? "is-support" : ""}`} key={item.id}><span className="support-message-avatar">{item.author === "support" ? <LifeBuoy size={15} /> : session.user!.name.slice(0, 1).toUpperCase()}</span><div><span><strong>{item.author === "support" ? "Qwen Image 3 Support" : session.user!.name}</strong><time dateTime={item.createdAt}>{formatDateTime(item.createdAt)}</time></span><p>{item.body}</p></div></article>)}</div>
+          <form className="support-reply" onSubmit={replyToSupportTicket}><textarea className="textarea" value={supportReply} onChange={(event) => setSupportReply(event.target.value)} minLength={2} maxLength={4000} placeholder={activeTicket.status === "closed" ? "Reopen this ticket to reply." : "Add a reply"} disabled={activeTicket.status === "closed"} required /><button className="btn" type="submit" disabled={activeTicket.status === "closed" || busyAction === "support-reply"}><Send size={14} />Reply</button></form>
+        </> : <div className="studio-empty"><MessageSquare /><h3>Select a ticket</h3><p>Open a ticket from the list to review its private conversation.</p></div>}
+      </section>
+    </div>
+  </div>;
+
+  const renderProfile = () => <div className="studio-content">
+    <header className="studio-heading"><div><span>Your identity</span><h1>Profile</h1><p>Manage the name and verified email associated with this private workspace.</p></div></header>
+    <div className="profile-layout">
+      <section className="studio-panel profile-summary">
+        <span className="profile-avatar">{session.user!.name.slice(0, 1).toUpperCase()}</span>
+        <div><h2>{session.user!.name}</h2><p>{session.user!.email}</p><span className={`badge badge-outline ${session.user!.emailVerified ? "badge-success" : "badge-warning"}`}>{session.user!.emailVerified ? "Verified email" : "Verification pending"}</span></div>
+        <dl><div><dt>Member since</dt><dd>{formatDate(session.user!.createdAt)}</dd></div><div><dt>Workspace plan</dt><dd>{overview?.plan.name ?? "Starter"}</dd></div></dl>
+      </section>
+      <form className="card card-border settings-card profile-form" onSubmit={updateProfile}><div className="card-body"><span className="settings-card-icon"><UserRound size={18} /></span><h2 className="card-title">Display name</h2><p>This name is shown throughout your workspace and support conversations.</p><label><span>Name</span><input className="input" value={profileName} onChange={(event) => setProfileName(event.target.value)} minLength={2} maxLength={60} required /></label><label><span>Sign-in email</span><input className="input" value={session.user!.email} disabled /></label><div className="card-actions"><button className="btn" type="submit" disabled={busyAction === "profile"}>{busyAction === "profile" && <span className="loading loading-spinner loading-xs" />}Save profile</button>{!session.user!.emailVerified && <button className="btn btn-ghost" type="button" disabled={busyAction === "verification"} onClick={() => void requestVerification()}><MailCheck size={14} />Send verification</button>}</div></div></form>
+    </div>
   </div>;
 
   const renderApiKeys = () => <div className="studio-content">
@@ -283,8 +864,8 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
 
     <div className={`alert ${session.user!.emailVerified ? "alert-success" : "alert-warning"} alert-soft settings-verification`}>
       {session.user!.emailVerified ? <CheckCircle2 size={20} /> : <MailCheck size={20} />}
-      <div><strong>{session.user!.emailVerified ? "Email verified" : "Verify your email"}</strong><span>{session.user!.emailVerified ? `${session.user!.email} is trusted for account recovery and API access.` : "Verification unlocks the one-time 20-credit grant and developer keys."}</span></div>
-      {!session.user!.emailVerified && <div className="settings-verification-actions"><button className="btn btn-sm" type="button" disabled={busyAction === "verification"} onClick={() => void requestVerification()}>{busyAction === "verification" && <span className="loading loading-spinner loading-xs" />}Send verification</button>{verificationToken && <button className="btn btn-sm btn-success" type="button" disabled={busyAction === "verification"} onClick={() => void completeLocalVerification()}>Complete local verification</button>}</div>}
+      <div><strong>{session.user!.emailVerified ? "Email verified" : "Verify your email"}</strong><span>{session.user!.emailVerified ? `${session.user!.email} is trusted for account recovery and API access.` : "Verification protects account recovery and unlocks developer keys."}</span></div>
+      {!session.user!.emailVerified && <div className="settings-verification-actions"><button className="btn btn-sm" type="button" disabled={busyAction === "verification"} onClick={() => void requestVerification()}>{busyAction === "verification" && <span className="loading loading-spinner loading-xs" />}Send verification</button></div>}
     </div>
 
     <div className="settings-grid">
@@ -293,7 +874,7 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
       <form className="card card-border settings-card" onSubmit={changePassword}><div className="card-body"><span className="settings-card-icon"><ShieldCheck size={18} /></span><h2 className="card-title">Password</h2><p>Changing it revokes every other session while keeping this device signed in.</p><label><span>Current password</span><input className="input" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label><label><span>New password</span><input className="input" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={8} maxLength={128} required /></label><div className="card-actions"><button className="btn btn-sm" type="submit" disabled={busyAction === "password"}>{busyAction === "password" && <span className="loading loading-spinner loading-xs" />}Change password</button></div></div></form>
     </div>
 
-    <section className="studio-panel settings-sessions"><div className="studio-panel-heading"><div><span>Device security</span><h2>Active sessions</h2></div><button className="btn btn-ghost btn-sm" type="button" disabled={busyAction === "sessions" || accountSessions.filter((item) => !item.current).length === 0} onClick={() => void revokeOtherAccountSessions()}><LogOut size={14} />Revoke all others</button></div><div className="overflow-x-auto"><table className="table"><thead><tr><th>Device</th><th>Network</th><th>Last active</th><th>Expires</th><th /></tr></thead><tbody>{accountSessions.map((item) => <tr key={item.id}><td><span className="session-device"><MonitorSmartphone size={16} /><span><strong>{item.current ? "This device" : "Signed-in device"}</strong><small>{item.userAgent}</small></span></span></td><td>{item.ipHint}</td><td>{formatDateTime(item.lastSeenAt)}</td><td>{formatDate(item.expiresAt)}</td><td>{item.current ? <span className="badge badge-success badge-outline">Current</span> : <button className="btn btn-ghost btn-xs" type="button" disabled={busyAction === item.id} onClick={() => void revokeAccountSession(item.id)}>Revoke</button>}</td></tr>)}</tbody></table></div></section>
+    <section className="studio-panel settings-sessions"><div className="studio-panel-heading"><div><span>Session access</span><h2>Signed-in sessions</h2></div><button className="btn btn-ghost btn-sm" type="button" disabled={busyAction === "sessions" || accountSessions.filter((item) => !item.current).length === 0} onClick={() => void revokeOtherAccountSessions()}><LogOut size={14} />Revoke all others</button></div><div className="overflow-x-auto"><table className="table"><thead><tr><th>Device</th><th>Last active</th><th>Expires</th><th /></tr></thead><tbody>{accountSessions.map((item) => <tr key={item.id}><td><span className="session-device"><MonitorSmartphone size={16} /><span><strong>{item.current ? "This device" : "Signed-in session"}</strong><small>{item.userAgent}</small></span></span></td><td>{formatDateTime(item.lastSeenAt)}</td><td>{formatDate(item.expiresAt)}</td><td>{item.current ? <span className="badge badge-success badge-outline">Current</span> : <button className="btn btn-ghost btn-xs" type="button" disabled={busyAction === item.id} onClick={() => void revokeAccountSession(item.id)}>Revoke</button>}</td></tr>)}</tbody></table></div></section>
 
     <section className="studio-panel data-panel"><div><span className="settings-card-icon"><Download size={18} /></span><div><span>Data portability</span><h2>Export your account</h2><p>Download profile, project metadata, generation history, ledger entries, API key summaries, and session metadata as JSON. Image binaries and secrets are excluded.</p></div></div><a className="btn btn-outline" href="/api/account/export" download><Download size={15} />Download export</a></section>
 
@@ -303,25 +884,309 @@ export function Studio({ path, session, onNavigate, onRequireAuth, onSessionRefr
   </div>;
 
   const visibleHistory = currentSection === "favorites" ? favoriteGenerations : generations;
-  const renderHistory = () => <div className="studio-content"><header className="studio-heading"><div><span>{currentSection === "favorites" ? "Curated work" : "Private archive"}</span><h1>{currentSection === "favorites" ? "Favorites" : "Generation history"}</h1><p>{currentSection === "favorites" ? "The results you marked for quick return." : "Every guest migration and signed-in generation in one place."}</p></div></header><section className="studio-panel"><GenerationGrid generations={visibleHistory} /></section></div>;
+  const renderHistory = () => <div className="studio-content"><header className="studio-heading"><div><span>{currentSection === "favorites" ? "Curated work" : "Private archive"}</span><h1>{currentSection === "favorites" ? "Favorites" : "Generation history"}</h1><p>{currentSection === "favorites" ? "The results you marked for quick return." : "Every signed-in generation in one private archive."}</p></div></header><section className="studio-panel"><GenerationGrid generations={visibleHistory} busyAction={busyAction} onCreate={() => onNavigate("/studio")} onDelete={deleteGenerationRecord} onFavorite={setGenerationFavorite} onVariation={createGenerationVariation} /></section></div>;
+  const renderCreate = () => <div className="studio-content studio-create">
+    <header className="studio-heading studio-create-heading">
+      <div>
+        <span>Continuous workspace</span>
+        <h1>Create</h1>
+        <p>Your complete creation conversation stays here: every prompt, response, setting, and result remains in context while you continue.</p>
+      </div>
+      <button className="btn btn-ghost btn-sm" type="button" onClick={() => onNavigate("/studio/history")}><History size={15} />Manage history</button>
+    </header>
 
-  let content = renderOverview();
-  if (currentSection === "new") content = <div className="studio-content studio-create"><header className="studio-heading"><div><span>Private creation</span><h1>New image</h1><p>Generate into your account and assign the result to a project.</p></div></header><GeneratorWorkspace session={session} compact onRequireAuth={onRequireAuth} onSessionRefresh={async () => { await onSessionRefresh(); await loadStudio(); }} /></div>;
-  if (currentSection === "projects") content = renderProjects();
-  if (currentSection === "history" || currentSection === "favorites") content = renderHistory();
-  if (currentSection === "credits") content = renderCredits();
-  if (currentSection === "billing") content = renderBilling();
-  if (currentSection === "api-keys") content = renderApiKeys();
-  if (currentSection === "api-activity") content = renderApiActivity();
-  if (currentSection === "settings") content = renderSettings();
-  if (!["overview", "new", "projects", "history", "favorites", "credits", "billing", "api-keys", "api-activity", "settings"].includes(currentSection)) {
-    content = <div className="studio-content"><div className="card card-border studio-form-card"><div className="card-body"><span className="badge badge-outline">404</span><h1>Studio page not found</h1><p>This workspace section does not exist. Your private account data has not changed.</p><div className="card-actions"><button className="btn" type="button" onClick={() => onNavigate("/studio")}>Back to overview</button></div></div></div></div>;
+    {studioLoading
+      ? <CreationHistoryLoading />
+      : <CreationHistory generations={generations} busyAction={busyAction} onDelete={deleteGenerationRecord} onFavorite={setGenerationFavorite} onVariation={createGenerationVariation} />}
+
+    <div className="studio-create-composer">
+      <GeneratorWorkspace
+        session={session}
+        models={models}
+        compact
+        onRequireAuth={onRequireAuth}
+        onSessionRefresh={onSessionRefresh}
+        onGenerationStarted={(generation) => {
+          setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id)]);
+          setMessage("Generation started. This conversation turn will update in place.");
+          window.setTimeout(() => document.getElementById(`creation-generation-${generation.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+        }}
+        onGenerationCreated={(generation, pendingId) => {
+          setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id && item.id !== pendingId)]);
+          setMessage(generation.status === "processing"
+            ? "Generation queued. This response will update here when processing finishes."
+            : "Generation complete. The result was added to this creation stream.");
+          window.setTimeout(() => document.getElementById(`creation-generation-${generation.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+        }}
+        onGenerationFailed={(pendingId) => {
+          setGenerations((items) => items.map((item) => item.id === pendingId ? { ...item, status: "failed" } : item));
+          setMessage("Generation failed. This turn remains in the conversation and no credits were charged.");
+        }}
+      />
+    </div>
+  </div>;
+
+  let content = studioLoading && currentSection !== "create" && currentSection !== "new" ? renderLoading() : renderOverview();
+  if (currentSection === "create" || currentSection === "new") content = renderCreate();
+  if (!studioLoading && currentSection === "overview") content = renderOverview();
+  if (!studioLoading && currentSection === "projects") content = renderProjects();
+  if (!studioLoading && (currentSection === "history" || currentSection === "favorites")) content = renderHistory();
+  if (!studioLoading && currentSection === "credits") content = renderCredits();
+  if (!studioLoading && currentSection === "billing") content = renderBilling();
+  if (!studioLoading && currentSection === "payments") content = renderPayments();
+  if (!studioLoading && currentSection === "api-keys") content = renderApiKeys();
+  if (!studioLoading && currentSection === "api-activity") content = renderApiActivity();
+  if (!studioLoading && currentSection === "support") content = renderSupport();
+  if (!studioLoading && currentSection === "profile") content = renderProfile();
+  if (!studioLoading && currentSection === "settings") content = renderSettings();
+  if (!studioLoading && !["create", "overview", "new", "projects", "history", "favorites", "credits", "billing", "payments", "api-keys", "api-activity", "support", "profile", "settings"].includes(currentSection)) {
+    content = <div className="studio-content"><div className="card card-border studio-form-card"><div className="card-body"><span className="badge badge-outline">404</span><h1>Studio page not found</h1><p>This workspace section does not exist. Your private account data has not changed.</p><div className="card-actions"><button className="btn" type="button" onClick={() => onNavigate("/studio")}>Back to create</button></div></div></div></div>;
   }
 
-  return <div className="drawer lg:drawer-open studio-drawer"><input id="studio-drawer" type="checkbox" className="drawer-toggle" /><div className="drawer-content"><div className="studio-mobile-bar"><label htmlFor="studio-drawer" className="btn btn-ghost drawer-button"><Menu size={18} />Studio menu</label></div>{(error || message) && <div className={`alert ${error ? "alert-error" : "alert-success"} studio-alert`}><span>{error || message}</span><button className="btn btn-ghost btn-xs" onClick={() => { setError(""); setMessage(""); }}>Dismiss</button></div>}{content}</div><aside className="drawer-side"><label htmlFor="studio-drawer" aria-label="Close Studio navigation" className="drawer-overlay" /><div className="studio-sidebar"><div className="studio-sidebar-brand"><span>STUDIO</span><strong>{session.user.name}</strong><small>{session.entitlements.credits} available credits</small></div><ul className="menu">{studioNavigation.map((item) => { const Icon = item.icon; const active = item.path === "/studio" ? path === item.path : path.startsWith(item.path); return <li key={item.path}><button className={active ? "menu-active" : ""} type="button" onClick={() => onNavigate(item.path)} aria-current={active ? "page" : undefined}><Icon size={17} />{item.label}</button></li>; })}</ul><div className="studio-sidebar-foot"><BarChart3 size={16} /><span><strong>Provider-aware workspace</strong><small>SQLite · private by default</small></span></div></div></aside></div>;
+  const navigateFromShell = (nextPath: string) => {
+    const toggle = document.getElementById("studio-drawer") as HTMLInputElement | null;
+    if (toggle) toggle.checked = false;
+    onNavigate(nextPath);
+  };
+
+  return <div className="drawer lg:drawer-open studio-drawer" data-theme={theme === "dark" ? "qwen" : "qwen-light"}>
+    <input id="studio-drawer" type="checkbox" className="drawer-toggle" />
+    <div className="drawer-content">
+      <header className="studio-mobile-bar">
+        <button
+          className="btn btn-ghost btn-square drawer-button"
+          type="button"
+          aria-label="Open workspace navigation"
+          onClick={() => {
+            const toggle = document.getElementById("studio-drawer") as HTMLInputElement | null;
+            if (toggle) toggle.checked = !toggle.checked;
+          }}
+        >
+          <Menu size={20} />
+        </button>
+        <button className="studio-mobile-wordmark" type="button" onClick={() => onNavigate("/studio")} aria-label="Qwen Image 3 workspace home"><img src="/favicon.png" alt="Qwen mark" /><span>Qwen Image 3</span></button>
+        <button className="studio-mobile-avatar" type="button" onClick={() => onNavigate("/studio/profile")} aria-label="Open profile">{session.user.name.slice(0, 1).toUpperCase()}</button>
+      </header>
+      {(error || message) && <div className={`alert ${error ? "alert-error" : "alert-success"} studio-alert`}><span>{error || message}</span><button className="btn btn-ghost btn-xs" onClick={() => { setError(""); setMessage(""); }}>Dismiss</button></div>}
+      {content}
+      <nav className="dock dock-sm studio-mobile-dock" aria-label="Workspace shortcuts">
+        {workspaceNavigation.slice(0, 4).map((item) => {
+          const Icon = item.icon;
+          const active = item.path === "/studio" ? path === "/studio" || path === "/studio/new" : path.startsWith(item.path);
+          return <button className={active ? "dock-active" : ""} type="button" key={item.path} onClick={() => onNavigate(item.path)}><Icon size={19} /><span className="dock-label">{item.label}</span></button>;
+        })}
+      </nav>
+    </div>
+    <aside className="drawer-side">
+      <label htmlFor="studio-drawer" aria-label="Close workspace navigation" className="drawer-overlay" />
+      <div className="studio-sidebar">
+        <button className="studio-sidebar-brand" type="button" onClick={() => navigateFromShell("/studio")} aria-label="Qwen Image 3 workspace home"><img src="/favicon.png" alt="Qwen mark" /><span><strong>Qwen Image 3</strong><small>Workspace</small></span></button>
+        <nav className="studio-sidebar-navigation" aria-label="Workspace navigation">
+          <ul className="menu menu-sm">
+            <li className="menu-title">Workspace</li>
+            {workspaceNavigation.map((item) => {
+              const Icon = item.icon;
+              const active = item.path === "/studio" ? path === "/studio" || path === "/studio/new" : path.startsWith(item.path);
+              return <li key={item.path}><button className={active ? "menu-active" : ""} type="button" onClick={() => navigateFromShell(item.path)} aria-current={active ? "page" : undefined}><Icon size={17} />{item.label}</button></li>;
+            })}
+          </ul>
+          <ul className="menu menu-sm">
+            <li className="menu-title">Account</li>
+            {accountNavigation.map((item) => {
+              const Icon = item.icon;
+              const active = path.startsWith(item.path);
+              return <li key={item.path}><button className={active ? "menu-active" : ""} type="button" onClick={() => navigateFromShell(item.path)} aria-current={active ? "page" : undefined}><Icon size={17} />{item.label}</button></li>;
+            })}
+          </ul>
+        </nav>
+        <div className="studio-sidebar-secondary">
+          <button type="button" onClick={() => navigateFromShell("/")}><Home size={17} />Home</button>
+          <button className={path.startsWith("/studio/profile") ? "is-active" : ""} type="button" onClick={() => navigateFromShell("/studio/profile")}><UserRound size={17} />Profile</button>
+          <button type="button" onClick={onTheme} aria-label={theme === "dark" ? "Switch Studio to light theme" : "Switch Studio to dark theme"}>
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+        </div>
+        <div className="studio-sidebar-foot">
+          <span className="studio-user-avatar">{session.user.name.slice(0, 1).toUpperCase()}</span>
+          <span><strong>{session.user.name}</strong><small>{session.user.email}</small></span>
+          <button className="btn btn-ghost btn-square btn-sm" type="button" onClick={() => void onLogout()} aria-label="Sign out"><LogOut size={16} /></button>
+        </div>
+      </div>
+    </aside>
+  </div>;
 }
 
-function GenerationGrid({ generations }: { generations: Generation[] }) {
-  if (generations.length === 0) return <div className="studio-empty"><ImageIcon /><h3>No generations here yet</h3><p>Create an image or mark a result as a favorite to fill this view.</p></div>;
-  return <div className="studio-generation-grid">{generations.map((generation) => <article className={`studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>{generation.imageUrl ? <img src={generation.imageUrl} alt={`Generated image for ${generation.prompt.slice(0, 80)}`} /> : <div className="studio-generation-failed"><TriangleAlert size={22} /><span className="badge badge-error badge-outline">{generation.status}</span><small>No credits charged</small></div>}<div><p>{generation.prompt}</p><span>{generation.quality} · {generation.aspectRatio}</span>{generation.favorite && <Heart size={13} fill="currentColor" />}</div></article>)}</div>;
+interface GenerationGridProps {
+  generations: Generation[];
+  busyAction: string;
+  onCreate?: () => void;
+  onDelete: (generation: Generation) => Promise<void>;
+  onFavorite: (generation: Generation) => Promise<void>;
+  onVariation: (generation: Generation) => Promise<void>;
+}
+
+function CreationHistoryLoading() {
+  return <section className="studio-creation-history studio-creation-loading" aria-busy="true" aria-label="Loading conversation history">
+    <div className="studio-creation-history-heading">
+      <div><div className="skeleton studio-creation-loading-title" /><div className="skeleton studio-creation-loading-copy" /></div>
+      <div className="skeleton studio-creation-loading-count" />
+    </div>
+    <div className="studio-conversation-loading-turn">
+      <div className="studio-conversation-loading-user">
+        <div className="skeleton studio-creation-loading-prompt" />
+      </div>
+      <div className="studio-conversation-loading-assistant">
+        <div className="skeleton studio-creation-loading-media" />
+        <div className="studio-creation-loading-actions">
+          {Array.from({ length: 4 }, (_, index) => <div className="skeleton" key={index} />)}
+        </div>
+      </div>
+    </div>
+  </section>;
+}
+
+function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVariation }: GenerationGridProps) {
+  const groups = useMemo(() => {
+    const chronological = [...generations].sort((first, second) => {
+      const timeDifference = new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime();
+      return timeDifference || first.id.localeCompare(second.id);
+    });
+    const grouped = new Map<string, Generation[]>();
+    chronological.forEach((generation) => {
+      const key = generationDayKey(generation.createdAt);
+      grouped.set(key, [...(grouped.get(key) ?? []), generation]);
+    });
+    return Array.from(grouped.values());
+  }, [generations]);
+
+  return <section className="studio-creation-history" aria-labelledby="creation-history-title">
+    <div className="studio-creation-history-heading">
+      <div>
+        <span>Ongoing conversation</span>
+        <h2 id="creation-history-title">Conversation history</h2>
+        <p>Every previous prompt and image response appears here. New turns continue below without leaving Create.</p>
+      </div>
+      <span className="badge badge-outline">{generations.length} turn{generations.length === 1 ? "" : "s"}</span>
+    </div>
+
+    {groups.length === 0
+      ? <div className="studio-empty studio-creation-empty"><MessageSquare /><h3>No conversation yet</h3><p>Describe your first image below. Your prompt and the generated response will stay here as the first turn.</p></div>
+      : groups.map((group) => <section className="studio-creation-day" key={generationDayKey(group[0].createdAt)}>
+        <div className="studio-creation-day-heading">
+          <h3>{formatGenerationDay(group[0].createdAt)}</h3>
+          <span>{group.length} turn{group.length === 1 ? "" : "s"}</span>
+        </div>
+        <ol className="studio-conversation-list" aria-live="polite" aria-relevant="additions">
+          {group.map((generation) => {
+            const progress = generationProgress(generation);
+            return <li className="studio-conversation-turn" id={`creation-generation-${generation.id}`} key={generation.id}>
+            <article aria-label={`Creation turn from ${formatDateTime(generation.createdAt)}`}>
+              <div className="chat chat-end studio-conversation-user">
+                <div className="chat-image avatar avatar-placeholder">
+                  <div className="studio-conversation-avatar"><UserRound size={15} /></div>
+                </div>
+                <div className="chat-header">
+                  <span>You</span>
+                  <time dateTime={generation.createdAt}>{formatTime(generation.createdAt)}</time>
+                </div>
+                <div className="chat-bubble">{generation.prompt}</div>
+              </div>
+
+              <div className="chat chat-start studio-conversation-assistant">
+                <div className="chat-image avatar avatar-placeholder">
+                  <div className="studio-conversation-avatar"><ImageIcon size={15} /></div>
+                </div>
+                <div className="chat-header">
+                  <span>Image generator</span>
+                  <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : generation.status === "complete" ? "badge-success" : ""}`}>
+                    {generation.status === "processing" && <RefreshCw size={10} className="spin-icon" />}
+                    {progress?.badge ?? (generation.status === "complete" ? "Complete" : "Failed")}
+                  </span>
+                </div>
+                <div className={`chat-bubble card studio-conversation-response ${generation.status === "failed" ? "is-failed" : ""}`}>
+                  <div className="card-body studio-creation-body">
+                    <div className="studio-creation-meta" aria-label="Generation settings">
+                      <span className="badge badge-outline">{generation.model}</span>
+                      <span className="badge badge-outline">{generation.style}</span>
+                      <span className="badge badge-outline">{generation.quality}</span>
+                      <span className="badge badge-outline">{generation.aspectRatio}</span>
+                      <span className="badge badge-outline">
+                        {generation.status === "failed"
+                          ? "No credits charged"
+                          : generation.status === "complete"
+                            ? `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"}`
+                            : `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"} reserved`}
+                      </span>
+                    </div>
+                    <figure className={`studio-creation-media is-ratio-${generation.aspectRatio.replace(":", "-")}`}>
+                      {generation.imageUrl
+                        ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading="lazy" decoding="async" />
+                        : <div className={`studio-generation-state ${generation.status === "processing" ? "is-processing" : "is-failed"}`}>
+                          {generation.status === "processing" ? <RefreshCw size={24} className="spin-icon" /> : <TriangleAlert size={24} />}
+                          <strong>{progress?.title ?? "Generation failed"}</strong>
+                          <small>{generation.status === "failed" ? "No credits charged" : progress?.detail}</small>
+                        </div>}
+                    </figure>
+                    <div className="card-actions studio-creation-footer">
+                      <GenerationActions generation={generation} busyAction={busyAction} onDelete={onDelete} onFavorite={onFavorite} onVariation={onVariation} />
+                    </div>
+                  </div>
+                </div>
+                <div className="chat-footer">{generation.status === "failed" ? "This request failed without a charge." : generation.status === "complete" ? "Response saved to your private history." : progress?.footer}</div>
+              </div>
+            </article>
+          </li>;
+          })}
+        </ol>
+      </section>)}
+  </section>;
+}
+
+interface GenerationActionsProps {
+  generation: Generation;
+  busyAction: string;
+  onDelete: (generation: Generation) => Promise<void>;
+  onFavorite: (generation: Generation) => Promise<void>;
+  onVariation: (generation: Generation) => Promise<void>;
+}
+
+function GenerationActions({ generation, busyAction, onDelete, onFavorite, onVariation }: GenerationActionsProps) {
+  if (generation.status === "processing") {
+    return <div className="studio-generation-progress" role="status"><RefreshCw size={15} className="spin-icon" /><span>{generationProgress(generation)?.action}</span></div>;
+  }
+  const favoriteAction = `generation-favorite-${generation.id}`;
+  const variationAction = `generation-variation-${generation.id}`;
+  const deleteAction = `generation-delete-${generation.id}`;
+  const actionPending = [favoriteAction, variationAction, deleteAction].includes(busyAction);
+
+  return <div className="card-actions studio-generation-actions" aria-label={`Actions for ${generation.prompt.slice(0, 40)}`}>
+    {generation.status === "complete" && generation.downloadUrl && <div className="tooltip" data-tip="Download"><a className="btn btn-ghost btn-square btn-sm" href={generation.downloadUrl} download aria-label="Download generation"><Download size={15} /></a></div>}
+    <div className="tooltip" data-tip={generation.status === "failed" ? "Retry" : "Create variation"}><button className="btn btn-ghost btn-square btn-sm" type="button" disabled={actionPending} onClick={() => void onVariation(generation)} aria-label={generation.status === "failed" ? "Retry generation" : "Create variation"}>{busyAction === variationAction ? <span className="loading loading-spinner loading-xs" /> : <RefreshCw size={15} />}</button></div>
+    {generation.status === "complete" && <div className="tooltip" data-tip={generation.favorite ? "Remove favorite" : "Save favorite"}><button className={`btn btn-ghost btn-square btn-sm ${generation.favorite ? "is-favorite" : ""}`} type="button" disabled={actionPending} onClick={() => void onFavorite(generation)} aria-label={generation.favorite ? "Remove from Favorites" : "Save to Favorites"} aria-pressed={generation.favorite}>{busyAction === favoriteAction ? <span className="loading loading-spinner loading-xs" /> : <Heart size={15} fill={generation.favorite ? "currentColor" : "none"} />}</button></div>}
+    <div className="tooltip" data-tip="Delete"><button className="btn btn-ghost btn-square btn-sm studio-generation-delete" type="button" disabled={actionPending} onClick={() => void onDelete(generation)} aria-label="Delete generation">{busyAction === deleteAction ? <span className="loading loading-spinner loading-xs" /> : <Trash2 size={15} />}</button></div>
+  </div>;
+}
+
+function GenerationGrid({ generations, busyAction, onCreate, onDelete, onFavorite, onVariation }: GenerationGridProps) {
+  if (generations.length === 0) return <div className="studio-empty"><ImageIcon /><h3>No recent work yet</h3><p>Create an image to begin building your private workspace history.</p>{onCreate && <button className="btn studio-primary-action" type="button" onClick={onCreate}><Plus size={15} />Create image</button>}</div>;
+  return <div className={`studio-generation-grid ${generations.length < 3 ? "is-sparse" : ""}`}>{generations.map((generation, index) => {
+    const progress = generationProgress(generation);
+    return <article className={`card card-border studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>
+      <figure className="studio-generation-media">
+        {generation.imageUrl
+          ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading={index < 3 ? "eager" : "lazy"} decoding="async" />
+          : <div className={`studio-generation-failed ${generation.status === "processing" ? "is-processing" : ""}`}>
+            {generation.status === "processing" ? <RefreshCw size={22} className="spin-icon" /> : <TriangleAlert size={22} />}
+            <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : ""}`}>{progress?.badge ?? "Failed"}</span>
+            <small>{generation.status === "processing" ? `${generation.creditCost} credits reserved` : "No credits charged"}</small>
+          </div>}
+      </figure>
+      <div className="card-body studio-generation-body">
+        <p>{generation.prompt}</p>
+        <span className="studio-generation-meta">{generation.quality} · {generation.aspectRatio}</span>
+        <GenerationActions generation={generation} busyAction={busyAction} onDelete={onDelete} onFavorite={onFavorite} onVariation={onVariation} />
+      </div>
+    </article>;
+  })}</div>;
 }

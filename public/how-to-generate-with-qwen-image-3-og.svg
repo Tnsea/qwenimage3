@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#080909"/>
+  <rect x="0" width="16" height="630" fill="#f59e0b"/>
+  <text x="74" y="92" fill="#f59e0b" font-family="Arial,Helvetica,sans-serif" font-size="23" font-weight="700" letter-spacing="2">STEP-BY-STEP GUIDE · 2026</text>
+  <text x="72" y="206" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="68" font-weight="700" letter-spacing="-3">How to Generate</text>
+  <text x="72" y="282" fill="#f2f2ef" font-family="Arial,Helvetica,sans-serif" font-size="68" font-weight="700" letter-spacing="-3">with Qwen Image 3</text>
+  <g transform="translate(72 368)" font-family="Arial,Helvetica,sans-serif">
+    <g fill="#f59e0b" font-size="20" font-weight="700">
+      <circle cx="22" cy="22" r="22"/><circle cx="226" cy="22" r="22"/><circle cx="430" cy="22" r="22"/><circle cx="634" cy="22" r="22"/><circle cx="838" cy="22" r="22"/>
+    </g>
+    <g fill="#111" font-size="17" font-weight="700" text-anchor="middle">
+      <text x="22" y="28">1</text><text x="226" y="28">2</text><text x="430" y="28">3</text><text x="634" y="28">4</text><text x="838" y="28">5</text>
+    </g>
+    <g stroke="#3a3b39" stroke-width="2">
+      <path d="M44 22h160M248 22h160M452 22h160M656 22h160"/>
+    </g>
+    <g fill="#f2f2ef" font-size="18" font-weight="700">
+      <text x="0" y="82">Prompt</text><text x="204" y="82">Model</text><text x="408" y="82">Ratio</text><text x="612" y="82">Review</text><text x="816" y="82">Download</text>
+    </g>
+    <g fill="#8b8e89" font-size="15">
+      <text x="0" y="110">Structure the brief</text><text x="204" y="110">Check access</text><text x="408" y="110">Match the canvas</text><text x="612" y="110">Verify every detail</text><text x="816" y="110">Record provenance</text>
+    </g>
+  </g>
+  <text x="72" y="578" fill="#777a76" font-family="Arial,Helvetica,sans-serif" font-size="18">Official model capability guide · This site does not currently run Qwen Image 3</text>
+</svg>

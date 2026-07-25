@@ -232,6 +232,76 @@ test("unknown API routes return a structured 404 instead of the application shel
   assert.equal(missing.body.error.code, "NOT_FOUND");
 });
 
+test("workspace overview and support tickets stay private to the signed-in account", async () => {
+  const registration = await jsonRequest("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name: "Workspace Owner", email: "workspace-owner@example.com", password: "Workspace1234" }),
+  });
+  assert.equal(registration.response.status, 201);
+  const ownerCookie = cookieFrom(registration.response, "qwen_session");
+
+  const initialOverview = await jsonRequest("/api/workspace/overview", { headers: { Cookie: ownerCookie } });
+  assert.equal(initialOverview.response.status, 200);
+  assert.equal(initialOverview.body.plan.name, "Free");
+  assert.equal(initialOverview.body.openSupportTickets, 0);
+  assert.equal(initialOverview.body.activeApiKeys, 0);
+
+  const created = await jsonRequest("/api/support/tickets", {
+    method: "POST",
+    headers: { Cookie: ownerCookie },
+    body: JSON.stringify({
+      subject: "Generation result did not match the request",
+      category: "generation",
+      priority: "high",
+      message: "The saved result belongs to my account, but the composition differs from the prompt.",
+    }),
+  });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.status, "open");
+  assert.equal(created.body.messageCount, 1);
+  assert.equal(created.body.messages[0].author, "user");
+
+  const afterCreate = await jsonRequest("/api/workspace/overview", { headers: { Cookie: ownerCookie } });
+  assert.equal(afterCreate.body.openSupportTickets, 1);
+  assert.equal(afterCreate.body.recentActivity[0].type, "support");
+
+  const replied = await jsonRequest(`/api/support/tickets/${created.body.id}/messages`, {
+    method: "POST",
+    headers: { Cookie: ownerCookie },
+    body: JSON.stringify({ message: "The generation ID is available in my private history." }),
+  });
+  assert.equal(replied.response.status, 201);
+  assert.equal(replied.body.messageCount, 2);
+
+  const closed = await jsonRequest(`/api/support/tickets/${created.body.id}`, {
+    method: "PATCH",
+    headers: { Cookie: ownerCookie },
+    body: JSON.stringify({ status: "closed" }),
+  });
+  assert.equal(closed.body.status, "closed");
+
+  const blockedReply = await jsonRequest(`/api/support/tickets/${created.body.id}/messages`, {
+    method: "POST",
+    headers: { Cookie: ownerCookie },
+    body: JSON.stringify({ message: "This should require reopening first." }),
+  });
+  assert.equal(blockedReply.response.status, 409);
+  assert.equal(blockedReply.body.error.code, "TICKET_CLOSED");
+
+  const otherRegistration = await jsonRequest("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name: "Other Workspace", email: "other-workspace@example.com", password: "Workspace5678" }),
+  });
+  const otherCookie = cookieFrom(otherRegistration.response, "qwen_session");
+  const privateTicket = await jsonRequest(`/api/support/tickets/${created.body.id}`, { headers: { Cookie: otherCookie } });
+  assert.equal(privateTicket.response.status, 404);
+
+  const accountExport = await jsonRequest("/api/account/export", { headers: { Cookie: ownerCookie } });
+  assert.equal(accountExport.response.status, 200);
+  assert.equal(accountExport.body.supportTickets.length, 1);
+  assert.equal(accountExport.body.supportTickets[0].messages.length, 2);
+});
+
 test("unsafe cross-origin writes are rejected with a structured 403", async () => {
   const rejected = await jsonRequest("/api/auth/login", {
     method: "POST",

@@ -27,6 +27,7 @@ export interface Generation {
 
 export interface GenerationRequest {
   prompt: string;
+  modelId?: string;
   aspectRatio: AspectRatio;
   style: ImageStyle;
   quality: ImageQuality;
@@ -117,14 +118,24 @@ export interface AuthMethods {
   github: boolean;
 }
 
-export interface AuthTokenDelivery {
-  delivered: boolean;
-  delivery: "console" | "resend" | "none";
-  devToken?: string;
-}
+export type BillingPlanTier = "starter" | "creator" | "professional";
+export type BillingInterval = "month" | "year";
+export type BillingOfferId =
+  | "starter_monthly"
+  | "starter_yearly"
+  | "creator_intro"
+  | "creator_monthly"
+  | "creator_yearly"
+  | "professional_monthly"
+  | "professional_yearly"
+  | "credits_100"
+  | "credits_300"
+  | "credits_400"
+  | "credits_1200"
+  | "credits_3000";
 
 export interface BillingOffer {
-  id: "creator_intro" | "creator_monthly" | "credits_100" | "credits_300";
+  id: BillingOfferId;
   name: string;
   description: string;
   priceLabel: string;
@@ -134,6 +145,10 @@ export interface BillingOffer {
   kind: "subscription" | "credits";
   configured: boolean;
   features: string[];
+  planTier?: BillingPlanTier;
+  billingInterval?: BillingInterval;
+  monthlyEquivalentCredits?: number;
+  standardImages?: number;
 }
 
 export interface PricingPromotion {
@@ -149,11 +164,19 @@ export interface PricingPromotion {
 }
 
 export interface CatalogPlan {
-  id: "guest" | "free" | "creator";
+  id: BillingPlanTier;
   name: string;
   price: string;
   description: string;
   features: string[];
+  monthlyAmountCents: number;
+  yearlyAmountCents: number;
+  monthlyCredits: number;
+  yearlyCredits: number;
+  monthlyConfigured: boolean;
+  yearlyConfigured: boolean;
+  recommended?: boolean;
+  valuePick?: boolean;
   planned?: boolean;
 }
 
@@ -167,10 +190,15 @@ export interface CatalogPrompt {
 export interface CatalogModel {
   id: string;
   name: string;
+  provider: "local-preview" | "alibaba-model-studio" | "kie-ai" | "unassigned";
+  available: boolean;
   status: string;
   speed: string;
   cost: string;
   bestFor: string;
+  supportedAspectRatios: AspectRatio[];
+  supportedQualities: ImageQuality[];
+  maxPromptLength: number;
 }
 
 export interface Catalog {
@@ -184,8 +212,15 @@ export interface Catalog {
 export interface BillingSummary {
   configured: boolean;
   promotion: PricingPromotion | null;
+  terms: {
+    version: string;
+    accepted: boolean;
+    acceptedAt: string | null;
+  };
   account: {
     plan: "free" | "creator";
+    planTier?: "free" | BillingPlanTier;
+    billingInterval?: BillingInterval | null;
     status: "inactive" | "active" | "trialing" | "past_due" | "canceled";
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
@@ -206,6 +241,65 @@ export interface BillingSummary {
     createdAt: string;
     completedAt: string | null;
   }>;
+}
+
+export type SupportTicketCategory = "generation" | "billing" | "api" | "account" | "other";
+export type SupportTicketPriority = "normal" | "high";
+export type SupportTicketStatus = "open" | "waiting" | "resolved" | "closed";
+
+export interface SupportMessage {
+  id: string;
+  ticketId: string;
+  author: "user" | "support";
+  body: string;
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  messageCount: number;
+  lastMessageAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicket {
+  messages: SupportMessage[];
+}
+
+export type WorkspaceActivityType = "generation" | "credit" | "payment" | "support";
+
+export interface WorkspaceActivity {
+  id: string;
+  type: WorkspaceActivityType;
+  title: string;
+  detail: string;
+  status: string;
+  href: string;
+  createdAt: string;
+}
+
+export interface WorkspaceOverview {
+  plan: {
+    name: "Free" | "Account" | "Starter" | "Creator" | "Professional";
+    status: BillingSummary["account"]["status"];
+  };
+  credits: {
+    available: number;
+    reserved: number;
+  };
+  usage: {
+    generationsThisMonth: number;
+    generationsAllTime: number;
+  };
+  activeProjects: number;
+  activeApiKeys: number;
+  openSupportTickets: number;
+  recentActivity: WorkspaceActivity[];
 }
 
 export interface ApiErrorPayload {

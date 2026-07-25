@@ -1,0 +1,62 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "qwen-image-3-sandbox",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-23",
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "sandbox.qwen-image-3.net",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "qwen-image-3-sandbox",
+      "database_id": "5e70f1d2-0b54-4c85-811c-91f0806b7fd9",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "qwen-image-3-sandbox-assets"
+    }
+  ],
+  "vars": {
+    "APP_BASE_URL": "https://sandbox.qwen-image-3.net",
+    "DEPLOY_REVISION": "stripe-sandbox-acceptance-20260723",
+    "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
+    "STRIPE_TIMEOUT_MS": "15000",
+    "BILLING_ENABLED": "true",
+    "GENERATION_PROVIDER": "local",
+    "QWEN_MODEL_ID": "local-qwen-preview",
+    "STRIPE_PRICE_STARTER_MONTHLY": "price_1TwMtcQnZzuLeKGY4q9BLtC8",
+    "STRIPE_PRICE_STARTER_YEARLY": "price_1TwMtdQnZzuLeKGYO9XegLIL",
+    "STRIPE_PRICE_CREATOR_MONTHLY": "price_1TwMtdQnZzuLeKGYWgoYcaNO",
+    "STRIPE_PRICE_CREATOR_YEARLY": "price_1TwMteQnZzuLeKGYjxknzpZe",
+    "STRIPE_PRICE_PROFESSIONAL_MONTHLY": "price_1TwMteQnZzuLeKGYjqn4eG12",
+    "STRIPE_PRICE_PROFESSIONAL_YEARLY": "price_1TwMtfQnZzuLeKGYlJ54i9gT",
+    "STRIPE_PRICE_CREDITS_400": "price_1TwMtfQnZzuLeKGYh8V43qBj",
+    "STRIPE_PRICE_CREDITS_1200": "price_1TwMtfQnZzuLeKGYXOU6BWcs",
+    "STRIPE_PRICE_CREDITS_3000": "price_1TwMtgQnZzuLeKGY6JgUP5NB"
+  }
+}
