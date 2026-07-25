@@ -107,7 +107,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
       creditCost,
       queueTier: session.entitlements.priorityGeneration ? "vip" : "free",
       queuedAt: startedAt,
-      processingStartedAt: startedAt,
+      processingStartedAt: null,
       favorite: false,
       projectId: projectId || null,
       createdAt: startedAt,

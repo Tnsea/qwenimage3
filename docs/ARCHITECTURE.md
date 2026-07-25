@@ -116,9 +116,12 @@ D1 uses ordered forward-only SQL migrations in `worker/migrations/`. Backup, res
 2. Validate ownership and idempotency.
 3. A unique idempotency claim elects one executor; concurrent requests receive `409 REQUEST_IN_PROGRESS`.
 4. Move cost from available to reserved, append a reservation entry, and store the processing generation in one D1 batch.
-5. Success stores the image and appends settlement; failure appends refund and restores available balance.
+5. Publish the job to the standard queue or the isolated Creator/Professional priority queue and return `202` with `Location` and `Retry-After`.
+6. The queue consumer records `processing_started_at`, creates and persists the provider task ID, and resumes that same provider task on a bounded transient retry.
+7. Success stores the private R2 image and appends settlement; terminal failure appends refund and restores available balance.
+8. Studio and developer clients poll an ownership-checked generation record until `complete` or `failed`.
 
-The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale account reservations, drains legacy guest assets, and processes R2 cleanup compensation. Generation execution remains synchronous and has no durable queue.
+The 15-minute maintenance pass marks stale processing generations failed, settles completed stranded reservations, refunds failed/stale account reservations, reconciles idempotency records, drains legacy guest assets, and processes R2 cleanup compensation. The provider and D1 task-ID write cannot be one atomic transaction; a provider task created immediately before an unavailable D1 write remains a small monitored duplicate-cost risk.
 
 ### Customer sign-in and retained credential routes
 
@@ -148,7 +151,7 @@ The 15-minute maintenance pass marks stale processing generations failed, settle
 - Local release smoke: `npm start` rebuilds the client, applies local D1 migrations, and starts the same Worker entry.
 - Default build/deploy/CI paths exclude Express and SQLite.
 - The retained container runs the legacy Node/SQLite comparison adapter and is local-only.
-- Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production` and private R2 bucket `qwen-image-3-assets` are bound. `https://qwen-image-3.pages.dev` remains a fallback.
+- Acceptance: `https://qwen-image-3.net` serves the React bundle plus Hono Worker; `www` permanently redirects to the apex domain. D1 database `qwen-image-3-production`, private R2 bucket `qwen-image-3-assets`, and separate standard/priority generation queues are declared in the canonical deployment. `https://qwen-image-3.pages.dev` remains a fallback.
 - The exact deployed source state, Worker version, rollback identifiers, live-smoke evidence, and deferred gates are maintained only in [Release Readiness](./RELEASE_READINESS.md). The current Cloudflare acceptance Worker renders the account prompt/response conversation in Studio Create, keeps the composer available, and shares generation actions with History. A signed-in canonical browser loaded that deployed conversation shell and fixed composer without an application console error; the generating-to-complete/failed transitions were verified locally but were not re-exercised against the paid provider during deployment smoke. The canonical catalog and prerendered HTML omit the inactive local preview model, and the deterministic adapter remains selected only by local development and the separately deployed Pages fallback. D1 restore, Kie.ai failure/timeout behavior, and provider commercial approval remain open.
 - Google OAuth is the only customer-facing sign-in method. It completed one acceptance sign-in and its external Google Auth Platform application is published with status `Production`. Retained email/password and GitHub routes are not offered in the UI. Acceptance Checkout is enabled; production-approved public billing, production email, GitHub OAuth, and Alibaba Qwen execution remain unapproved or unverified. The Kie.ai Worker-side result does not approve production use, and neither the OAuth publishing label nor the custom domain approves a production launch.
 
@@ -167,9 +170,9 @@ flowchart LR
 
 Migration gates:
 
-1. Exercise versioned migrations with production backup/restore and rollback evidence.
-2. Separate generation submission from worker execution with durable states.
-3. Approve and exercise D1/R2 lifecycle, backup, restore, deletion, and rollback policies.
+1. Promote an isolated D1 restore through an approved binding change and prove Worker-version rollback.
+2. Add cancellation, provider callbacks where available, circuit breakers, and queue/cost supervision.
+3. Approve and exercise D1/R2 lifecycle, backup deletion, retention, and restored-environment promotion policies.
 4. Validate D1 rate-limit behavior under load or move limits to a dedicated shared service; add account/key budgets, retry budgets, and circuit breakers.
 5. Add automated payment reconciliation and operator alerts around the implemented external account lifecycle.
 6. Prove rollback and live acceptance before declaring a production release.

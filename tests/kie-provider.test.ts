@@ -48,12 +48,17 @@ test("Kie.ai Qwen provider creates, polls, validates, and downloads one image", 
       clock += milliseconds;
     },
   });
+  let persistedTaskId = "";
 
   const result = await provider.generate({
     prompt: "A quiet bookshop on a rainy Tokyo street",
     aspectRatio: "16:9",
     style: "Cinematic",
     quality: "Standard",
+  }, {
+    onTaskCreated: async (taskId) => {
+      persistedTaskId = taskId;
+    },
   });
 
   assert.equal(requests[0].url, "https://api.kie.ai/api/v1/jobs/createTask");
@@ -73,7 +78,54 @@ test("Kie.ai Qwen provider creates, polls, validates, and downloads one image", 
   assert.equal(result.provider, "kie-ai");
   assert.equal(result.model, KIE_QWEN_MODEL_ID);
   assert.equal(result.taskId, "task_qwen_1");
+  assert.equal(persistedTaskId, "task_qwen_1");
   assert.deepEqual(result.bytes, png);
+});
+
+test("Kie.ai Qwen provider resumes a persisted task without creating a duplicate", async () => {
+  const requests: string[] = [];
+  const provider = new KieQwenImageProvider({
+    apiKey: "kie-test",
+    baseUrl: "https://api.kie.ai",
+    allowedApiHost: "api.kie.ai",
+    allowedImageHosts: ["tempfile.aiquickdraw.com"],
+    fetchImpl: async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      requests.push(url);
+      if (url.includes("recordInfo")) {
+        return Response.json({
+          code: 200,
+          data: {
+            taskId: "task_persisted",
+            state: "success",
+            resultJson: JSON.stringify({ resultUrls: ["https://tempfile.aiquickdraw.com/qwen/resumed.png"] }),
+          },
+        });
+      }
+      return new Response(png, {
+        status: 200,
+        headers: { "Content-Type": "image/png", "Content-Length": String(png.byteLength) },
+      });
+    },
+  });
+  let taskCreated = false;
+
+  const result = await provider.generate({
+    prompt: "A durable generation retry",
+    aspectRatio: "1:1",
+    style: "Editorial",
+    quality: "Standard",
+  }, {
+    taskId: "task_persisted",
+    onTaskCreated: async () => {
+      taskCreated = true;
+    },
+  });
+
+  assert.equal(taskCreated, false);
+  assert.equal(requests.some((url) => url.includes("createTask")), false);
+  assert.equal(requests[0], "https://api.kie.ai/api/v1/jobs/recordInfo?taskId=task_persisted");
+  assert.equal(result.taskId, "task_persisted");
 });
 
 test("Kie.ai Qwen provider rejects result hosts outside the exact allowlist", async () => {

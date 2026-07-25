@@ -58,7 +58,7 @@ import {
   refundCredits,
   settleCredits,
 } from "./credits.js";
-import type { Env } from "./env.js";
+import type { Env, GenerationQueueMessage } from "./env.js";
 import {
   ExternalRequestError,
   fetchWithTimeout,
@@ -121,6 +121,7 @@ interface GenerationRow {
   queue_tier: "free" | "vip";
   queued_at: string;
   processing_started_at: string | null;
+  provider_task_id: string | null;
   favorite: number;
   created_at: string;
 }
@@ -766,7 +767,14 @@ function validImageSignature(bytes: Uint8Array, mimeType: string) {
   return false;
 }
 
-async function generateAsset(env: Env, input: GenerationRequest) {
+async function generateAsset(
+  env: Env,
+  input: GenerationRequest,
+  lifecycle: {
+    providerTaskId?: string | null;
+    onProviderTaskCreated?: (taskId: string) => Promise<void>;
+  } = {},
+) {
   const selectedModel = availableGenerationModel(env, input.modelId);
   if (!selectedModel) {
     throw new ExternalRequestError("PROVIDER_UNAVAILABLE", "The selected image model is not available.");
@@ -789,7 +797,10 @@ async function generateAsset(env: Env, input: GenerationRequest) {
       maxPollMs: timeoutMs(env.KIE_MAX_POLL_MS, 120_000),
       pollIntervalMs: Number.parseInt(env.KIE_POLL_INTERVAL_MS || "2000", 10) || 2_000,
     });
-    const result = await provider.generate(input);
+    const result = await provider.generate(input, {
+      taskId: lifecycle.providerTaskId,
+      onTaskCreated: lifecycle.onProviderTaskCreated,
+    });
     return {
       bytes: result.bytes,
       mimeType: result.mimeType,
@@ -1587,43 +1598,45 @@ app.use("/api/generations", async (c, next) => {
   await next();
 });
 
-app.use("/v1/generations", async (c, next) => {
-  const startedAt = Date.now();
-  const actor = await resolveActor(c);
-  c.set("actor", actor);
-  try {
-    await next();
-  } finally {
+for (const apiGenerationPath of ["/v1/generations/*"]) {
+  app.use(apiGenerationPath, async (c, next) => {
+    const startedAt = Date.now();
+    const actor = await resolveActor(c);
+    c.set("actor", actor);
     try {
-      await c.env.DB.prepare(`INSERT INTO api_request_logs
-        (id, user_id, api_key_id, method, path, status_code, duration_ms, request_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(
-          crypto.randomUUID(),
-          actor?.userId ?? null,
-          actor?.apiKeyId ?? null,
-          c.req.method,
-          "/v1/generations",
-          c.res.status,
-          Date.now() - startedAt,
-          c.get("requestId"),
-          now(),
-        )
-        .run();
-    } catch (reason) {
-      console.error("api-request-log-failed", {
-        requestId: c.get("requestId"),
-        reason: reason instanceof Error ? reason.message : "unknown",
-      });
+      await next();
+    } finally {
+      try {
+        await c.env.DB.prepare(`INSERT INTO api_request_logs
+          (id, user_id, api_key_id, method, path, status_code, duration_ms, request_id, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(
+            crypto.randomUUID(),
+            actor?.userId ?? null,
+            actor?.apiKeyId ?? null,
+            c.req.method,
+            c.req.path,
+            c.res.status,
+            Date.now() - startedAt,
+            c.get("requestId"),
+            now(),
+          )
+          .run();
+      } catch (reason) {
+        console.error("api-request-log-failed", {
+          requestId: c.get("requestId"),
+          reason: reason instanceof Error ? reason.message : "unknown",
+        });
+      }
     }
-  }
-});
+  });
 
-app.use("/v1/generations", async (c, next) => {
-  const limited = await enforceRateLimit(c, "api-generation", 120, 60 * 1000);
-  if (limited) return limited;
-  await next();
-});
+  app.use(apiGenerationPath, async (c, next) => {
+    const limited = await enforceRateLimit(c, "api-generation", 120, 60 * 1000);
+    if (limited) return limited;
+    await next();
+  });
+}
 
 app.use("/api/billing/*", async (c, next) => {
   if (c.req.path === "/api/billing/webhook") {
@@ -2779,6 +2792,186 @@ app.post("/api/billing/webhook", async (c) => {
   }
 });
 
+async function cleanupFailedGenerationObject(
+  env: Env,
+  generationId: string,
+  objectKey: string,
+) {
+  try {
+    await env.ASSETS_BUCKET.delete(objectKey);
+  } catch (reason) {
+    await env.DB.prepare(`INSERT INTO r2_deletion_queue
+      (object_key, reason, reference_id, attempts, last_error, created_at, updated_at)
+      VALUES (?, 'failed_generation', ?, 1, ?, ?, ?)
+      ON CONFLICT(object_key) DO UPDATE SET
+        attempts = attempts + 1, last_error = excluded.last_error, updated_at = excluded.updated_at`)
+      .bind(
+        objectKey,
+        generationId,
+        reason instanceof Error ? reason.message : "R2 deletion failed.",
+        now(),
+        now(),
+      )
+      .run()
+      .catch(() => undefined);
+  }
+}
+
+async function executeGenerationJob(env: Env, job: GenerationQueueMessage) {
+  const existing = await env.DB.prepare("SELECT * FROM generations WHERE id = ? AND owner_user_id = ?")
+    .bind(job.generationId, job.userId)
+    .first<GenerationRow>();
+  if (!existing) {
+    throw new ExternalRequestError("GENERATION_NOT_FOUND", "The queued generation no longer exists.");
+  }
+  if (existing.status === "complete") return existing;
+  if (existing.status === "failed") {
+    throw new ExternalRequestError("GENERATION_ALREADY_FAILED", "The queued generation has already failed.");
+  }
+
+  if (job.queueTier === "free" && !existing.processing_started_at) {
+    const configuredDelay = Number.parseInt(env.FREE_QUEUE_DELAY_MS || "1800", 10);
+    const delay = Math.min(10_000, Math.max(0, Number.isFinite(configuredDelay) ? configuredDelay : 1800));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  await env.DB.prepare(`UPDATE generations
+    SET processing_started_at = COALESCE(processing_started_at, ?), updated_at = ?
+    WHERE id = ? AND status = 'processing'`)
+    .bind(now(), now(), job.generationId)
+    .run();
+
+  let objectKey: string | null = null;
+  try {
+    const asset = await generateAsset(env, job.input, {
+      providerTaskId: existing.provider_task_id,
+      onProviderTaskCreated: async (taskId) => {
+        const updated = await env.DB.prepare(`UPDATE generations
+          SET provider_task_id = ?, updated_at = ?
+          WHERE id = ? AND status = 'processing' AND provider_task_id IS NULL`)
+          .bind(taskId, now(), job.generationId)
+          .run();
+        if ((updated.meta.changes ?? 0) !== 1) {
+          const current = await env.DB.prepare("SELECT provider_task_id FROM generations WHERE id = ?")
+            .bind(job.generationId)
+            .first<{ provider_task_id: string | null }>();
+          if (current?.provider_task_id !== taskId) {
+            throw new ExternalRequestError("GENERATION_TASK_CONFLICT", "The generation provider task changed unexpectedly.");
+          }
+        }
+      },
+    });
+    const extension = asset.mimeType === "image/svg+xml" ? "svg" : asset.mimeType === "image/jpeg" ? "jpg" : asset.mimeType === "image/webp" ? "webp" : "png";
+    objectKey = `generations/users/${job.userId}/${job.generationId}.${extension}`;
+    await env.ASSETS_BUCKET.put(objectKey, asset.bytes, {
+      httpMetadata: { contentType: asset.mimeType, cacheControl: "private, no-store" },
+      customMetadata: { generationId: job.generationId, ownerType: "user" },
+    });
+    const completion = await env.DB.prepare(`UPDATE generations
+      SET status = 'complete', width = ?, height = ?, r2_key = ?, mime_type = ?,
+        provider = ?, model = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing'`)
+      .bind(asset.width, asset.height, objectKey, asset.mimeType, asset.provider, asset.model, now(), job.generationId)
+      .run();
+    if ((completion.meta.changes ?? 0) !== 1) {
+      const current = await env.DB.prepare("SELECT * FROM generations WHERE id = ?")
+        .bind(job.generationId)
+        .first<GenerationRow>();
+      if (current?.status === "complete") return current;
+      throw new Error("Generation completion state changed unexpectedly.");
+    }
+    try {
+      await settleCredits(env.DB, {
+        userId: job.userId,
+        amount: job.creditCost,
+        referenceId: job.generationId,
+      });
+    } catch (reason) {
+      console.error("generation-settlement-deferred", {
+        generationId: job.generationId,
+        requestId: job.requestId,
+        reason: reason instanceof Error ? reason.message : "unknown",
+      });
+    }
+    if (job.generationRequestId) {
+      await env.DB.prepare("UPDATE generation_requests SET status = 'completed', updated_at = ? WHERE id = ?")
+        .bind(now(), job.generationRequestId)
+        .run()
+        .catch((reason) => {
+          console.error("generation-request-completion-deferred", {
+            generationId: job.generationId,
+            requestId: job.requestId,
+            reason: reason instanceof Error ? reason.message : "unknown",
+          });
+        });
+    }
+    return (await env.DB.prepare("SELECT * FROM generations WHERE id = ?")
+      .bind(job.generationId)
+      .first<GenerationRow>())!;
+  } catch (reason) {
+    if (objectKey) await cleanupFailedGenerationObject(env, job.generationId, objectKey);
+    throw reason;
+  }
+}
+
+async function markGenerationJobFailed(
+  env: Env,
+  job: GenerationQueueMessage,
+  reason: unknown,
+) {
+  const timestamp = now();
+  const failed = await env.DB.prepare(`UPDATE generations
+    SET status = 'failed', updated_at = ?
+    WHERE id = ? AND owner_user_id = ? AND status = 'processing'`)
+    .bind(timestamp, job.generationId, job.userId)
+    .run();
+  if ((failed.meta.changes ?? 0) === 1) {
+    await refundCredits(env.DB, {
+      userId: job.userId,
+      amount: job.creditCost,
+      referenceId: job.generationId,
+      timestamp,
+    });
+  }
+  if (job.generationRequestId) {
+    await env.DB.prepare(`UPDATE generation_requests
+      SET status = 'failed', failure_code = ?, updated_at = ? WHERE id = ?`)
+      .bind(reason instanceof ExternalRequestError ? reason.code : "GENERATION_FAILED", timestamp, job.generationRequestId)
+      .run();
+  }
+}
+
+function retryableGenerationFailure(reason: unknown) {
+  return reason instanceof ExternalRequestError && new Set([
+    "EXTERNAL_TIMEOUT",
+    "EXTERNAL_UNAVAILABLE",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_ASSET_UNAVAILABLE",
+  ]).has(reason.code);
+}
+
+async function consumeGenerationQueue(batch: MessageBatch<GenerationQueueMessage>, env: Env) {
+  for (const message of batch.messages) {
+    try {
+      await executeGenerationJob(env, message.body);
+      message.ack();
+    } catch (reason) {
+      const canRetry = retryableGenerationFailure(reason) && message.attempts < 3;
+      console.error(canRetry ? "generation-queue-retrying" : "generation-queue-failed", {
+        generationId: message.body.generationId,
+        requestId: message.body.requestId,
+        attempt: message.attempts,
+        reason: reason instanceof Error ? reason.message : "unknown",
+      });
+      if (canRetry) {
+        message.retry({ delaySeconds: Math.min(60, 10 * message.attempts) });
+        continue;
+      }
+      await markGenerationJobFailed(env, message.body, reason);
+      message.ack();
+    }
+  }
+}
+
 app.get("/api/generations", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
@@ -2965,96 +3158,51 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
   } else {
     return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to generate an image.");
   }
-  let objectKey: string | null = null;
-  let completed = false;
+
+  const job: GenerationQueueMessage = {
+    generationId,
+    userId: actor.userId,
+    input,
+    creditCost,
+    queueTier,
+    generationRequestId,
+    requestId: c.get("requestId"),
+  };
+  const generationQueue = queueTier === "vip"
+    ? c.env.GENERATION_PRIORITY_QUEUE ?? c.env.GENERATION_QUEUE
+    : c.env.GENERATION_QUEUE;
+  if (generationQueue) {
+    try {
+      await generationQueue.send(job);
+      const row = (await c.env.DB.prepare("SELECT * FROM generations WHERE id = ?")
+        .bind(generationId)
+        .first<GenerationRow>())!;
+      c.header("X-Generation-Queue", queueTier);
+      c.header("Location", apiOnly ? `/v1/generations/${generationId}` : `/api/generations/${generationId}`);
+      c.header("Retry-After", "2");
+      return c.json(generationFromRow(row), 202);
+    } catch (reason) {
+      await markGenerationJobFailed(c.env, job, reason);
+      console.error("generation-enqueue-failed", {
+        generationId,
+        requestId: c.get("requestId"),
+        reason: reason instanceof Error ? reason.message : "unknown",
+      });
+      return errorResponse(c, 503, "GENERATION_QUEUE_UNAVAILABLE", "The generation could not be queued. No credits were charged.");
+    }
+  }
+
   try {
-    if (!vip) {
-      const delay = Math.min(10_000, Math.max(0, Number.parseInt(c.env.FREE_QUEUE_DELAY_MS || "1800", 10) || 1800));
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-    await c.env.DB.prepare("UPDATE generations SET processing_started_at = ?, updated_at = ? WHERE id = ? AND status = 'processing'")
-      .bind(now(), now(), generationId)
-      .run();
-    const asset = await generateAsset(c.env, input);
-    const extension = asset.mimeType === "image/svg+xml" ? "svg" : asset.mimeType === "image/jpeg" ? "jpg" : asset.mimeType === "image/webp" ? "webp" : "png";
-    const key = `generations/users/${actor.userId}/${generationId}.${extension}`;
-    objectKey = key;
-    await c.env.ASSETS_BUCKET.put(key, asset.bytes, {
-      httpMetadata: { contentType: asset.mimeType, cacheControl: "private, no-store" },
-      customMetadata: { generationId, ownerType: "user" },
-    });
-    const completion = await c.env.DB.prepare(`UPDATE generations
-      SET status = 'complete', width = ?, height = ?, r2_key = ?, mime_type = ?, provider = ?, model = ?, updated_at = ?
-      WHERE id = ? AND status = 'processing'`)
-      .bind(asset.width, asset.height, key, asset.mimeType, asset.provider, asset.model, now(), generationId)
-      .run();
-    if ((completion.meta.changes ?? 0) !== 1) {
-      throw new Error("Generation completion state changed unexpectedly.");
-    }
-    completed = true;
-    if (actor.userId) {
-      try {
-        await settleCredits(c.env.DB, { userId: actor.userId, amount: creditCost, referenceId: generationId });
-      } catch (reason) {
-        console.error("generation-settlement-deferred", {
-          generationId,
-          requestId: c.get("requestId"),
-          reason: reason instanceof Error ? reason.message : "unknown",
-        });
-      }
-    }
-    if (generationRequestId) {
-      await c.env.DB.prepare("UPDATE generation_requests SET status = 'completed', updated_at = ? WHERE id = ?")
-        .bind(now(), generationRequestId)
-        .run();
-    }
-    const row = (await c.env.DB.prepare("SELECT * FROM generations WHERE id = ?").bind(generationId).first<GenerationRow>())!;
+    const row = await executeGenerationJob(c.env, job);
     c.header("X-Generation-Queue", queueTier);
     return c.json(generationFromRow(row), 201);
   } catch (reason) {
-    if (!completed) {
-      if (objectKey) {
-        try {
-          await c.env.ASSETS_BUCKET.delete(objectKey);
-        } catch (cleanupReason) {
-          await c.env.DB.prepare(`INSERT INTO r2_deletion_queue
-            (object_key, reason, reference_id, attempts, last_error, created_at, updated_at)
-            VALUES (?, 'failed_generation', ?, 1, ?, ?, ?)
-            ON CONFLICT(object_key) DO UPDATE SET
-              attempts = attempts + 1, last_error = excluded.last_error, updated_at = excluded.updated_at`)
-            .bind(
-              objectKey,
-              generationId,
-              cleanupReason instanceof Error ? cleanupReason.message : "R2 deletion failed.",
-              now(),
-              now(),
-            )
-            .run()
-            .catch(() => undefined);
-        }
-      }
-      const failed = await c.env.DB.prepare("UPDATE generations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'processing'")
-        .bind(now(), generationId)
-        .run();
-      if ((failed.meta.changes ?? 0) === 1 && actor.userId) {
-        await refundCredits(c.env.DB, { userId: actor.userId, amount: creditCost, referenceId: generationId });
-      }
-      if (generationRequestId) {
-        await c.env.DB.prepare("UPDATE generation_requests SET status = 'failed', failure_code = ?, updated_at = ? WHERE id = ?")
-          .bind(reason instanceof ExternalRequestError ? reason.code : "GENERATION_FAILED", now(), generationRequestId)
-          .run();
-      }
-    }
+    await markGenerationJobFailed(c.env, job, reason);
     console.error("generation-request-failed", {
       generationId,
       requestId: c.get("requestId"),
       reason: reason instanceof Error ? reason.message : "unknown",
-      completed,
     });
-    if (completed) {
-      c.header("Retry-After", "2");
-      return errorResponse(c, 503, "GENERATION_PERSISTED", "The image was saved, but its response could not be completed. Retry with the same Idempotency-Key.");
-    }
     const providerFailure = reason instanceof ExternalRequestError ? reason : null;
     const timeout = providerFailure?.code === "EXTERNAL_TIMEOUT";
     return errorResponse(
@@ -3068,6 +3216,28 @@ async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {
 
 app.post("/api/generations", (c) => generationHandler(c, false));
 app.post("/v1/generations", (c) => generationHandler(c, true));
+
+async function generationRecord(c: Context<WorkerContext>, apiOnly: boolean) {
+  const actor = apiOnly ? c.get("actor") : await resolveActor(c);
+  c.set("actor", actor);
+  if (apiOnly && (!actor.user || !actor.apiKeyId)) {
+    return errorResponse(c, 401, "INVALID_API_KEY", "Provide a valid API key in the Authorization header.");
+  }
+  if (apiOnly && !actor.scopes.includes("generations:write")) {
+    return errorResponse(c, 403, "INSUFFICIENT_SCOPE", "This API key does not have generations:write access.");
+  }
+  if (!actor.userId) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to access this generation.");
+  const row = await c.env.DB.prepare("SELECT * FROM generations WHERE id = ? AND owner_user_id = ?")
+    .bind(c.req.param("id"), actor.userId)
+    .first<GenerationRow>();
+  if (!row) return errorResponse(c, 404, "NOT_FOUND", "Generation not found.");
+  c.header("Cache-Control", "private, no-store");
+  if (row.status === "processing") c.header("Retry-After", "2");
+  return c.json(generationFromRow(row));
+}
+
+app.get("/api/generations/:id", (c) => generationRecord(c, false));
+app.get("/v1/generations/:id", (c) => generationRecord(c, true));
 
 async function generationAsset(c: Context<WorkerContext>, download: boolean) {
   const actor = await requireUser(c);
@@ -3555,6 +3725,9 @@ export default {
   fetch(request: Request, env: Env, executionContext: ExecutionContext) {
     return app.fetch(request, env, executionContext);
   },
+  queue(batch: MessageBatch<GenerationQueueMessage>, env: Env) {
+    return consumeGenerationQueue(batch, env);
+  },
   scheduled(_controller: ScheduledController, env: Env, executionContext: ExecutionContext) {
     executionContext.waitUntil((async () => {
       try {
@@ -3573,4 +3746,4 @@ export default {
       }
     })());
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, GenerationQueueMessage>;

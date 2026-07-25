@@ -1,9 +1,22 @@
 import type { BillingEnvironment } from "./offers.js";
+import type { GenerationRequest } from "../src/types.js";
+
+export interface GenerationQueueMessage {
+  generationId: string;
+  userId: string;
+  input: GenerationRequest;
+  creditCost: number;
+  queueTier: "free" | "vip";
+  generationRequestId: string | null;
+  requestId: string;
+}
 
 export interface Env extends BillingEnvironment {
   DB: D1Database;
   ASSETS_BUCKET: R2Bucket;
   ASSETS: Fetcher;
+  GENERATION_QUEUE?: Queue<GenerationQueueMessage>;
+  GENERATION_PRIORITY_QUEUE?: Queue<GenerationQueueMessage>;
   APP_BASE_URL: string;
   DEPLOY_REVISION?: string;
   CF_VERSION_METADATA?: WorkerVersionMetadata;

@@ -1,6 +1,6 @@
 # Operations
 
-Last verified: July 23, 2026
+Last verified: July 25, 2026
 
 This runbook covers local execution, the Cloudflare acceptance environment, and the remaining production gates. The custom-domain environment is deployed but is not an approved production launch.
 
@@ -26,7 +26,7 @@ This runbook covers local execution, the Cloudflare acceptance environment, and 
 | `KIE_MODEL_ID` | `qwen2/text-to-image` | Kie.ai provider | Exact reviewed adapter model; other values are rejected |
 | `KIE_IMAGE_ALLOWED_HOSTS` | Kie.ai result hosts | Kie.ai asset download | Comma-separated exact HTTPS hostnames; every redirect is revalidated |
 | `KIE_POLL_INTERVAL_MS` | `2000` | Kie.ai task polling | Effective range is 250 ms–10 seconds |
-| `KIE_MAX_POLL_MS` | `120000` | Kie.ai task polling | Bounded synchronous acceptance window; durable callback/queue processing remains pending |
+| `KIE_MAX_POLL_MS` | `120000` | Kie.ai task polling | Bounded per-consumer poll window; transient queue retries resume the persisted task ID |
 | `BILLING_ENABLED` | `true` on the canonical acceptance Worker by explicit owner decision | Enable new Stripe Checkout offers | Default new public environments to false; record any owner override with the deployed Worker and verify health/catalog |
 | `BILLING_OPERATOR_TOKEN` | Empty | Review and resolve refund, dispute, and Radar cases; send an alert-delivery acceptance test | Managed secret of at least 32 characters; grants access only to `/api/operator/*` |
 | `OPS_ALERT_EMAIL` | Empty | Cloudflare Email Routing Worker binding for operational alerts | Checked-in binding name only; requires Email Routing and a verified destination before deployment |
@@ -102,6 +102,8 @@ Current resources:
 - Pages fallback: `https://qwen-image-3.pages.dev`
 - D1 database: `qwen-image-3-production`
 - R2 bucket: `qwen-image-3-assets`
+- Standard generation queue: `qwen-image-3-generation`
+- Creator/Professional priority queue: `qwen-image-3-generation-priority`
 - Billing: enabled for new Checkout only by the explicit July 24, 2026 repository-owner acceptance decision; this is not production approval
 - Transactional account email and GitHub OAuth: disabled; Cloudflare Email Routing operational alerts: enabled
 - Google OAuth: enabled with Google Auth Platform publishing status `Production` for external Google accounts
@@ -113,11 +115,15 @@ Release verification, migration, and deployment:
 ```bash
 npm run verify:release
 npx wrangler d1 export qwen-image-3-production --remote --output backups/qwen-image-3-YYYYMMDD-HHMMSS.sql
+npx wrangler queues list
+npx wrangler queues create qwen-image-3-generation
+npx wrangler queues create qwen-image-3-generation-priority
 npm run cf:migrate:remote
 npm run cf:deploy
 ```
 
 `wrangler.worker.jsonc` is the public custom-domain deployment source of truth. `wrangler.jsonc` retains the Pages fallback configuration.
+Create each queue only when it is absent from `wrangler queues list`; a repeated create is an operator error, not a deployment prerequisite. Apply the forward migration before deploying the consumer so `provider_task_id` exists when the first job is delivered.
 Capture an R2 object inventory through the authenticated Cloudflare API or dashboard before migrations that affect object references; current Wrangler has no object-list command.
 
 Live smoke:
@@ -305,7 +311,7 @@ Restore procedure:
 4. Exercise health, login, ownership, generation history, and credit-balance checks.
 5. Promote the restored path only after validation.
 
-Do not overwrite the active database without an explicit recovery decision and rollback copy. No production restore exercise has been completed yet.
+Do not overwrite the active database without an explicit recovery decision and rollback copy. The SQLite path is not the canonical runtime and has no production restore evidence.
 
 For D1, capture a remote export before any destructive migration:
 
@@ -314,6 +320,15 @@ npx wrangler d1 export qwen-image-3-production --remote --output backups/qwen-im
 ```
 
 Restore must target a separate D1 database first, run consistency and application acceptance checks, then be promoted through an explicit binding change. R2 source objects require an independent inventory/lifecycle/deletion exercise; a D1 export alone is not a complete asset backup.
+
+July 25, 2026 rehearsal evidence:
+
+- remote export `backups/qwen-image-3-20260725-184500.sql` is retained outside Git, is 218,328 bytes/988 lines, has SHA-256 `3c7b7650a2434b8a35c7caa7262883ba424f196f8b05ee3db75c206e70300050`, and passed SQLite `PRAGMA integrity_check`;
+- the export imported into isolated D1 database `qwen-image-3-restore-rehearsal-20260725` (`cf8c1fed-2db2-43ac-bb71-b3d7499d99b6`) with 590 queries, 1,753 rows written, and no import error;
+- source and rehearsal counts matched for users (6), generations (11), credit ledger (26), billing events (9), billing payments (2), support tickets (0), and migrations (13), with zero negative credit balances;
+- D1 referenced seven distinct non-null generation object keys, the private R2 bucket contained seven objects, and the deletion-compensation queue was empty.
+
+This proves export integrity and isolated relational restoration, not promotion of the restored binding, point-in-time recovery, approved backup deletion, or full R2 byte restoration. Retain the rehearsal database until its evidence is reviewed; deletion requires an explicit post-report cleanup decision.
 
 ## External Integration Gates
 
@@ -345,7 +360,7 @@ Restore must target a separate D1 database first, run consistency and applicatio
 - Confirm the API origin is exactly `https://api.kie.ai` and review every hostname reached by the generated-image URL and any redirect before adding it to `KIE_IMAGE_ALLOWED_HOSTS`.
 - Run one low-risk Golden Prompt through the signed-in Studio. Confirm task creation, polling, one credit settlement, immediate private R2 persistence, owned download, and no provider URL or credential in the browser, logs, D1, or API response.
 - Exercise invalid key, insufficient balance, provider rejection, unknown status, timeout, unapproved result host, redirect, invalid MIME/signature, and oversized asset behavior. Every failure must mark the task failed and refund the reserved product credits.
-- Kie.ai task creation is asynchronous, while the current product request waits synchronously for completion. Treat callback or durable-queue processing, cancellation, late-provider completion reconciliation, and cost monitoring as production gates.
+- Submission now enters a durable standard or priority queue, and a retry resumes the persisted Kie task ID. Exercise canonical queue delivery, terminal refund, timeout/late-provider reconciliation, cancellation policy, and provider cost monitoring before production approval.
 - Record the provider model, Kie task ID, returned-host evidence, product credit delta, provider charge, test time, Worker version, and rollback version in `RELEASE_READINESS.md` without recording the API key or expiring asset URL.
 
 ### Stripe
@@ -393,12 +408,12 @@ Required before external beta:
 
 ## Monitoring and Incidents
 
-Current logging is Cloudflare invocation output plus request IDs. Every `/v1/generations` attempt is recorded with status, duration, and request ID; valid keys also retain user/key association. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, deleted PaymentIntent evidence in `billing_deleted_payment_tombstones`, and failed object cleanup in `r2_deletion_queue`. `/api/health` exposes aggregate failed/stale Stripe-event counts without customer data. No external production metrics, traces, dashboard, or on-call destination is configured.
+Current logging is Cloudflare invocation/queue-consumer output plus request IDs. Every `/v1/generations` submission and status read is recorded with status, duration, path, and request ID; valid keys also retain user/key association. Queue logs identify retry/failure by generation and request ID without prompt text. Retention/recovery summaries are stored in `maintenance_runs`, account-deletion completion in `account_deletion_audit`, deleted PaymentIntent evidence in `billing_deleted_payment_tombstones`, and failed object cleanup in `r2_deletion_queue`. `/api/health` exposes aggregate failed/stale Stripe-event counts without customer data. No external production queue-depth, generation-latency, cost, metrics, traces, dashboard, or on-call destination is configured.
 
 Production acceptance requires at minimum:
 
 - request rate, latency, and error code dashboards;
-- generation success, timeout, moderation, and stranded-reservation alerts;
+- queue depth/age and generation success, timeout, moderation, retry, terminal-failure, and stranded-reservation alerts;
 - poll `/api/health` and alert when `status != "ok"`, `billing.eventHealth.healthy != true`, or `billing.reviewHealth.healthy != true`;
 - credit and Stripe reconciliation alarms beyond the aggregate event-health signal;
 - D1 capacity, R2 cleanup backlog, backup, and restore monitoring;

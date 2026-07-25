@@ -18,6 +18,34 @@
   "triggers": {
     "crons": ["*/15 * * * *"]
   },
+  "queues": {
+    "producers": [
+      {
+        "binding": "GENERATION_QUEUE",
+        "queue": "qwen-image-3-generation"
+      },
+      {
+        "binding": "GENERATION_PRIORITY_QUEUE",
+        "queue": "qwen-image-3-generation-priority"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "qwen-image-3-generation",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 1
+      },
+      {
+        "queue": "qwen-image-3-generation-priority",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 2
+      }
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": {
@@ -55,7 +83,7 @@
   ],
   "vars": {
     "APP_BASE_URL": "https://qwen-image-3.net",
-    "DEPLOY_REVISION": "acceptance-checkout-enabled-20260724",
+    "DEPLOY_REVISION": "acceptance-durable-generation-queue-20260725",
     "EXTERNAL_HTTP_TIMEOUT_MS": "15000",
     "STRIPE_TIMEOUT_MS": "15000",
     "BILLING_ENABLED": "true",

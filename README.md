@@ -15,14 +15,14 @@ This project is not affiliated with or endorsed by Alibaba or the Qwen team.
 | Generation access | Account required for generation, history, image access, and deletion; every request uses server-authoritative credits |
 | Accounts | Customer-facing access is Google-only in the acceptance UI; the Worker retains locally tested email/password, verification, and recovery routes, plus session management, export, and fail-safe account deletion |
 | Social login | Google is the only customer-facing sign-in method; its authorization-code flow completed one real acceptance sign-in and its OAuth publishing status is Production. The GitHub adapter remains implemented but unverified and is not offered in the UI |
-| Studio | Login-directed responsive workspace with a continuous Create conversation of prior user prompts and image responses, immediate generating/complete/failed states, in-place results, persistent light/dark theme control, aggregate overview, projects, History archive, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings; this Create interaction is deployed to Cloudflare acceptance and is not production-approved |
+| Studio | Login-directed responsive workspace with a continuous Create conversation of prior user prompts and image responses, immediate submitting/queued/generating/complete/failed states, in-place results, persistent light/dark theme control, aggregate overview, projects, History archive, favorites, credits, billing, payments, scoped API keys, API activity, private support tickets, profile, and security settings; the durable-status revision remains subject to the exact deployment evidence in Release Readiness |
 | Credits | One-time 20-credit account-creation grant; atomic reservation, settlement, refund, and ledger entries |
-| Developer API | Hashed, scoped, revocable API keys; synchronous `POST /v1/generations`; 24-hour idempotency; durable request logs |
+| Developer API | Hashed, scoped, revocable API keys; asynchronous `POST /v1/generations`, owned status reads, 24-hour idempotency, and durable request logs |
 | Billing adapter | Explicit kill switch, Stripe Checkout/Portal, recoverable webhook states, validated invoices, consolidated refund/dispute/Radar review, non-negative operator recovery, versioned policy acceptance, scheduled external-alert delivery, and external cleanup before account deletion |
 | Image providers | Deterministic local SVG preview by default; optional Alibaba Cloud Model Studio `qwen-image-2.0-pro` and Kie.ai `qwen2/text-to-image` adapters |
 | Storage | D1 records and private R2 generation assets in both Wrangler development and the Cloudflare acceptance runtime |
 
-The application does **not** currently provide a durable asynchronous generation queue, approved retention/backup lifecycle, complete production monitoring, verified Qwen Image 3 integration, or production-approved public billing. Checkout is enabled only as an explicit acceptance-environment operator decision. Billing-health email delivery and product-owner billing-copy acceptance passed in the Cloudflare acceptance environment; broader reconciliation monitoring and launch-region legal/commercial review remain open.
+The application now implements durable standard and priority generation queues, status polling, bounded retries, persisted provider task IDs, and credit refunds on terminal failure. It does **not** currently provide an approved retention/backup-deletion lifecycle, complete production monitoring, verified Qwen Image 3 integration, or production-approved public billing. Checkout is enabled only as an explicit acceptance-environment operator decision. Billing-health email delivery and product-owner billing-copy acceptance passed in the Cloudflare acceptance environment; broader reconciliation monitoring and launch-region legal/commercial review remain open.
 
 ## Local Quick Start
 
@@ -68,6 +68,7 @@ npm run cf:deploy
 - A Cloudflare Worker custom domain serves the React bundle and same-origin Hono API.
 - D1 stores identities, sessions, projects, credits, support conversations, rate limits, immutable Stripe Price-to-credit versions, event/order/payment records, and generation metadata.
 - R2 stores private generation source assets; access always passes through server ownership checks.
+- Separate Cloudflare Queues carry standard and Creator/Professional generation jobs; submission returns immediately and the Worker persists provider task IDs before polling.
 - Unsubscribed-account exports are watermarked. Every active paid plan, including Starter, receives original exports; Creator and Professional additionally use the VIP queue.
 - `BILLING_ENABLED=true` enables new Live-mode Stripe Checkout creation on the canonical acceptance Worker by explicit repository-owner decision. Signed webhook settlement and external account cleanup remain active. The isolated Sandbox remains the authoritative lifecycle-acceptance surface; enabling the canonical switch is not production approval.
 
@@ -124,7 +125,7 @@ The Worker downloads provider output immediately and persists it in private R2. 
 
 ### Kie.ai Qwen Image 2
 
-The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, polls its status within a bounded request, then immediately downloads the expiring result into private R2. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. The Worker-side provider path completed a paid acceptance task, and a subsequent signed-in product request completed D1 reservation/settlement, private R2 persistence, browser rendering, and private-download enforcement. Failure/moderation behavior, timeout recovery, late completion, data/commercial terms, and production approval remain open.
+The Worker adapter creates an asynchronous Kie.ai task for the exact `qwen2/text-to-image` model, persists the task ID, polls it from a durable queue consumer, then immediately downloads the expiring result into private R2. A retried consumer resumes the same task instead of creating a second provider charge. The fixed 2K contract is exposed as Standard at four product credits; the UI and server limit this provider to its documented aspect ratios and 800-character prompt maximum instead of charging unsupported High or Ultra tiers. The Worker-side provider path completed a paid acceptance task, and a subsequent signed-in product request completed D1 reservation/settlement, private R2 persistence, browser rendering, and private-download enforcement. Failure/moderation behavior, end-to-end timeout recovery, late completion, data/commercial terms, and production approval remain open.
 
 ```bash
 GENERATION_PROVIDER=kie
@@ -137,7 +138,7 @@ KIE_POLL_INTERVAL_MS=2000
 KIE_MAX_POLL_MS=120000
 ```
 
-The API and every result or redirect target must use HTTPS and match an exact configured hostname. The Worker accepts PNG, JPEG, or WebP files whose signatures match their MIME type and whose total size does not exceed 25 MB. The current product request remains synchronous even though Kie.ai runs an asynchronous task; durable callback/queue handling remains a production gate.
+The API and every result or redirect target must use HTTPS and match an exact configured hostname. The Worker accepts PNG, JPEG, or WebP files whose signatures match their MIME type and whose total size does not exceed 25 MB. Submission and provider execution are separated by Cloudflare Queues; moderation, provider-commercial approval, live timeout/late-completion acceptance, and cost supervision remain production gates.
 
 ### Stripe
 
@@ -172,7 +173,7 @@ curl -X POST https://qwen-image-3.net/v1/generations \
   }'
 ```
 
-The endpoint is synchronous. `model` may be omitted to select the server's only available runtime, but explicit selection is recommended and unavailable IDs are rejected. Reusing a completed idempotency key within 24 hours returns the stored generation and does not reserve credits again. A concurrent request receives `409 REQUEST_IN_PROGRESS` and `Retry-After`.
+The endpoint returns `202 Accepted` with a processing generation, `Location: /v1/generations/{id}`, and `Retry-After: 2` after durable queue submission. Poll the returned `Location` with the same API key until `status` is `complete` or `failed`; completed records expose private image and download routes. `model` may be omitted to select the server's only available runtime, but explicit selection is recommended and unavailable IDs are rejected. Reusing a completed idempotency key within 24 hours returns the stored generation and does not reserve credits again. Repeating the key while work is in flight receives `409 REQUEST_IN_PROGRESS` and `Retry-After`.
 
 ## Data and Retention Reality
 
@@ -181,7 +182,7 @@ The endpoint is synchronous. `model` may be omitted to select the server's only 
 - Legacy anonymous rows remain in the schema only so scheduled maintenance can drain previously created guest assets safely.
 - Scheduled maintenance runs every 15 minutes, records its result, drains R2 deletion compensation work, removes expired session/security/idempotency/rate-limit state, and repairs stranded generation reservations.
 - Account deletion cancels a stored Stripe subscription and deletes the Stripe Customer before local cascades. If external cleanup fails, the local account is retained.
-- Backup-deletion timing, free/paid retention, and production overdue telemetry remain pending policy and infrastructure decisions.
+- A July 25 D1 export was integrity-checked and restored into an isolated rehearsal database with matching core-table counts; R2 key/object counts also matched. Backup-deletion timing, free/paid retention policy, production overdue telemetry, and promotion from a restored database remain pending decisions.
 
 ## Verification
 

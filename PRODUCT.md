@@ -45,17 +45,17 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 | Capability | Current status | Production requirement |
 |---|---|---|
 | Homepage and navigation | **Verified locally** | Accessibility and browser acceptance evidence |
-| Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering | Failure/timeout recovery, backup-deletion telemetry, and production monitoring |
+| Account-gated generation | **Externally verified once in acceptance** with a signed-in requirement, server-authoritative credit settlement, private R2 persistence, and browser rendering; durable standard/priority queue execution and polling pass locally | Canonical queue lifecycle, failure/timeout recovery, backup-deletion telemetry, and production monitoring |
 | Real image provider | **Kie.ai signed-in success path externally verified once** for `qwen2/text-to-image`; **external verification pending** for Alibaba Cloud `qwen-image-2.0-pro` | Approved provider contract, license, cost model, failure/timeout behavior, and rollback |
 | Qwen Image 3 | **Officially announced, unavailable here**; Qwen published the model on 2026-07-21 and Alibaba Cloud documents invite-only `qwen-image-3.0-pro`, but this product has no implemented, selected, or externally accepted Image 3 adapter | Implemented and accepted provider adapter, license, commercial approval, and production decision |
 | Account access | **Google-only in the customer-facing acceptance UI**; retained email/password, verification, and recovery APIs are locally verified but not exposed as sign-in options | Google denial/failure acceptance, production account-recovery decision, and security review |
 | Google/GitHub OAuth | **Google verified once and published for external accounts in acceptance; GitHub adapter implemented but not offered and externally unverified** | Reviewed deployment provenance, denial/failure acceptance, and GitHub callback acceptance before any UI enablement |
 | Welcome credits | **Implemented and deployed in acceptance** as one idempotent 20-credit grant at account creation or the first subsequent login for an older account | Reconciliation monitoring |
 | Credits | **Verified locally, in the isolated Sandbox, and once in the Cloudflare acceptance flow** for generation reservation/settlement; non-negative billing-loss recovery and aggregate billing-health alert delivery also passed | Reconciliation monitoring |
-| Studio | **Verified locally** for login-directed responsive workspace, persistent light/dark theme control, aggregate overview, create, projects, history/failure states, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, and production operational analytics |
+| Studio | **Verified locally** for a continuous Create history with submitting/queued/generating/complete/failed states, persistent light/dark theme control, aggregate overview, projects, History, favorites, credits, billing, payments, scoped keys, API activity, private support tickets, profile, and settings | Search/filter depth, support operations tooling, accessibility, and production operational analytics |
 | Stripe adapter | **Implemented, locally verified, and accepted across the configured lifecycle in an isolated Stripe/Cloudflare Sandbox; blocked for public use** | Legal/commercial approval and broader reconciliation monitoring |
-| Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, and synchronous generation | Per-key budgets, async jobs, webhooks, and production observability |
-| Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; Wrangler uses the same binding model locally | Backup/rollback evidence, lifecycle approval, retention telemetry, and restore exercise |
+| Developer API | **Verified locally; pre-release route deployed** with `generations:write` scope, relational limits, request logs, asynchronous submission, and owned status reads | Per-key budgets, cancellation, webhooks, and production observability |
+| Storage | **Pre-release deployed** with D1 metadata/ledger and private R2 assets; an isolated export/import/count rehearsal passed | Restored-binding promotion, Worker rollback, full R2 restore, lifecycle approval, and retention telemetry |
 | Content library | **Implemented locally**: four published SEO pages, 50 original curated prompt templates across five categories, eight existing example cards, and 15 homepage FAQs generated from a shared content source; the prompt set is not labeled tested | Prompt-level Qwen Image 3 test evidence, editorial acceptance, and ongoing review workflow |
 
 ## 4. Current User Experience
@@ -123,10 +123,11 @@ flowchart LR
   B --> C[Create account or sign in]
   C --> D[Receive or load account credits]
   D --> E[Enter prompt and settings]
-  E --> J[Append the user prompt and a Generating response in Create]
+  E --> J[Append the user prompt and a Submitting response in Create]
   J --> F[Atomically reserve account credits]
-  F --> G[Call active provider synchronously]
-  G -->|Success| H[Store private asset and replace the Generating response in place]
+  F --> Q[Publish to the durable standard or priority queue]
+  Q --> G[Persist and poll the active provider task]
+  G -->|Success| H[Store private asset and replace the response in place]
   G -->|Failure| I[Replace the response with Failed and restore credits]
 ```
 
@@ -142,7 +143,7 @@ Current rules:
 
 Completed and failed records render in both the Studio Create conversation and History archive. Both surfaces share download, favorite, variation, retry, and permanent-removal actions as applicable; failed cards retain an explicit no-charge state.
 
-Create renders generation as a conversation lifecycle: the user prompt appears immediately, the paired response shows `Generating` with its reserved credit cost, success replaces that state with the private image, and failure remains visible with its no-charge state.
+Create renders generation as a conversation lifecycle: the user prompt appears immediately, the paired response moves through `Submitting`, `Queued`, and `Generating` with its reserved credit cost, success replaces that state with the private image, and failure remains visible with its refunded/no-charge state.
 
 ### 5.2 Account access and retained credential routes
 
@@ -179,9 +180,10 @@ flowchart LR
 1. Validate the request and project ownership.
 2. Atomically move the estimated cost from available to reserved.
 3. Persist a processing generation.
-4. Call the active provider.
-5. On success, persist the asset and settle reserved credits.
-6. On provider or system failure, mark the generation failed and refund the reservation.
+4. Publish the job to the standard or priority Cloudflare Queue.
+5. Persist the provider task ID and resume that same task across bounded consumer retries.
+6. On success, persist the asset and settle reserved credits.
+7. On terminal provider or system failure, mark the generation failed and refund the reservation.
 
 The ledger is append-only in normal application flows. Startup and 15-minute maintenance recover stranded reservations and stale processing generations. Production acceptance still requires reconciliation monitoring and operational alerts.
 
@@ -212,7 +214,8 @@ Current public developer route:
 
 | Method | Route | Contract |
 |---|---|---|
-| `POST` | `/v1/generations` | Bearer API key; synchronous generation; optional `Idempotency-Key` up to 128 characters |
+| `POST` | `/v1/generations` | Bearer API key; durable asynchronous submission; optional `Idempotency-Key` up to 128 characters |
+| `GET` | `/v1/generations/{id}` | Bearer API key; owned processing/complete/failed status |
 
 Request:
 
@@ -227,7 +230,7 @@ Request:
 }
 ```
 
-The `model` field may be omitted to select the server's only available runtime; unavailable IDs are rejected. The same completed idempotency key returns the stored generation for 24 hours; a concurrent request receives `409 REQUEST_IN_PROGRESS` with `Retry-After`, and a stored failure is replayed without charging again. Keys carry an explicit `generations:write` scope. D1 stores rate-limit buckets and every request result, duration, request ID, and available user/key association. Per-key budgets, async reads/cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
+The `model` field may be omitted to select the server's only available runtime; unavailable IDs are rejected. A successful submission returns `202`, `Location`, and `Retry-After`; clients poll the owned record until it reaches a terminal state. The same completed idempotency key returns the stored generation for 24 hours; a concurrent request receives `409 REQUEST_IN_PROGRESS` with `Retry-After`, and a stored failure is replayed without charging again. Keys carry an explicit `generations:write` scope. D1 stores rate-limit buckets and every request result, duration, request ID, and available user/key association. Per-key budgets, cancellation, developer webhooks, cursor pagination, and version deprecation policy are planned.
 
 ## 6. Data, Privacy, and Security Contract
 
@@ -248,8 +251,8 @@ The `model` field may be omitted to select the server's only available runtime; 
 - Starter-account retention and backup-deletion timing are not implemented.
 - Rate limiting is IP-based and persisted in D1 locally and in acceptance; production per-account/key budgets and load acceptance remain pending.
 - Provider API and asset URLs require HTTPS and exact configured hosts; redirects are rejected. Assets also require allowed MIME types, valid signatures, and size limits.
-- D1 uses ordered forward-only SQL migrations. Rollback/upgrade exercises remain pending.
-- OAuth, email, Stripe, generation, and asset-download calls have explicit timeouts; provider-specific retry budgets remain pending.
+- D1 uses ordered forward-only SQL migrations. An isolated D1 export/restore rehearsal passed, while binding promotion and Worker rollback exercises remain pending.
+- OAuth, email, Stripe, generation, and asset-download calls have explicit timeouts; the generation consumer has a bounded retry budget, while provider circuit-breaker and cost supervision remain pending.
 - Production privacy notice, terms, commercial-use statement, and launch-region review are pending.
 
 ### Target retention policy
@@ -269,14 +272,14 @@ The target policy must not be advertised as current behavior until cleanup telem
 - A Hono Worker is the single active business backend in Wrangler development and Cloudflare acceptance; Pages remains a fallback URL.
 - D1 stores relational records; private R2 stores generation source assets.
 - The Express/SQLite implementation is retained only as a legacy comparison adapter and is excluded from default scripts and deployment documentation.
-- Generation executes synchronously inside the HTTP request.
+- Generation submission and execution are separated by durable standard and priority Cloudflare Queues; D1 stores the provider task ID and the browser polls owned status records.
 - One active provider is selected by Worker environment: local preview, Alibaba Cloud Model Studio, or Kie.ai Qwen Image 2.
 - Rate-limit buckets, API request logs, idempotency state, maintenance runs, and cleanup compensation live in D1.
 
 ### Target production architecture
 
-- Durable asynchronous generation queue and monotonic task state machine.
-- D1 as the selected relational database, pending backup/restore/load approval.
+- Extend the implemented durable queue with cancellation, provider callbacks where available, circuit breakers, and cost supervision.
+- D1 as the selected relational database, with isolated restore rehearsal complete and binding-promotion/load approval pending.
 - R2 as the selected private object store, pending lifecycle and deletion approval.
 - Shared rate limiting, reconciliation workers, metrics, traces, alerts, and audit events.
 - Versioned database migrations with backup and rollback evidence.
@@ -324,7 +327,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 - Retained, locally verified email/password authentication, verification, and recovery routes, and Google/GitHub OAuth adapters.
 - Projects, favorites, account export, and externally checkpointed deletion.
 - Credit ledger and generation reserve/settle/refund.
-- Hashed API keys and synchronous idempotent developer generation.
+- Hashed API keys and asynchronous idempotent developer generation with owned status polling.
 - Stripe adapter and signed webhook tests.
 - Alibaba Cloud Qwen 2.0 adapter mapping and binary persistence tests.
 - Recoverable Stripe events, validated invoices, consolidated refund/dispute/Radar review, authenticated non-negative recovery, and external-first account deletion.
@@ -342,7 +345,7 @@ The current production-mode bundle passes the JavaScript size target locally. No
 
 ### Post-MVP work
 
-- Async queue, status polling, cancellation, retries, and developer webhooks.
+- Cancellation, provider callbacks, circuit breakers, richer progress, and developer webhooks.
 - Uploads, reference images, inpainting, seeds, negative prompts, and batch generation.
 - Search, filters, trash/restore, parent/variation relationships, and extended project workflows.
 - Usage analytics and per-key budget controls.

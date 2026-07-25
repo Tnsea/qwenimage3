@@ -1046,3 +1046,226 @@ test("Worker generation idempotency elects one executor, returns 409 in flight, 
     await miniflare.dispose();
   }
 });
+
+test("Worker queues web generations, exposes processing state, and settles after durable consumption", async () => {
+  const { miniflare, database } = await createDatabase();
+  try {
+    await database.prepare("UPDATE credit_accounts SET available = 16 WHERE user_id = 'user-1'").run();
+    const apiSecret = "qh_test_worker_queue";
+    await database.prepare(`INSERT INTO api_keys
+      (id, user_id, name, prefix, secret_hash, scopes, created_at)
+      VALUES ('key-queue', 'user-1', 'Queue test', 'qh_queue', ?, 'generations:write', ?)`)
+      .bind(await hashToken(apiSecret), new Date().toISOString())
+      .run();
+    let queuedMessage: unknown;
+    let priorityQueuedMessage: unknown;
+    const objects = new Map<string, Uint8Array>();
+    const environment = {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      FREE_QUEUE_DELAY_MS: "0",
+      DB: database,
+      GENERATION_QUEUE: {
+        async send(message: unknown) {
+          queuedMessage = message;
+        },
+      },
+      GENERATION_PRIORITY_QUEUE: {
+        async send(message: unknown) {
+          priorityQueuedMessage = message;
+        },
+      },
+      ASSETS_BUCKET: {
+        async put(key: string, value: Uint8Array) {
+          objects.set(key, value);
+        },
+        async delete(key: string) {
+          objects.delete(key);
+        },
+      },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    };
+    const executionContext = { passThroughOnException() {}, waitUntil() {} };
+    const authorization = { Authorization: `Bearer ${apiSecret}` };
+    const create = await worker.fetch(new Request("https://qwen-image-3.net/v1/generations", {
+      method: "POST",
+      headers: {
+        ...authorization,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "durable-queue-key",
+      },
+      body: JSON.stringify({
+        prompt: "A durable queued generation",
+        aspect_ratio: "1:1",
+        style: "editorial",
+        quality: "standard",
+      }),
+    }), environment as never, executionContext as never);
+    const accepted = await create.json() as { id: string; status: string };
+    assert.equal(create.status, 202);
+    assert.equal(accepted.status, "processing");
+    assert.equal(create.headers.get("location"), `/v1/generations/${accepted.id}`);
+    assert.ok(queuedMessage);
+
+    const processing = await worker.fetch(
+      new Request(`https://qwen-image-3.net/v1/generations/${accepted.id}`, { headers: authorization }),
+      environment as never,
+      executionContext as never,
+    );
+    assert.equal(processing.status, 200);
+    assert.equal((await processing.json() as { status: string }).status, "processing");
+    const reserved = await database.prepare("SELECT available, reserved FROM credit_accounts WHERE user_id = 'user-1'")
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(reserved, { available: 12, reserved: 4 });
+
+    let acknowledged = false;
+    await worker.queue({
+      queue: "qwen-image-3-generation",
+      messages: [{
+        id: "message-1",
+        timestamp: new Date(),
+        body: queuedMessage,
+        attempts: 1,
+        ack() {
+          acknowledged = true;
+        },
+        retry() {
+          assert.fail("Successful local generation must not retry.");
+        },
+      }],
+      ackAll() {},
+      retryAll() {},
+    } as never, environment as never);
+    assert.equal(acknowledged, true);
+
+    const completed = await worker.fetch(
+      new Request(`https://qwen-image-3.net/v1/generations/${accepted.id}`, { headers: authorization }),
+      environment as never,
+      executionContext as never,
+    );
+    const completedBody = await completed.json() as { status: string; imageUrl: string | null };
+    assert.equal(completedBody.status, "complete");
+    assert.match(completedBody.imageUrl ?? "", new RegExp(`/api/generations/${accepted.id}/image$`));
+    const settled = await database.prepare("SELECT available, reserved FROM credit_accounts WHERE user_id = 'user-1'")
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(settled, { available: 12, reserved: 0 });
+    assert.equal(objects.size, 1);
+
+    await database.prepare(`UPDATE billing_accounts
+      SET plan = 'creator', plan_tier = 'creator', status = 'active'
+      WHERE user_id = 'user-1'`).run();
+    const priorityCreate = await worker.fetch(new Request("https://qwen-image-3.net/v1/generations", {
+      method: "POST",
+      headers: {
+        ...authorization,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "durable-priority-queue-key",
+      },
+      body: JSON.stringify({
+        model: "local-qwen-preview",
+        prompt: "A priority queue test",
+        aspect_ratio: "1:1",
+        style: "editorial",
+        quality: "standard",
+      }),
+    }), environment as never, executionContext as never);
+    assert.equal(priorityCreate.status, 202);
+    assert.equal(priorityCreate.headers.get("x-generation-queue"), "vip");
+    assert.equal((priorityQueuedMessage as { queueTier?: string })?.queueTier, "vip");
+    const priorityReserved = await database.prepare("SELECT available, reserved FROM credit_accounts WHERE user_id = 'user-1'")
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(priorityReserved, { available: 8, reserved: 4 });
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test("Worker queue permanently fails unavailable generations and refunds reserved credits", async () => {
+  const { miniflare, database } = await createDatabase();
+  try {
+    const generationId = "queued-failure";
+    const timestamp = new Date().toISOString();
+    const reservation = prepareCreditReservation(database, {
+      userId: "user-1",
+      amount: 1,
+      referenceId: generationId,
+      timestamp,
+    });
+    await database.batch([
+      ...reservation.statements,
+      database.prepare(`INSERT INTO generations
+        (id, owner_user_id, prompt, aspect_ratio, style, quality, status, provider, model,
+          credit_cost, queue_tier, queued_at, created_at, updated_at)
+        VALUES (?, 'user-1', 'A queued failure', '1:1', 'Editorial', 'Standard',
+          'processing', 'unavailable', 'unavailable-model', 1, 'free', ?, ?, ?)`)
+        .bind(generationId, timestamp, timestamp, timestamp),
+    ]);
+    const environment = {
+      APP_BASE_URL: "https://qwen-image-3.net",
+      BILLING_ENABLED: "false",
+      GENERATION_PROVIDER: "local",
+      QWEN_MODEL_ID: "local-qwen-preview",
+      FREE_QUEUE_DELAY_MS: "0",
+      DB: database,
+      ASSETS_BUCKET: {
+        async put() {
+          assert.fail("Unavailable provider must not persist an object.");
+        },
+        async delete() {},
+      },
+      ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
+    };
+    let acknowledged = false;
+    let retried = false;
+    await worker.queue({
+      queue: "qwen-image-3-generation",
+      messages: [{
+        id: "message-failure",
+        timestamp: new Date(),
+        body: {
+          generationId,
+          userId: "user-1",
+          input: {
+            prompt: "A queued failure",
+            modelId: "unavailable-model",
+            aspectRatio: "1:1",
+            style: "Editorial",
+            quality: "Standard",
+          },
+          creditCost: 1,
+          queueTier: "free",
+          generationRequestId: null,
+          requestId: "request-failure",
+        },
+        attempts: 1,
+        ack() {
+          acknowledged = true;
+        },
+        retry() {
+          retried = true;
+        },
+      }],
+      ackAll() {},
+      retryAll() {},
+    } as never, environment as never);
+
+    assert.equal(acknowledged, true);
+    assert.equal(retried, false);
+    const generation = await database.prepare("SELECT status FROM generations WHERE id = ?")
+      .bind(generationId)
+      .first<{ status: string }>();
+    assert.equal(generation?.status, "failed");
+    const account = await database.prepare("SELECT available, reserved FROM credit_accounts WHERE user_id = 'user-1'")
+      .first<{ available: number; reserved: number }>();
+    assert.deepEqual(account, { available: 4, reserved: 0 });
+    const refund = await database.prepare(`SELECT COUNT(*) count FROM credit_ledger
+      WHERE type = 'generation_refund' AND reference_id = ?`)
+      .bind(generationId)
+      .first<{ count: number }>();
+    assert.equal(refund?.count, 1);
+  } finally {
+    await miniflare.dispose();
+  }
+});

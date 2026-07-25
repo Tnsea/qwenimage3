@@ -110,6 +110,35 @@ function isOptimisticGeneration(generation: Generation) {
   return generation.id.startsWith("pending-");
 }
 
+function generationProgress(generation: Generation) {
+  if (generation.status !== "processing") return null;
+  if (isOptimisticGeneration(generation)) {
+    return {
+      badge: "Submitting",
+      title: "Submitting your request",
+      detail: "A private conversation turn has been created",
+      footer: "Request being submitted.",
+      action: "Submitting request",
+    };
+  }
+  if (!generation.processingStartedAt) {
+    return {
+      badge: "Queued",
+      title: "Waiting in queue",
+      detail: `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"} reserved until completion`,
+      footer: `${generation.queueTier === "vip" ? "Priority" : "Standard"} queue · waiting for a worker.`,
+      action: "Waiting in queue",
+    };
+  }
+  return {
+    badge: "Generating",
+    title: "Generating your image",
+    detail: "The response will appear here when it is ready",
+    footer: "Image generation in progress.",
+    action: "Generating image",
+  };
+}
+
 function formatCurrency(amountCents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amountCents / 100);
 }
@@ -204,6 +233,53 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
 
   const favoriteGenerations = useMemo(() => generations.filter((item) => item.favorite), [generations]);
   const currentSection = path.split("/")[2] || "create";
+  const processingGenerationKey = useMemo(
+    () => generations
+      .filter((generation) => generation.status === "processing" && !isOptimisticGeneration(generation))
+      .map((generation) => generation.id)
+      .sort()
+      .join(","),
+    [generations],
+  );
+
+  useEffect(() => {
+    if (!session.user || !processingGenerationKey) return;
+    let active = true;
+    const generationIds = processingGenerationKey.split(",");
+    const refreshProcessingGenerations = async () => {
+      const results = await Promise.allSettled(
+        generationIds.map((generationId) => api<Generation>(`/api/generations/${generationId}`)),
+      );
+      if (!active) return;
+      const refreshed = new Map<string, Generation>();
+      results.forEach((result) => {
+        if (result.status === "fulfilled") refreshed.set(result.value.id, result.value);
+      });
+      if (!refreshed.size) return;
+      const terminalGenerations = Array.from(refreshed.values())
+        .filter((generation) => generation.status !== "processing");
+      setGenerations((items) => items.map((item) => {
+        const replacement = refreshed.get(item.id);
+        if (!replacement) return item;
+        return replacement;
+      }));
+      if (terminalGenerations.length) {
+        const failures = terminalGenerations.filter((generation) => generation.status === "failed").length;
+        setMessage(failures === terminalGenerations.length
+          ? "Generation failed. This turn remains in the conversation and its reserved credits were refunded."
+          : failures
+            ? "Generation updates arrived. Completed results were saved and failed requests were refunded."
+            : "Generation complete. The response was updated in this conversation.");
+        void onSessionRefresh().catch(() => undefined);
+      }
+    };
+    void refreshProcessingGenerations();
+    const interval = window.setInterval(() => void refreshProcessingGenerations(), 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [onSessionRefresh, processingGenerationKey, session.user]);
 
   useEffect(() => {
     if (currentSection !== "billing") return;
@@ -266,7 +342,7 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
       provider: "pending",
       favorite: false,
       queuedAt: startedAt,
-      processingStartedAt: startedAt,
+      processingStartedAt: null,
       createdAt: startedAt,
     };
     setBusyAction(action);
@@ -293,7 +369,11 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
         onSessionRefresh(),
         api<WorkspaceOverview>("/api/workspace/overview").then(setOverview),
       ]);
-      setMessage(retrying ? "Retry complete. The new result was added to your creation stream." : "Variation complete. The new result was added to your creation stream.");
+      setMessage(created.status === "processing"
+        ? `${retrying ? "Retry" : "Variation"} queued. This turn will update when generation finishes.`
+        : retrying
+          ? "Retry complete. The new result was added to your creation stream."
+          : "Variation complete. The new result was added to your creation stream.");
       if (currentSection === "create" || currentSection === "new") {
         window.setTimeout(() => document.getElementById(`creation-generation-${created.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
       }
@@ -833,7 +913,9 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
         }}
         onGenerationCreated={(generation, pendingId) => {
           setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id && item.id !== pendingId)]);
-          setMessage("Generation complete. The result was added to this creation stream.");
+          setMessage(generation.status === "processing"
+            ? "Generation queued. This response will update here when processing finishes."
+            : "Generation complete. The result was added to this creation stream.");
           window.setTimeout(() => document.getElementById(`creation-generation-${generation.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
         }}
         onGenerationFailed={(pendingId) => {
@@ -996,7 +1078,9 @@ function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVari
           <span>{group.length} turn{group.length === 1 ? "" : "s"}</span>
         </div>
         <ol className="studio-conversation-list" aria-live="polite" aria-relevant="additions">
-          {group.map((generation) => <li className="studio-conversation-turn" id={`creation-generation-${generation.id}`} key={generation.id}>
+          {group.map((generation) => {
+            const progress = generationProgress(generation);
+            return <li className="studio-conversation-turn" id={`creation-generation-${generation.id}`} key={generation.id}>
             <article aria-label={`Creation turn from ${formatDateTime(generation.createdAt)}`}>
               <div className="chat chat-end studio-conversation-user">
                 <div className="chat-image avatar avatar-placeholder">
@@ -1017,7 +1101,7 @@ function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVari
                   <span>Image generator</span>
                   <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : generation.status === "complete" ? "badge-success" : ""}`}>
                     {generation.status === "processing" && <RefreshCw size={10} className="spin-icon" />}
-                    {generation.status === "processing" ? "Generating" : generation.status === "complete" ? "Complete" : "Failed"}
+                    {progress?.badge ?? (generation.status === "complete" ? "Complete" : "Failed")}
                   </span>
                 </div>
                 <div className={`chat-bubble card studio-conversation-response ${generation.status === "failed" ? "is-failed" : ""}`}>
@@ -1040,8 +1124,8 @@ function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVari
                         ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading="lazy" decoding="async" />
                         : <div className={`studio-generation-state ${generation.status === "processing" ? "is-processing" : "is-failed"}`}>
                           {generation.status === "processing" ? <RefreshCw size={24} className="spin-icon" /> : <TriangleAlert size={24} />}
-                          <strong>{generation.status === "processing" ? "Generating your image" : "Generation failed"}</strong>
-                          <small>{generation.status === "failed" ? "No credits charged" : "The response will appear here when it is ready"}</small>
+                          <strong>{progress?.title ?? "Generation failed"}</strong>
+                          <small>{generation.status === "failed" ? "No credits charged" : progress?.detail}</small>
                         </div>}
                     </figure>
                     <div className="card-actions studio-creation-footer">
@@ -1049,10 +1133,11 @@ function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVari
                     </div>
                   </div>
                 </div>
-                <div className="chat-footer">{generation.status === "failed" ? "This request failed without a charge." : generation.status === "complete" ? "Response saved to your private history." : "Response in progress."}</div>
+                <div className="chat-footer">{generation.status === "failed" ? "This request failed without a charge." : generation.status === "complete" ? "Response saved to your private history." : progress?.footer}</div>
               </div>
             </article>
-          </li>)}
+          </li>;
+          })}
         </ol>
       </section>)}
   </section>;
@@ -1068,7 +1153,7 @@ interface GenerationActionsProps {
 
 function GenerationActions({ generation, busyAction, onDelete, onFavorite, onVariation }: GenerationActionsProps) {
   if (generation.status === "processing") {
-    return <div className="studio-generation-progress" role="status"><RefreshCw size={15} className="spin-icon" /><span>Generating image</span></div>;
+    return <div className="studio-generation-progress" role="status"><RefreshCw size={15} className="spin-icon" /><span>{generationProgress(generation)?.action}</span></div>;
   }
   const favoriteAction = `generation-favorite-${generation.id}`;
   const variationAction = `generation-variation-${generation.id}`;
@@ -1086,13 +1171,14 @@ function GenerationActions({ generation, busyAction, onDelete, onFavorite, onVar
 function GenerationGrid({ generations, busyAction, onCreate, onDelete, onFavorite, onVariation }: GenerationGridProps) {
   if (generations.length === 0) return <div className="studio-empty"><ImageIcon /><h3>No recent work yet</h3><p>Create an image to begin building your private workspace history.</p>{onCreate && <button className="btn studio-primary-action" type="button" onClick={onCreate}><Plus size={15} />Create image</button>}</div>;
   return <div className={`studio-generation-grid ${generations.length < 3 ? "is-sparse" : ""}`}>{generations.map((generation, index) => {
+    const progress = generationProgress(generation);
     return <article className={`card card-border studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>
       <figure className="studio-generation-media">
         {generation.imageUrl
           ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading={index < 3 ? "eager" : "lazy"} decoding="async" />
           : <div className={`studio-generation-failed ${generation.status === "processing" ? "is-processing" : ""}`}>
             {generation.status === "processing" ? <RefreshCw size={22} className="spin-icon" /> : <TriangleAlert size={22} />}
-            <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : ""}`}>{generation.status === "processing" ? "Generating" : "Failed"}</span>
+            <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : ""}`}>{progress?.badge ?? "Failed"}</span>
             <small>{generation.status === "processing" ? `${generation.creditCost} credits reserved` : "No credits charged"}</small>
           </div>}
       </figure>

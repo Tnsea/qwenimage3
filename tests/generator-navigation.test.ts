@@ -18,7 +18,14 @@ test("successful web generations continue in the Studio Create stream", () => {
   assert.match(studio, /chat chat-end studio-conversation-user/);
   assert.match(studio, /chat chat-start studio-conversation-assistant/);
   assert.match(studio, /Generation started\. This conversation turn will update in place\./);
-  assert.match(studio, /generation\.status === "processing" \? "Generating"/);
+  assert.match(studio, /api<Generation>\(`\/api\/generations\/\$\{generationId\}`\)/);
+  assert.match(studio, /Generation queued\. This response will update here when processing finishes\./);
+  assert.match(generator, /processingStartedAt: null/);
+  assert.match(studio, /badge: "Submitting"/);
+  assert.match(studio, /badge: "Queued"/);
+  assert.match(studio, /badge: "Generating"/);
+  assert.match(studio, /Priority.*queue · waiting for a worker/);
+  assert.match(studio, /reserved credits were refunded/);
   assert.match(studio, /onGenerationCreated=\{\(generation, pendingId\) => \{[\s\S]*setGenerations\(\(items\) => \[generation,[\s\S]*creation-generation-\$\{generation\.id\}/);
   assert.doesNotMatch(studio, /onGenerationCreated=\{\(generation, pendingId\) => \{[\s\S]*onNavigate\("\/studio\/history"\);[\s\S]*\}\}/);
 });

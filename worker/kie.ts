@@ -49,6 +49,11 @@ export interface KieImageOptions {
   now?: () => number;
 }
 
+export interface KieGenerationLifecycle {
+  taskId?: string | null;
+  onTaskCreated?: (taskId: string) => Promise<void>;
+}
+
 const resultDimensions: Record<KieAspectRatio, { width: number; height: number }> = {
   "1:1": { width: 2048, height: 2048 },
   "16:9": { width: 2048, height: 1152 },
@@ -287,11 +292,12 @@ export class KieQwenImageProvider {
     throw new ExternalRequestError("PROVIDER_ASSET_REJECTED", "The image provider returned an unusable asset.");
   }
 
-  async generate(input: GenerationRequest): Promise<KieResult> {
+  async generate(input: GenerationRequest, lifecycle: KieGenerationLifecycle = {}): Promise<KieResult> {
     if (!supportedAspectRatios.has(input.aspectRatio) || input.quality !== "Standard" || input.prompt.length > 800) {
       throw new ExternalRequestError("PROVIDER_REQUEST_UNSUPPORTED", "Choose settings supported by the selected image model.");
     }
-    const taskId = await this.createTask(input);
+    const taskId = lifecycle.taskId?.trim() || await this.createTask(input);
+    if (!lifecycle.taskId && lifecycle.onTaskCreated) await lifecycle.onTaskCreated(taskId);
     const resultUrl = await this.waitForResult(taskId);
     const image = await this.downloadImage(resultUrl);
     return {
