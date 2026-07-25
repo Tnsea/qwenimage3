@@ -378,7 +378,7 @@ Closed decisions:
 - [x] Account and API generation share the credit ledger.
 - [x] Projects, history, favorites, API keys, sessions, export, and local deletion have automated flow coverage.
 - [x] Strict TypeScript, React Hooks, basic JSX accessibility checks, automated tests, production build, and production-artifact scan pass locally.
-- [x] Production and full development dependency audits report zero findings after upgrading Wrangler to 4.114.0 and Miniflare to 4.20260722.0.
+- [x] Production and full development dependency audits are release-blocking and report zero findings after upgrading Wrangler to 4.114.0, Miniflare to 4.20260722.0, ESLint to 10.8.0, and the JSX accessibility rules to `eslint-plugin-jsx-a11y-x` 0.2.0.
 - [x] Production JavaScript gzip is below 180 KB.
 - [x] Legacy guest assets continue to be deleted after 24 hours by tested scheduled maintenance.
 - [x] Qwen Image 3 editorial claims cite the official release while availability copy states that no Image 3 provider is connected here.

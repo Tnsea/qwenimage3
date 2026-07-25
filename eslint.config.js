@@ -1,5 +1,5 @@
 import js from "@eslint/js";
-import jsxA11y from "eslint-plugin-jsx-a11y";
+import jsxA11y from "eslint-plugin-jsx-a11y-x";
 import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -26,13 +26,13 @@ export default [
     },
     plugins: {
       "@typescript-eslint": tseslint.plugin,
-      "jsx-a11y": jsxA11y,
+      "jsx-a11y-x": jsxA11y,
       "react-hooks": reactHooks,
     },
     rules: {
       ...js.configs.recommended.rules,
       ...typescriptRecommended,
-      ...jsxA11y.flatConfigs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
       "@typescript-eslint/no-explicit-any": "error",

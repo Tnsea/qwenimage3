@@ -145,7 +145,7 @@ export function HomeSections({ catalog, onNavigate, onUsePrompt }: { catalog: Ca
 
         <figure className="workflow-figure">
           {/* "Qwen Image 3" is the product name, not a redundant description of the img element. */}
-          {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
+          {/* eslint-disable-next-line jsx-a11y-x/img-redundant-alt */}
           <img
             src="/qwen-image-3-workflow.png"
             width="1200"

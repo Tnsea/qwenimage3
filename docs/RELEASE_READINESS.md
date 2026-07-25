@@ -13,7 +13,7 @@ The application is locally functional and verified. This file is the authoritati
 | TypeScript client/server checks | Pass |
 | Automated tests | 119 passed, 0 failed on July 25, 2026. Coverage includes durable standard/priority queue submission, owned status polling, terminal refund, persisted Kie task resumption, and the existing account, credit, provider, billing, maintenance, OAuth, analytics, security, Studio, and editorial contracts |
 | Production bundle | Pass; JavaScript gzip 133.88 KB, below the 180 KB product target; artifact scan rejects loopback addresses, SQLite customer copy, and development-token copy |
-| npm dependency audit | Production and full development dependency audits pass with zero findings after upgrading Wrangler to 4.114.0 and Miniflare to 4.20260722.0 |
+| npm dependency audit | Production and full development dependency audits are release-blocking and pass with zero findings after upgrading Wrangler to 4.114.0, Miniflare to 4.20260722.0, ESLint to 10.8.0, and the JSX accessibility rules to `eslint-plugin-jsx-a11y-x` 0.2.0 |
 | Static UI quality | Strict unused checks, React Hooks rules, and baseline JSX accessibility rules pass |
 | Local health endpoint | HTTP 200 from the Wrangler Worker with local D1/R2 emulation, deterministic preview provider, and email disabled unless explicitly configured |
 | Security response headers | CSP, referrer policy, MIME protection, frame denial, permissions policy, COOP present |

@@ -192,6 +192,7 @@ npm test
 npm run build
 npm run check:artifacts
 npm run audit:production
+npm run audit:dependencies
 ```
 
 The automated suite covers rendering, the browser/Worker catalog contract, the signed-out generation gate, Cloudflare password/offer contracts, yearly-default pricing, 4/8/16 charging, Starter-versus-Creator entitlements, registration/verification, workspace overview, private support conversations, recovery, sessions, export/deletion, projects, favorites, concurrent D1 credit accounting, scoped keys, API logs/idempotency, OAuth mapping, recoverable Stripe fulfillment and invoice validation, refund and Radar fraud-warning quarantine, external deletion safety, origin rejection, maintenance, persisted rate limits, configuration gates, and Qwen host/MIME safeguards. Historical promotion tests remain isolated in the inactive comparison adapter.
