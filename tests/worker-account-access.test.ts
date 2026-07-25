@@ -158,6 +158,50 @@ test("canonical Worker requires an account and grants 20 welcome credits exactly
         createdAt,
       ).run();
 
+    for (const suffix of ["b", "c"]) {
+      await database.prepare(`INSERT INTO generations (
+        id, owner_user_id, anonymous_session_id, project_id, prompt, aspect_ratio, style, quality,
+        status, width, height, r2_key, mime_type, provider, model, credit_cost, queue_tier,
+        queued_at, processing_started_at, favorite, created_at, updated_at
+      )
+      SELECT ?, owner_user_id, anonymous_session_id, project_id, prompt || ?, aspect_ratio, style, quality,
+        status, width, height, r2_key, mime_type, provider, model, credit_cost, queue_tier,
+        queued_at, processing_started_at, favorite, created_at, updated_at
+      FROM generations WHERE id = ?`)
+        .bind(`${generationId}-${suffix}`, ` ${suffix}`, generationId)
+        .run();
+    }
+
+    const firstHistoryPage = await worker.fetch(
+      new Request("https://qwen-image-3.net/api/generations?limit=2&offset=0", {
+        headers: { Cookie: sessionCookie },
+      }),
+      env as never,
+      executionContext as never,
+    );
+    const firstHistoryBody = await json<{
+      generations: Array<{ id: string }>;
+      page: { hasMore: boolean; nextOffset: number };
+    }>(firstHistoryPage);
+    assert.deepEqual(firstHistoryBody.generations.map((item) => item.id), [`${generationId}-c`, `${generationId}-b`]);
+    assert.equal(firstHistoryBody.page.hasMore, true);
+    assert.equal(firstHistoryBody.page.nextOffset, 2);
+
+    const secondHistoryPage = await worker.fetch(
+      new Request("https://qwen-image-3.net/api/generations?limit=2&offset=2", {
+        headers: { Cookie: sessionCookie },
+      }),
+      env as never,
+      executionContext as never,
+    );
+    const secondHistoryBody = await json<{
+      generations: Array<{ id: string }>;
+      page: { hasMore: boolean; nextOffset: number };
+    }>(secondHistoryPage);
+    assert.deepEqual(secondHistoryBody.generations.map((item) => item.id), [generationId]);
+    assert.equal(secondHistoryBody.page.hasMore, false);
+    assert.equal(secondHistoryBody.page.nextOffset, 3);
+
     const freeDownload = await worker.fetch(
       new Request(`https://qwen-image-3.net/api/generations/${generationId}/download`, {
         headers: { Cookie: sessionCookie },

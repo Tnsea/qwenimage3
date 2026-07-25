@@ -2,21 +2,32 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("successful web generations open the private Studio history without inline result galleries", () => {
+test("successful web generations continue in the Studio Create stream", () => {
   const generator = readFileSync(new URL("../src/components/GeneratorWorkspace.tsx", import.meta.url), "utf8");
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   const studio = readFileSync(new URL("../src/components/Studio.tsx", import.meta.url), "utf8");
 
-  assert.match(generator, /onGenerationCreated\(created\)/);
+  assert.match(generator, /onGenerationStarted\?\.\(pendingGeneration\)/);
+  assert.match(generator, /onGenerationCreated\(created, pendingGeneration\.id\)/);
+  assert.match(generator, /onGenerationFailed\?\.\(pendingGeneration\.id, message\)/);
   assert.doesNotMatch(generator, /creation-output|creation-result-stage|creation-recent/);
   assert.doesNotMatch(generator, /\/api\/generations\?limit=/);
-  assert.match(app, /onGenerationCreated=\{\(\) => navigate\("\/studio\/history"\)\}/);
-  assert.match(studio, /onGenerationCreated=\{\(generation\) => \{ setGenerations\([\s\S]*onNavigate\("\/studio\/history"\); \}\}/);
+  assert.match(app, /onGenerationCreated=\{\(\) => navigate\("\/studio"\)\}/);
+  assert.match(studio, /<CreationHistory generations=\{generations\}/);
+  assert.match(studio, /Conversation history/);
+  assert.match(studio, /chat chat-end studio-conversation-user/);
+  assert.match(studio, /chat chat-start studio-conversation-assistant/);
+  assert.match(studio, /Generation started\. This conversation turn will update in place\./);
+  assert.match(studio, /generation\.status === "processing" \? "Generating"/);
+  assert.match(studio, /onGenerationCreated=\{\(generation, pendingId\) => \{[\s\S]*setGenerations\(\(items\) => \[generation,[\s\S]*creation-generation-\$\{generation\.id\}/);
+  assert.doesNotMatch(studio, /onGenerationCreated=\{\(generation, pendingId\) => \{[\s\S]*onNavigate\("\/studio\/history"\);[\s\S]*\}\}/);
 });
 
-test("Studio history keeps every generation action after the handoff", () => {
+test("Studio Create and history share every generation action", () => {
   const studio = readFileSync(new URL("../src/components/Studio.tsx", import.meta.url), "utf8");
 
+  assert.match(studio, /function GenerationActions/);
+  assert.match(studio, /function CreationHistory/);
   assert.match(studio, /href=\{generation\.downloadUrl\} download aria-label="Download generation"/);
   assert.match(studio, /\/api\/generations\/\$\{generation\.id\}\/favorite/);
   assert.match(studio, /Create variation/);

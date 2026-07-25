@@ -64,7 +64,7 @@ Qwen Image Generator Hub lets visitors explore models, examples, and pricing pub
 
 | Route | Current behavior |
 |---|---|
-| `/` | Homepage and generator entry; successful signed-in generations hand off directly to private Studio history instead of rendering inline results, followed by product sections, pricing preview, and FAQ |
+| `/` | Homepage and generator entry; successful signed-in generations open the private Studio Create conversation, where the new result appears with prior account prompt/response turns, followed by product sections, pricing preview, and FAQ |
 | `/examples` | Eight unique curated cards |
 | `/models` | Configured Qwen 2.0 adapter and Qwen Image 3 roadmap status |
 | `/pricing` | Starter, Creator, and Professional monthly/yearly comparison; yearly is selected by default. When an environment explicitly enables a configured offer, selection records the disclosed current-policy confirmation and starts Stripe Checkout; an unauthenticated selection resumes after Google sign-in |
@@ -89,11 +89,11 @@ Unknown client-side and API routes return dedicated 404 experiences.
 
 | Route | Current behavior |
 |---|---|
-| `/studio` | Signed-in generation with optional project assignment; successful requests open `/studio/history`, and this remains the default workspace landing route |
+| `/studio` | Continuous signed-in creation conversation with optional project assignment; every prior user prompt and image response appears with the composer, a new turn shows its generating state immediately, and the final result replaces that state without a route change |
 | `/studio/new` | Backward-compatible alias for the signed-in generation workspace |
 | `/studio/overview` | Plan, balance, current-month usage, active-key count, recent work, and normalized account activity |
 | `/studio/projects` | Create, archive, and restore projects |
-| `/studio/history` | Recent account generations |
+| `/studio/history` | Complete account generation archive |
 | `/studio/favorites` | Favorited generations |
 | `/studio/credits` | Available/reserved balances and ledger entries |
 | `/studio/billing` | Billing state, configured Stripe offers, history, and Customer Portal entry |
@@ -123,10 +123,11 @@ flowchart LR
   B --> C[Create account or sign in]
   C --> D[Receive or load account credits]
   D --> E[Enter prompt and settings]
-  E --> F[Atomically reserve account credits]
+  E --> J[Append the user prompt and a Generating response in Create]
+  J --> F[Atomically reserve account credits]
   F --> G[Call active provider synchronously]
-  G -->|Success| H[Store private asset and open Studio history]
-  G -->|Failure| I[Mark failed and restore credits]
+  G -->|Success| H[Store private asset and replace the Generating response in place]
+  G -->|Failure| I[Replace the response with Failed and restore credits]
 ```
 
 Current rules:
@@ -139,7 +140,9 @@ Current rules:
 - Provider failure restores the reserved account credits.
 - Successful assets are private; unpaid account downloads use the product’s visible standard-export watermark, while every active paid tier may download the original.
 
-Completed and failed records render in Studio history. Completed cards expose download, favorite, variation, and permanent removal; failed cards expose an explicit no-charge state, retry, and removal.
+Completed and failed records render in both the Studio Create conversation and History archive. Both surfaces share download, favorite, variation, retry, and permanent-removal actions as applicable; failed cards retain an explicit no-charge state.
+
+Create renders generation as a conversation lifecycle: the user prompt appears immediately, the paired response shows `Generating` with its reserved credit cost, success replaces that state with the private image, and failure remains visible with its no-charge state.
 
 ### 5.2 Account access and retained credential routes
 

@@ -2783,10 +2783,20 @@ app.get("/api/generations", async (c) => {
   const actor = await requireUser(c);
   if (!actor) return errorResponse(c, 401, "UNAUTHENTICATED", "Sign in to continue.");
   const limit = Math.min(50, Math.max(1, Number.parseInt(c.req.query("limit") || "8", 10) || 8));
+  const offset = Math.min(1_000_000, Math.max(0, Number.parseInt(c.req.query("offset") || "0", 10) || 0));
   const projectId = c.req.query("projectId") || null;
-  const result = await c.env.DB.prepare(`SELECT * FROM generations WHERE owner_user_id = ? ${projectId ? "AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`)
-    .bind(...(projectId ? [actor.userId, projectId, limit] : [actor.userId, limit])).all<GenerationRow>();
-  return c.json({ generations: result.results.map(generationFromRow) });
+  const result = await c.env.DB.prepare(`SELECT * FROM generations WHERE owner_user_id = ? ${projectId ? "AND project_id = ?" : ""} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+    .bind(...(projectId ? [actor.userId, projectId, limit + 1, offset] : [actor.userId, limit + 1, offset])).all<GenerationRow>();
+  const rows = result.results.slice(0, limit);
+  return c.json({
+    generations: rows.map(generationFromRow),
+    page: {
+      limit,
+      offset,
+      hasMore: result.results.length > limit,
+      nextOffset: offset + rows.length,
+    },
+  });
 });
 
 async function generationHandler(c: Context<WorkerContext>, apiOnly: boolean) {

@@ -262,7 +262,7 @@ export default function App() {
     page = (
       <main className="home-main">
         <HomeHero />
-        <GeneratorWorkspace session={session} models={catalog.models} initialPrompt={initialPrompt} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onGenerationCreated={() => navigate("/studio/history")} />
+        <GeneratorWorkspace session={session} models={catalog.models} initialPrompt={initialPrompt} onRequireAuth={openAuth} onSessionRefresh={refreshSession} onGenerationCreated={() => navigate("/studio")} />
         <HomeSections catalog={catalog} onNavigate={navigate} onUsePrompt={usePrompt} onRegister={openAuth} />
       </main>
     );

@@ -47,4 +47,4 @@ Run `npm run check`, `npm test`, and `npm run build` after behavior changes. For
 
 ## Current Priority
 
-Keep Studio generation actions aligned with the direct-to-history handoff, complete review and merge of the acceptance branch, and verify the remaining blockers in `docs/RELEASE_READINESS.md`. Do not delete runtime data, generated artifacts, branches, or worktrees without an explicit post-report confirmation.
+Keep Studio generation actions aligned across the continuous Create conversation and the History archive; Create must retain prior prompt/response turns and show an in-place processing state as soon as a request starts. Complete review and merge of the acceptance branch, and verify the remaining blockers in `docs/RELEASE_READINESS.md`. Do not delete runtime data, generated artifacts, branches, or worktrees without an explicit post-report confirmation.

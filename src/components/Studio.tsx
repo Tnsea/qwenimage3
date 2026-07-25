@@ -60,6 +60,56 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function generationDayKey(value: string) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function formatGenerationDay(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const key = generationDayKey(value);
+  if (key === generationDayKey(today.toISOString())) return "Today";
+  if (key === generationDayKey(yesterday.toISOString())) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(date);
+}
+
+interface GenerationArchivePage {
+  generations: Generation[];
+  page?: {
+    hasMore: boolean;
+    nextOffset: number;
+  };
+}
+
+async function loadGenerationArchive() {
+  const archive: Generation[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+
+  while (true) {
+    const payload = await api<GenerationArchivePage>(`/api/generations?limit=50&offset=${offset}`);
+    payload.generations.forEach((generation) => {
+      if (!seen.has(generation.id)) {
+        seen.add(generation.id);
+        archive.push(generation);
+      }
+    });
+    if (!payload.page?.hasMore || payload.page.nextOffset <= offset) return archive;
+    offset = payload.page.nextOffset;
+  }
+}
+
+function isOptimisticGeneration(generation: Generation) {
+  return generation.id.startsWith("pending-");
+}
+
 function formatCurrency(amountCents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amountCents / 100);
 }
@@ -113,10 +163,11 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
 
   const loadStudio = useCallback(async () => {
     if (!session.user) return;
+    const requestedAt = Date.now();
     const [overviewPayload, projectPayload, generationPayload, creditPayload, keyPayload, requestPayload, sessionPayload, billingPayload, supportPayload] = await Promise.all([
       api<WorkspaceOverview>("/api/workspace/overview"),
       api<{ projects: Project[] }>("/api/projects"),
-      api<{ generations: Generation[] }>("/api/generations?limit=50"),
+      loadGenerationArchive(),
       api<{ account: { available: number; reserved: number }; ledger: CreditEntry[] }>("/api/credits"),
       api<{ apiKeys: ApiKeySummary[] }>("/api/api-keys"),
       api<{ requests: ApiRequestLog[] }>("/api/api-logs"),
@@ -126,7 +177,11 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
     ]);
     setOverview(overviewPayload);
     setProjects(projectPayload.projects);
-    setGenerations(generationPayload.generations);
+    setGenerations((current) => {
+      const archiveIds = new Set(generationPayload.map((generation) => generation.id));
+      const createdDuringLoad = current.filter((generation) => !archiveIds.has(generation.id) && new Date(generation.createdAt).getTime() >= requestedAt);
+      return [...createdDuringLoad, ...generationPayload].sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
+    });
     setLedger(creditPayload.ledger);
     setApiKeys(keyPayload.apiKeys);
     setApiRequests(requestPayload.requests);
@@ -144,7 +199,7 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
         if (active) setStudioLoading(false);
       });
     return () => { active = false; };
-  }, [loadStudio, path]);
+  }, [loadStudio]);
   useEffect(() => { setProfileName(session.user?.name ?? ""); }, [session.user?.name]);
 
   const favoriteGenerations = useMemo(() => generations.filter((item) => item.favorite), [generations]);
@@ -201,9 +256,26 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
     const actionLabel = retrying ? "retry" : "variation";
     if (!window.confirm(`Create a ${actionLabel} using the same settings? This generation uses ${generation.creditCost} credits when it completes.`)) return;
     const action = `generation-variation-${generation.id}`;
+    const startedAt = new Date().toISOString();
+    const pendingGeneration: Generation = {
+      ...generation,
+      id: `pending-${crypto.randomUUID()}`,
+      status: "processing",
+      imageUrl: null,
+      downloadUrl: null,
+      provider: "pending",
+      favorite: false,
+      queuedAt: startedAt,
+      processingStartedAt: startedAt,
+      createdAt: startedAt,
+    };
     setBusyAction(action);
     setError("");
-    setMessage("");
+    setMessage(`${retrying ? "Retry" : "Variation"} started. Progress is visible in the creation conversation.`);
+    setGenerations((items) => [pendingGeneration, ...items]);
+    if (currentSection === "create" || currentSection === "new") {
+      window.setTimeout(() => document.getElementById(`creation-generation-${pendingGeneration.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    }
     try {
       const created = await api<Generation>("/api/generations", {
         method: "POST",
@@ -216,14 +288,17 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
           projectId: generation.projectId,
         }),
       });
-      setGenerations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+      setGenerations((items) => [created, ...items.filter((item) => item.id !== created.id && item.id !== pendingGeneration.id)]);
       await Promise.allSettled([
         onSessionRefresh(),
         api<WorkspaceOverview>("/api/workspace/overview").then(setOverview),
       ]);
-      setMessage(retrying ? "Retry complete. The new result is first in your history." : "Variation complete. The new result is first in your history.");
-      onNavigate("/studio/history");
+      setMessage(retrying ? "Retry complete. The new result was added to your creation stream." : "Variation complete. The new result was added to your creation stream.");
+      if (currentSection === "create" || currentSection === "new") {
+        window.setTimeout(() => document.getElementById(`creation-generation-${created.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+      }
     } catch (reason) {
+      setGenerations((items) => items.map((item) => item.id === pendingGeneration.id ? { ...item, status: "failed" } : item));
       setError(reason instanceof Error ? reason.message : `Could not create the ${actionLabel}.`);
     } finally {
       setBusyAction("");
@@ -232,6 +307,11 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
 
   async function deleteGenerationRecord(generation: Generation) {
     if (!window.confirm("Delete this generation and its private image permanently? This cannot be undone.")) return;
+    if (isOptimisticGeneration(generation)) {
+      setGenerations((items) => items.filter((item) => item.id !== generation.id));
+      setMessage("Local failed attempt removed from this conversation.");
+      return;
+    }
     const action = `generation-delete-${generation.id}`;
     setBusyAction(action);
     setError("");
@@ -725,9 +805,47 @@ export function Studio({ path, session, models, theme, onNavigate, onTheme, onRe
 
   const visibleHistory = currentSection === "favorites" ? favoriteGenerations : generations;
   const renderHistory = () => <div className="studio-content"><header className="studio-heading"><div><span>{currentSection === "favorites" ? "Curated work" : "Private archive"}</span><h1>{currentSection === "favorites" ? "Favorites" : "Generation history"}</h1><p>{currentSection === "favorites" ? "The results you marked for quick return." : "Every signed-in generation in one private archive."}</p></div></header><section className="studio-panel"><GenerationGrid generations={visibleHistory} busyAction={busyAction} onCreate={() => onNavigate("/studio")} onDelete={deleteGenerationRecord} onFavorite={setGenerationFavorite} onVariation={createGenerationVariation} /></section></div>;
+  const renderCreate = () => <div className="studio-content studio-create">
+    <header className="studio-heading studio-create-heading">
+      <div>
+        <span>Continuous workspace</span>
+        <h1>Create</h1>
+        <p>Your complete creation conversation stays here: every prompt, response, setting, and result remains in context while you continue.</p>
+      </div>
+      <button className="btn btn-ghost btn-sm" type="button" onClick={() => onNavigate("/studio/history")}><History size={15} />Manage history</button>
+    </header>
+
+    {studioLoading
+      ? <CreationHistoryLoading />
+      : <CreationHistory generations={generations} busyAction={busyAction} onDelete={deleteGenerationRecord} onFavorite={setGenerationFavorite} onVariation={createGenerationVariation} />}
+
+    <div className="studio-create-composer">
+      <GeneratorWorkspace
+        session={session}
+        models={models}
+        compact
+        onRequireAuth={onRequireAuth}
+        onSessionRefresh={onSessionRefresh}
+        onGenerationStarted={(generation) => {
+          setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id)]);
+          setMessage("Generation started. This conversation turn will update in place.");
+          window.setTimeout(() => document.getElementById(`creation-generation-${generation.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+        }}
+        onGenerationCreated={(generation, pendingId) => {
+          setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id && item.id !== pendingId)]);
+          setMessage("Generation complete. The result was added to this creation stream.");
+          window.setTimeout(() => document.getElementById(`creation-generation-${generation.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+        }}
+        onGenerationFailed={(pendingId) => {
+          setGenerations((items) => items.map((item) => item.id === pendingId ? { ...item, status: "failed" } : item));
+          setMessage("Generation failed. This turn remains in the conversation and no credits were charged.");
+        }}
+      />
+    </div>
+  </div>;
 
   let content = studioLoading && currentSection !== "create" && currentSection !== "new" ? renderLoading() : renderOverview();
-  if (currentSection === "create" || currentSection === "new") content = <div className="studio-content studio-create"><GeneratorWorkspace session={session} models={models} compact onRequireAuth={onRequireAuth} onSessionRefresh={onSessionRefresh} onGenerationCreated={(generation) => { setGenerations((items) => [generation, ...items.filter((item) => item.id !== generation.id)]); onNavigate("/studio/history"); }} /></div>;
+  if (currentSection === "create" || currentSection === "new") content = renderCreate();
   if (!studioLoading && currentSection === "overview") content = renderOverview();
   if (!studioLoading && currentSection === "projects") content = renderProjects();
   if (!studioLoading && (currentSection === "history" || currentSection === "favorites")) content = renderHistory();
@@ -826,28 +944,162 @@ interface GenerationGridProps {
   onVariation: (generation: Generation) => Promise<void>;
 }
 
+function CreationHistoryLoading() {
+  return <section className="studio-creation-history studio-creation-loading" aria-busy="true" aria-label="Loading conversation history">
+    <div className="studio-creation-history-heading">
+      <div><div className="skeleton studio-creation-loading-title" /><div className="skeleton studio-creation-loading-copy" /></div>
+      <div className="skeleton studio-creation-loading-count" />
+    </div>
+    <div className="studio-conversation-loading-turn">
+      <div className="studio-conversation-loading-user">
+        <div className="skeleton studio-creation-loading-prompt" />
+      </div>
+      <div className="studio-conversation-loading-assistant">
+        <div className="skeleton studio-creation-loading-media" />
+        <div className="studio-creation-loading-actions">
+          {Array.from({ length: 4 }, (_, index) => <div className="skeleton" key={index} />)}
+        </div>
+      </div>
+    </div>
+  </section>;
+}
+
+function CreationHistory({ generations, busyAction, onDelete, onFavorite, onVariation }: GenerationGridProps) {
+  const groups = useMemo(() => {
+    const chronological = [...generations].sort((first, second) => {
+      const timeDifference = new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime();
+      return timeDifference || first.id.localeCompare(second.id);
+    });
+    const grouped = new Map<string, Generation[]>();
+    chronological.forEach((generation) => {
+      const key = generationDayKey(generation.createdAt);
+      grouped.set(key, [...(grouped.get(key) ?? []), generation]);
+    });
+    return Array.from(grouped.values());
+  }, [generations]);
+
+  return <section className="studio-creation-history" aria-labelledby="creation-history-title">
+    <div className="studio-creation-history-heading">
+      <div>
+        <span>Ongoing conversation</span>
+        <h2 id="creation-history-title">Conversation history</h2>
+        <p>Every previous prompt and image response appears here. New turns continue below without leaving Create.</p>
+      </div>
+      <span className="badge badge-outline">{generations.length} turn{generations.length === 1 ? "" : "s"}</span>
+    </div>
+
+    {groups.length === 0
+      ? <div className="studio-empty studio-creation-empty"><MessageSquare /><h3>No conversation yet</h3><p>Describe your first image below. Your prompt and the generated response will stay here as the first turn.</p></div>
+      : groups.map((group) => <section className="studio-creation-day" key={generationDayKey(group[0].createdAt)}>
+        <div className="studio-creation-day-heading">
+          <h3>{formatGenerationDay(group[0].createdAt)}</h3>
+          <span>{group.length} turn{group.length === 1 ? "" : "s"}</span>
+        </div>
+        <ol className="studio-conversation-list" aria-live="polite" aria-relevant="additions">
+          {group.map((generation) => <li className="studio-conversation-turn" id={`creation-generation-${generation.id}`} key={generation.id}>
+            <article aria-label={`Creation turn from ${formatDateTime(generation.createdAt)}`}>
+              <div className="chat chat-end studio-conversation-user">
+                <div className="chat-image avatar avatar-placeholder">
+                  <div className="studio-conversation-avatar"><UserRound size={15} /></div>
+                </div>
+                <div className="chat-header">
+                  <span>You</span>
+                  <time dateTime={generation.createdAt}>{formatTime(generation.createdAt)}</time>
+                </div>
+                <div className="chat-bubble">{generation.prompt}</div>
+              </div>
+
+              <div className="chat chat-start studio-conversation-assistant">
+                <div className="chat-image avatar avatar-placeholder">
+                  <div className="studio-conversation-avatar"><ImageIcon size={15} /></div>
+                </div>
+                <div className="chat-header">
+                  <span>Image generator</span>
+                  <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : generation.status === "complete" ? "badge-success" : ""}`}>
+                    {generation.status === "processing" && <RefreshCw size={10} className="spin-icon" />}
+                    {generation.status === "processing" ? "Generating" : generation.status === "complete" ? "Complete" : "Failed"}
+                  </span>
+                </div>
+                <div className={`chat-bubble card studio-conversation-response ${generation.status === "failed" ? "is-failed" : ""}`}>
+                  <div className="card-body studio-creation-body">
+                    <div className="studio-creation-meta" aria-label="Generation settings">
+                      <span className="badge badge-outline">{generation.model}</span>
+                      <span className="badge badge-outline">{generation.style}</span>
+                      <span className="badge badge-outline">{generation.quality}</span>
+                      <span className="badge badge-outline">{generation.aspectRatio}</span>
+                      <span className="badge badge-outline">
+                        {generation.status === "failed"
+                          ? "No credits charged"
+                          : generation.status === "complete"
+                            ? `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"}`
+                            : `${generation.creditCost} credit${generation.creditCost === 1 ? "" : "s"} reserved`}
+                      </span>
+                    </div>
+                    <figure className={`studio-creation-media is-ratio-${generation.aspectRatio.replace(":", "-")}`}>
+                      {generation.imageUrl
+                        ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading="lazy" decoding="async" />
+                        : <div className={`studio-generation-state ${generation.status === "processing" ? "is-processing" : "is-failed"}`}>
+                          {generation.status === "processing" ? <RefreshCw size={24} className="spin-icon" /> : <TriangleAlert size={24} />}
+                          <strong>{generation.status === "processing" ? "Generating your image" : "Generation failed"}</strong>
+                          <small>{generation.status === "failed" ? "No credits charged" : "The response will appear here when it is ready"}</small>
+                        </div>}
+                    </figure>
+                    <div className="card-actions studio-creation-footer">
+                      <GenerationActions generation={generation} busyAction={busyAction} onDelete={onDelete} onFavorite={onFavorite} onVariation={onVariation} />
+                    </div>
+                  </div>
+                </div>
+                <div className="chat-footer">{generation.status === "failed" ? "This request failed without a charge." : generation.status === "complete" ? "Response saved to your private history." : "Response in progress."}</div>
+              </div>
+            </article>
+          </li>)}
+        </ol>
+      </section>)}
+  </section>;
+}
+
+interface GenerationActionsProps {
+  generation: Generation;
+  busyAction: string;
+  onDelete: (generation: Generation) => Promise<void>;
+  onFavorite: (generation: Generation) => Promise<void>;
+  onVariation: (generation: Generation) => Promise<void>;
+}
+
+function GenerationActions({ generation, busyAction, onDelete, onFavorite, onVariation }: GenerationActionsProps) {
+  if (generation.status === "processing") {
+    return <div className="studio-generation-progress" role="status"><RefreshCw size={15} className="spin-icon" /><span>Generating image</span></div>;
+  }
+  const favoriteAction = `generation-favorite-${generation.id}`;
+  const variationAction = `generation-variation-${generation.id}`;
+  const deleteAction = `generation-delete-${generation.id}`;
+  const actionPending = [favoriteAction, variationAction, deleteAction].includes(busyAction);
+
+  return <div className="card-actions studio-generation-actions" aria-label={`Actions for ${generation.prompt.slice(0, 40)}`}>
+    {generation.status === "complete" && generation.downloadUrl && <div className="tooltip" data-tip="Download"><a className="btn btn-ghost btn-square btn-sm" href={generation.downloadUrl} download aria-label="Download generation"><Download size={15} /></a></div>}
+    <div className="tooltip" data-tip={generation.status === "failed" ? "Retry" : "Create variation"}><button className="btn btn-ghost btn-square btn-sm" type="button" disabled={actionPending} onClick={() => void onVariation(generation)} aria-label={generation.status === "failed" ? "Retry generation" : "Create variation"}>{busyAction === variationAction ? <span className="loading loading-spinner loading-xs" /> : <RefreshCw size={15} />}</button></div>
+    {generation.status === "complete" && <div className="tooltip" data-tip={generation.favorite ? "Remove favorite" : "Save favorite"}><button className={`btn btn-ghost btn-square btn-sm ${generation.favorite ? "is-favorite" : ""}`} type="button" disabled={actionPending} onClick={() => void onFavorite(generation)} aria-label={generation.favorite ? "Remove from Favorites" : "Save to Favorites"} aria-pressed={generation.favorite}>{busyAction === favoriteAction ? <span className="loading loading-spinner loading-xs" /> : <Heart size={15} fill={generation.favorite ? "currentColor" : "none"} />}</button></div>}
+    <div className="tooltip" data-tip="Delete"><button className="btn btn-ghost btn-square btn-sm studio-generation-delete" type="button" disabled={actionPending} onClick={() => void onDelete(generation)} aria-label="Delete generation">{busyAction === deleteAction ? <span className="loading loading-spinner loading-xs" /> : <Trash2 size={15} />}</button></div>
+  </div>;
+}
+
 function GenerationGrid({ generations, busyAction, onCreate, onDelete, onFavorite, onVariation }: GenerationGridProps) {
   if (generations.length === 0) return <div className="studio-empty"><ImageIcon /><h3>No recent work yet</h3><p>Create an image to begin building your private workspace history.</p>{onCreate && <button className="btn studio-primary-action" type="button" onClick={onCreate}><Plus size={15} />Create image</button>}</div>;
   return <div className={`studio-generation-grid ${generations.length < 3 ? "is-sparse" : ""}`}>{generations.map((generation, index) => {
-    const favoriteAction = `generation-favorite-${generation.id}`;
-    const variationAction = `generation-variation-${generation.id}`;
-    const deleteAction = `generation-delete-${generation.id}`;
-    const actionPending = [favoriteAction, variationAction, deleteAction].includes(busyAction);
     return <article className={`card card-border studio-generation-card ${generation.status === "failed" ? "is-failed" : ""}`} key={generation.id}>
       <figure className="studio-generation-media">
         {generation.imageUrl
           ? <img src={generation.imageUrl} alt={`Generated result for ${generation.prompt.slice(0, 80)}`} loading={index < 3 ? "eager" : "lazy"} decoding="async" />
-          : <div className="studio-generation-failed"><TriangleAlert size={22} /><span className="badge badge-error badge-outline">{generation.status}</span><small>No credits charged</small></div>}
+          : <div className={`studio-generation-failed ${generation.status === "processing" ? "is-processing" : ""}`}>
+            {generation.status === "processing" ? <RefreshCw size={22} className="spin-icon" /> : <TriangleAlert size={22} />}
+            <span className={`badge badge-outline ${generation.status === "failed" ? "badge-error" : ""}`}>{generation.status === "processing" ? "Generating" : "Failed"}</span>
+            <small>{generation.status === "processing" ? `${generation.creditCost} credits reserved` : "No credits charged"}</small>
+          </div>}
       </figure>
       <div className="card-body studio-generation-body">
         <p>{generation.prompt}</p>
         <span className="studio-generation-meta">{generation.quality} · {generation.aspectRatio}</span>
-        <div className="card-actions studio-generation-actions" aria-label={`Actions for ${generation.prompt.slice(0, 40)}`}>
-          {generation.status === "complete" && generation.downloadUrl && <div className="tooltip" data-tip="Download"><a className="btn btn-ghost btn-square btn-sm" href={generation.downloadUrl} download aria-label="Download generation"><Download size={15} /></a></div>}
-          <div className="tooltip" data-tip={generation.status === "failed" ? "Retry" : "Create variation"}><button className="btn btn-ghost btn-square btn-sm" type="button" disabled={actionPending} onClick={() => void onVariation(generation)} aria-label={generation.status === "failed" ? "Retry generation" : "Create variation"}>{busyAction === variationAction ? <span className="loading loading-spinner loading-xs" /> : <RefreshCw size={15} />}</button></div>
-          {generation.status === "complete" && <div className="tooltip" data-tip={generation.favorite ? "Remove favorite" : "Save favorite"}><button className={`btn btn-ghost btn-square btn-sm ${generation.favorite ? "is-favorite" : ""}`} type="button" disabled={actionPending} onClick={() => void onFavorite(generation)} aria-label={generation.favorite ? "Remove from Favorites" : "Save to Favorites"} aria-pressed={generation.favorite}>{busyAction === favoriteAction ? <span className="loading loading-spinner loading-xs" /> : <Heart size={15} fill={generation.favorite ? "currentColor" : "none"} />}</button></div>}
-          <div className="tooltip" data-tip="Delete"><button className="btn btn-ghost btn-square btn-sm studio-generation-delete" type="button" disabled={actionPending} onClick={() => void onDelete(generation)} aria-label="Delete generation">{busyAction === deleteAction ? <span className="loading loading-spinner loading-xs" /> : <Trash2 size={15} />}</button></div>
-        </div>
+        <GenerationActions generation={generation} busyAction={busyAction} onDelete={onDelete} onFavorite={onFavorite} onVariation={onVariation} />
       </div>
     </article>;
   })}</div>;

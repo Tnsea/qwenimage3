@@ -29,10 +29,12 @@ interface GeneratorWorkspaceProps {
   initialPrompt?: string;
   onRequireAuth: () => void;
   onSessionRefresh: () => Promise<void>;
-  onGenerationCreated: (generation: Generation) => void;
+  onGenerationStarted?: (generation: Generation) => void;
+  onGenerationCreated: (generation: Generation, pendingId?: string) => void;
+  onGenerationFailed?: (pendingId: string, message: string) => void;
 }
 
-export function GeneratorWorkspace({ session, models, compact = false, initialPrompt = "", onRequireAuth, onSessionRefresh, onGenerationCreated }: GeneratorWorkspaceProps) {
+export function GeneratorWorkspace({ session, models, compact = false, initialPrompt = "", onRequireAuth, onSessionRefresh, onGenerationStarted, onGenerationCreated, onGenerationFailed }: GeneratorWorkspaceProps) {
   const [prompt, setPrompt] = useState(initialPrompt);
   const [modelId, setModelId] = useState(() => models.find((model) => model.available)?.id ?? "");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -88,18 +90,43 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
     }
     const requestedPrompt = (promptOverride ?? prompt).trim();
     if (requestedPrompt.length < 3 || generating) return;
+    const startedAt = new Date().toISOString();
+    const pendingGeneration: Generation = {
+      id: `pending-${crypto.randomUUID()}`,
+      prompt: requestedPrompt,
+      aspectRatio,
+      style,
+      quality,
+      status: "processing",
+      width: 0,
+      height: 0,
+      imageUrl: null,
+      downloadUrl: null,
+      provider: "pending",
+      model: selectedModel?.id ?? modelId,
+      creditCost,
+      queueTier: session.entitlements.priorityGeneration ? "vip" : "free",
+      queuedAt: startedAt,
+      processingStartedAt: startedAt,
+      favorite: false,
+      projectId: projectId || null,
+      createdAt: startedAt,
+    };
     setGenerating(true);
     setError("");
+    onGenerationStarted?.(pendingGeneration);
     try {
       const created = await api<Generation>("/api/generations", {
         method: "POST",
         body: JSON.stringify({ prompt: requestedPrompt, modelId, aspectRatio, style, quality, projectId: projectId || null }),
       });
-      onGenerationCreated(created);
+      onGenerationCreated(created, pendingGeneration.id);
       void onSessionRefresh().catch(() => undefined);
     } catch (reason) {
       if (reason instanceof ApiClientError && reason.code === "UNAUTHENTICATED") onRequireAuth();
-      setError(reason instanceof Error ? reason.message : "Generation failed.");
+      const message = reason instanceof Error ? reason.message : "Generation failed.";
+      setError(message);
+      onGenerationFailed?.(pendingGeneration.id, message);
     } finally {
       setGenerating(false);
     }
@@ -202,7 +229,7 @@ export function GeneratorWorkspace({ session, models, compact = false, initialPr
             <span>{allowance}</span>
             <button className="btn creation-generate" type="submit" disabled={!canGenerate}>
               {generating ? <RefreshCw size={16} className="spin-icon" /> : <Sparkles size={16} />}
-              {generating ? "Generating" : session.user ? "Generate" : "Sign in to generate"}
+              <span className="creation-generate-label">{generating ? "Generating" : session.user ? "Generate" : "Sign in to generate"}</span>
             </button>
           </div>
         </div>
